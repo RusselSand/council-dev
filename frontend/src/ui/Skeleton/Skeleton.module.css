@@ -1,0 +1,23 @@
+.lines {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-8);
+}
+
+.line {
+  height: var(--skeleton-line);
+  border-radius: var(--radius-14);
+  background: var(--color-surface-muted);
+}
+
+.first {
+  background: var(--color-surface-sunken);
+}
+
+.second {
+  width: var(--skeleton-width-second);
+}
+
+.third {
+  width: var(--skeleton-width-third);
+}

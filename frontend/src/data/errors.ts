@@ -14,6 +14,8 @@ export const ERROR_CODES = [
   'unknown_project',
   'unknown_model',
   'model_offline',
+  'slicing_running',
+  'unknown_label',
   'network',
   'unknown',
 ] as const;

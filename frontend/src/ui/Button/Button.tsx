@@ -1,8 +1,11 @@
 import type { ButtonHTMLAttributes } from 'react';
 import styles from './Button.module.css';
 
-/** primary — тёмная заливка, главное действие; outline — тёмная рамка без заливки; text — только текст. */
-export type ButtonVariant = 'primary' | 'outline' | 'text';
+/**
+ * primary — тёмная заливка, главное действие; outline — тёмная рамка без заливки; text — только текст;
+ * inverse — белая заливка, главное действие на тёмной плашке.
+ */
+export type ButtonVariant = 'primary' | 'outline' | 'text' | 'inverse';
 
 /** md — в шапке и окнах; sm — на карточке. */
 export type ButtonSize = 'md' | 'sm';

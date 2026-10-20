@@ -43,6 +43,37 @@ export const ru = {
   'brief.offline': 'не подключена',
   'brief.judge': 'Судья',
 
+  'slices.running.title': 'Совет режет текст на фрагменты',
+  'slices.running.intro':
+    'Модели режут текст на смысловые фрагменты и размечают их. Это занимает минуты. Страницу можно закрыть: работа идёт на сервере.',
+  'slices.progress': 'Ход работы',
+  'slices.progress.note': 'Участники работают по отдельности, судья решает там, где они разошлись.',
+  'slices.phase.slice': 'Нарезка',
+  'slices.phase.slice_judge': 'Судья нарезки',
+  'slices.phase.label': 'Разметка',
+  'slices.phase.label_judge': 'Судья разметки',
+  'slices.title': 'Фрагменты · {count}',
+  'slices.intro': 'Ваш текст без изменений: только разрезан и размечен. Не согласны с типом — выберите другой.',
+  'slices.labels': 'Тип фрагмента {id}',
+  'slices.note.judge': 'модели разошлись — решил судья',
+  'slices.note.changed': 'вы выбрали другой тип, у совета — «{label}»',
+  'slices.next': 'Дальше',
+  'slices.next.title': 'Разложить по группам',
+  'slices.next.text': 'Совет сгруппирует фрагменты вокруг идей. Каждая группа станет потоком.',
+  'slices.next.button': 'Предложить группы →',
+
+  'label.idea': 'идея',
+  'label.question': 'вопрос',
+  'label.proposal': 'предложение',
+  'label.constraint': 'ограничение',
+  'label.risk': 'риск',
+
+  'run.waiting': 'ждёт',
+  'run.running': 'работает…',
+  'run.done': 'готово',
+  'run.failed': 'не справилась',
+  'run.skipped': 'не понадобился',
+
   'project.none': 'Без проекта',
   'project.newButton': '+ Новый проект',
   'project.repos': 'Репозитории',
@@ -115,6 +146,8 @@ export const ru = {
   'error.unknown_model': 'Этой модели уже нет. Список моделей обновлён.',
   'error.model_offline':
     'Модель не подключена: её нельзя добавить в совет или сделать судьёй. Список моделей обновлён.',
+  'error.slicing_running': 'Совет снова режет текст — фрагменты появятся, когда нарезка закончится.',
+  'error.unknown_label': 'Такого типа фрагмента нет.',
   'error.network': 'Нет связи с сервером. Проверьте сеть и попробуйте ещё раз.',
   'error.unknown': 'Что-то пошло не так. Попробуйте ещё раз.',
 

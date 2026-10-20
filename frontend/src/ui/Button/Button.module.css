@@ -49,6 +49,27 @@
   background: var(--color-disabled);
 }
 
+/* «Предложить группы →» на тёмной плашке «Дальше». */
+.inverse {
+  border: 0;
+  background: var(--color-paper);
+  color: var(--color-ink);
+}
+
+.inverse.md {
+  padding: var(--space-10) var(--space-20);
+}
+
+.inverse.sm {
+  padding: var(--space-7) var(--space-14);
+}
+
+/* Недоступная на тёмном — как «К потокам →», пока исследование не готово. */
+.inverse:disabled {
+  background: var(--color-disabled-on-dark);
+  color: var(--color-text-ghost);
+}
+
 .text {
   border: 0;
   background: transparent;

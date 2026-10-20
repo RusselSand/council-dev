@@ -1,0 +1,31 @@
+.panel {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-10);
+  min-width: 0;
+  padding: var(--space-18);
+  border-radius: var(--radius-18);
+  background: var(--color-surface-dark);
+  color: var(--color-text-on-dark);
+}
+
+.title {
+  margin: 0;
+  font-size: var(--text-xl);
+  font-weight: var(--weight-bold);
+  overflow-wrap: anywhere;
+}
+
+.text {
+  margin: 0;
+  font-size: var(--text-sm);
+  line-height: var(--leading-loose);
+  color: var(--color-text-on-dark-muted);
+  text-wrap: pretty;
+}
+
+.action {
+  align-self: flex-start;
+  max-width: 100%;
+  margin-top: var(--space-4);
+}

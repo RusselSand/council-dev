@@ -40,6 +40,37 @@ export const en = translation({
   'brief.offline': 'not connected',
   'brief.judge': 'Judge',
 
+  'slices.running.title': 'The council is slicing the text into fragments',
+  'slices.running.intro':
+    'The models slice the text into meaningful fragments and label them. This takes minutes. You can close the page: the work runs on the server.',
+  'slices.progress': 'Progress',
+  'slices.progress.note': 'Members work separately; the judge decides where they disagree.',
+  'slices.phase.slice': 'Slicing',
+  'slices.phase.slice_judge': 'Slicing judge',
+  'slices.phase.label': 'Labeling',
+  'slices.phase.label_judge': 'Labeling judge',
+  'slices.title': 'Fragments · {count}',
+  'slices.intro': 'Your text unchanged: only sliced and labeled. Disagree with a type — choose another one.',
+  'slices.labels': 'Type of fragment {id}',
+  'slices.note.judge': 'the models disagreed — the judge decided',
+  'slices.note.changed': 'you chose a different type, the council’s is “{label}”',
+  'slices.next': 'Next',
+  'slices.next.title': 'Sort into groups',
+  'slices.next.text': 'The council will group the fragments around ideas. Each group will become a stream.',
+  'slices.next.button': 'Propose groups →',
+
+  'label.idea': 'idea',
+  'label.question': 'question',
+  'label.proposal': 'proposal',
+  'label.constraint': 'constraint',
+  'label.risk': 'risk',
+
+  'run.waiting': 'waiting',
+  'run.running': 'working…',
+  'run.done': 'done',
+  'run.failed': 'failed',
+  'run.skipped': 'not needed',
+
   'project.none': 'No project',
   'project.newButton': '+ New project',
   'project.repos': 'Repositories',
@@ -107,6 +138,8 @@ export const en = translation({
   'error.unknown_model': 'This model no longer exists. The model list has been refreshed.',
   'error.model_offline':
     'The model is not connected: it can’t be added to the council or made the judge. The model list has been refreshed.',
+  'error.slicing_running': 'The council is slicing the text again — fragments will appear when slicing is over.',
+  'error.unknown_label': 'There is no such fragment type.',
   'error.network': 'No connection to the server. Check your network and try again.',
   'error.unknown': 'Something went wrong. Please try again.',
 

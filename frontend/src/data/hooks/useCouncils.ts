@@ -91,3 +91,22 @@ export function useStartSlicing(): Mutation<[id: string], CouncilSummary> {
     (council) => markStale('councils', (list) => replaceIn(list, council)),
   );
 }
+
+/**
+ * «Предложить группы» — POST /api/councils/<id>/structure: разложить фрагменты по группам; ответ — совет после
+ * запуска. Он сразу встаёт в список советов на место старого: вкладки этапов, меню и Сводка видят, что раскладка
+ * идёт. Нарезка успела начаться заново — список советов перезапрашивается: экран увидит, что модели режут текст.
+ */
+export function useStartStructure(): Mutation<[id: string], CouncilSummary> {
+  return useMutation(
+    async (id: string) => {
+      try {
+        return await source.startStructure(id);
+      } catch (error) {
+        if (error instanceof ApiError && error.code === 'slicing_running') markStale('councils');
+        throw error;
+      }
+    },
+    (council) => markStale('councils', (list) => replaceIn(list, council)),
+  );
+}
