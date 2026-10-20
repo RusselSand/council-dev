@@ -71,6 +71,8 @@ export interface QuestionsStep {
 
   /** «Утвердить вопросы → к вариантам» есть: шаг ждёт вас или остановился. */
   approvable: boolean;
+  /** «Утвердить» не действует: вопросы уже утверждаются, свой вопрос добавляется или шаг запускают снова. */
+  approveDisabled: boolean;
   approve: () => void;
   approveError: ApiError | undefined;
 }
@@ -79,9 +81,17 @@ export interface QuestionsStep {
  * Шаг «Вопросы», как в макете: вопросы с источником и «почему», «Пересматривает решение проекта», «В тексте уже есть
  * ответ», «Убрать» / «Вернуть» — сразу на сервер; «Свой вопрос…» и «Добавить»; «Утвердить вопросы → к вариантам» —
  * сначала дожидается «Убрать» / «Вернуть», потом утверждает и открывает «Варианты» потока; ушли с экрана, пока
- * утверждались, — не открывает. Другой поток — другой экран: ставьте с key по совету и потоку.
+ * утверждались, — не открывает. «Утвердить» и «Запустить снова» шага не уходят вместе: retrying — шаг запускают
+ * снова, и «Утвердить» не действует; пока вопросы утверждаются, onBusy(true) — не действует «Запустить снова». Другой
+ * поток — другой экран: ставьте с key по совету и потоку.
  */
-export function useQuestionsStep(councilId: string, streamId: string, state: State): QuestionsStep {
+export function useQuestionsStep(
+  councilId: string,
+  streamId: string,
+  state: State,
+  retrying: boolean,
+  onBusy: (busy: boolean) => void,
+): QuestionsStep {
   const { t } = useI18n();
   const query = useStreamQuestions(councilId, streamId, state);
   const removals = useQuestionRemovals(councilId, streamId, state);
@@ -98,6 +108,13 @@ export function useQuestionsStep(councilId: string, streamId: string, state: Sta
       open.current = false;
     };
   }, []);
+
+  // Пока вопросы утверждаются, «Запустить снова» не действует; утвердили, не вышло или ушли с шага — снова действует.
+  useEffect(() => {
+    if (!approving) return undefined;
+    onBusy(true);
+    return () => onBusy(false);
+  }, [approving, onBusy]);
 
   const editable = questionsEditable(state) && !approving;
   const list = query.data?.questions ?? [];
@@ -140,8 +157,10 @@ export function useQuestionsStep(councilId: string, streamId: string, state: Sta
     })();
   };
 
+  const approveDisabled = approving || addAction.pending || retrying;
+
   const approve = () => {
-    if (!questionsApprovable(state) || approving || addAction.pending) return;
+    if (!questionsApprovable(state) || approveDisabled) return;
     setApproving(true);
     void (async () => {
       // Утверждается то, что на экране: сначала — ответы на «Убрать» и «Вернуть», которые ещё идут.
@@ -176,6 +195,7 @@ export function useQuestionsStep(councilId: string, streamId: string, state: Sta
     addError: addAction.error,
 
     approvable: questionsApprovable(state),
+    approveDisabled,
     approve,
     approveError: approveAction.error,
   };

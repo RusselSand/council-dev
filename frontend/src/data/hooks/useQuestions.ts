@@ -78,22 +78,26 @@ export function useQuestionRemovals(councilId: string, streamId: string, round: 
 
 /**
  * Свой вопрос — POST /api/councils/<id>/streams/<streamId>/questions с Idempotency-Key: пока вопрос не создан, каждая
- * попытка идёт с одним ключом, и повтор после оборванного ответа не создаёт второй; создан — следующий вопрос с новым
- * ключом. Ответ встаёт в конец вопросов сразу; вопросы и список советов перезапрашиваются.
+ * попытка с тем же текстом идёт с одним ключом, и повтор после оборванного ответа не создаёт второй; текст поправили
+ * после неудачной попытки — это другой вопрос, и ключ новый: по прежнему ключу сервер ответил бы прежним вопросом;
+ * создан — следующий вопрос с новым ключом. Ответ встаёт в конец вопросов сразу; вопросы и список советов
+ * перезапрашиваются.
  */
 export function useAddQuestion(): Mutation<[id: string, streamId: string, text: string], Question> {
-  const key = useRef<string>();
+  /** Попытка, на которую вопрос ещё не создан: её текст и ключ. */
+  const attempt = useRef<{ text: string; key: string }>();
   return useMutation(
     async (id: string, streamId: string, text: string) => {
+      if (attempt.current?.text !== text) attempt.current = { text, key: newKey() };
       try {
-        return await source.addQuestion(id, streamId, text, (key.current ??= newKey()));
+        return await source.addQuestion(id, streamId, text, attempt.current.key);
       } catch (error) {
         staleOnRefused(error);
         throw error;
       }
     },
     (question, id, streamId) => {
-      key.current = undefined;
+      attempt.current = undefined;
       markStale('questions', putQuestion(id, streamId, question));
       markStale('councils');
     },
