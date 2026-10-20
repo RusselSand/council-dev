@@ -3,12 +3,12 @@ import styles from './Button.module.css';
 
 /**
  * primary — тёмная заливка, главное действие; outline — тёмная рамка без заливки; text — только текст;
- * inverse — белая заливка, главное действие на тёмной плашке.
+ * subtle — только текст, под курсором — серая подложка; inverse — белая заливка, главное действие на тёмной плашке.
  */
-export type ButtonVariant = 'primary' | 'outline' | 'text' | 'inverse';
+export type ButtonVariant = 'primary' | 'outline' | 'text' | 'subtle' | 'inverse';
 
-/** md — в шапке и окнах; sm — на карточке. */
-export type ButtonSize = 'md' | 'sm';
+/** md — в шапке и окнах; sm — на карточке; xs — на серой плашке внутри карточки («Объединить с», «Разделить»). */
+export type ButtonSize = 'md' | 'sm' | 'xs';
 
 /** ink — обычная; danger — красная: действие, которое не отменить. */
 export type ButtonTone = 'ink' | 'danger';

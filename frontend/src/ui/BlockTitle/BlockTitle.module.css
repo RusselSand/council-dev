@@ -1,12 +1,22 @@
 .head {
   display: flex;
-  flex-direction: column;
-  gap: var(--space-4);
   min-width: 0;
 }
 
+.stack {
+  flex-direction: column;
+  gap: var(--space-4);
+}
+
 .loose {
+  flex-direction: column;
   gap: var(--space-14);
+}
+
+.inline {
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--space-4) var(--space-12);
 }
 
 .title {

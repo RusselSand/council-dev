@@ -3,11 +3,15 @@ import type { CouncilSummary } from '../../domain/council';
 import type { Model } from '../../domain/model';
 import type { Project } from '../../domain/project';
 import type { Fragment, Slicing } from '../../domain/slicing';
+import type { Group, Structure } from '../../domain/structure';
 import type { DataSource } from '../source';
 import { request } from './request';
 
 /** Путь совета: /councils/<id>. */
 const councilPath = (id: string) => `/councils/${encodeURIComponent(id)}`;
+
+/** Путь группы совета: /councils/<id>/groups/<groupId>. */
+const groupPath = (id: string, groupId: string) => `${councilPath(id)}/groups/${encodeURIComponent(groupId)}`;
 
 /** Настоящий сервер. */
 export const httpSource: DataSource = {
@@ -46,6 +50,31 @@ export const httpSource: DataSource = {
   },
   async startStructure(id) {
     const { council } = await request<{ council: CouncilSummary }>('POST', `${councilPath(id)}/structure`, {});
+    return council;
+  },
+  async getStructure(id) {
+    const { structure } = await request<{ structure: Structure }>('GET', `${councilPath(id)}/structure`);
+    return structure;
+  },
+  async updateGroup(id, groupId, fields) {
+    const { group } = await request<{ group: Group }>('PATCH', groupPath(id, groupId), fields);
+    return group;
+  },
+  async mergeGroup(id, groupId, into) {
+    const { structure } = await request<{ structure: Structure }>('POST', `${groupPath(id, groupId)}/merge`, { into });
+    return structure;
+  },
+  async splitGroup(id, groupId, fragmentIds, title) {
+    const path = `${groupPath(id, groupId)}/split`;
+    const { structure } = await request<{ structure: Structure }>('POST', path, { fragmentIds, title });
+    return structure;
+  },
+  async confirmStructure(id) {
+    const { council } = await request<{ council: CouncilSummary }>('POST', `${councilPath(id)}/structure/confirm`, {});
+    return council;
+  },
+  async retryStructure(id) {
+    const { council } = await request<{ council: CouncilSummary }>('POST', `${councilPath(id)}/structure/retry`, {});
     return council;
   },
   async listModels() {

@@ -3,12 +3,15 @@ import styles from './Tag.module.css';
 
 /**
  * green, yellow, red, gray — светлая заливка цвета состояния; dark — тёмная заливка, белый текст;
- * ghost — без заливки, бледный текст.
+ * ghost — без заливки, бледный текст; glass — полупрозрачная белая на цветной плашке, текст — цвета плашки.
  */
-export type TagTone = 'green' | 'yellow' | 'red' | 'gray' | 'dark' | 'ghost';
+export type TagTone = 'green' | 'yellow' | 'red' | 'gray' | 'dark' | 'ghost' | 'glass';
 
-/** sm — мелкая жирная, в строке меню; md — крупнее, на карточке; lg — состояние этапа в начале главного блока. */
-export type TagSize = 'sm' | 'md' | 'lg';
+/**
+ * xs — самая мелкая, в строке текста (тип фрагмента в группе); sm — мелкая жирная, в строке меню; md — крупнее,
+ * на карточке; lg — состояние этапа в начале главного блока.
+ */
+export type TagSize = 'xs' | 'sm' | 'md' | 'lg';
 
 interface TagProps {
   tone: TagTone;

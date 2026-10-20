@@ -1,0 +1,43 @@
+.list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-6);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.row {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-8);
+  min-width: 0;
+  font-size: var(--text-sm);
+  line-height: var(--leading-relaxed);
+  color: var(--color-text-secondary);
+}
+
+.pickable {
+  cursor: pointer;
+}
+
+.box {
+  flex: none;
+  width: var(--checkbox-size-sm);
+  height: var(--checkbox-size-sm);
+  margin: var(--space-2) var(--space-3) 0 var(--space-4);
+  accent-color: var(--color-ink);
+  cursor: inherit;
+}
+
+.id {
+  flex: none;
+  font-family: var(--font-mono);
+  color: var(--color-text-faint);
+}
+
+.text {
+  flex: 1;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}

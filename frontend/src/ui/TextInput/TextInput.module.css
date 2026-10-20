@@ -17,3 +17,12 @@
   font-family: var(--font-mono);
   font-size: var(--text-md);
 }
+
+.title {
+  padding: var(--space-6) var(--space-10);
+  border: var(--border-thick) solid var(--color-ink);
+  border-radius: var(--radius-10);
+  background: var(--color-paper);
+  font-size: var(--text-xl);
+  font-weight: var(--weight-bold);
+}

@@ -1,22 +1,10 @@
 import { useEffect, useRef, useState } from 'react';
 import { useCouncilSlicing, useFragmentLabels, useStartStructure, type ApiError } from '../../data';
 import type { CouncilSummary } from '../../domain/council';
-import { LABELS, progressRows, type Fragment, type Label, type RunState } from '../../domain/slicing';
+import { progressRows, type ProgressRow } from '../../domain/run';
+import { LABELS, type Fragment, type Label, type SlicingPhase } from '../../domain/slicing';
 import { useI18n, type Translate } from '../../i18n';
 import { navigate, routePath } from '../../router';
-import type { DotTone } from '../../ui/Dot';
-
-/** Строка «Хода работы»: «Нарезка · sol · работает…». */
-export interface ProgressLine {
-  key: string;
-  /** Часть нарезки: «Нарезка», «Судья нарезки». */
-  phase: string;
-  /** Модели через запятую: «sol, fable». */
-  models: string;
-  /** «работает…», «готово», «ждёт». */
-  state: string;
-  tone: DotTone;
-}
 
 /** Тип в ряду под фрагментом. */
 export interface LabelChoice {
@@ -46,7 +34,8 @@ export interface SlicesScreen {
   error: ApiError | undefined;
   reload: () => void;
 
-  progress: ProgressLine[];
+  /** Строки «Хода работы»: «Нарезка · sol · работает…». */
+  progress: ProgressRow<SlicingPhase>[];
 
   /** «Фрагменты · 3». */
   title: string;
@@ -60,15 +49,6 @@ export interface SlicesScreen {
   proposing: boolean;
   proposeError: ApiError | undefined;
 }
-
-/** Цвет точки в «Ходе работы» — как в макете: работает и готово — зелёная, ждёт — серая; не справилась — красная. */
-const RUN_TONE: Record<RunState, DotTone> = {
-  waiting: 'gray',
-  running: 'green',
-  done: 'green',
-  failed: 'red',
-  skipped: 'gray',
-};
 
 /**
  * Пометка у фрагмента — как в макете: человек выбрал не тот тип, что дал совет, — какой тип у совета; иначе, если
@@ -114,13 +94,7 @@ export function useSlices(council: CouncilSummary): SlicesScreen {
     error: slicing.error,
     reload: slicing.reload,
 
-    progress: progressRows(data?.progress ?? []).map((row) => ({
-      key: `${row.phase}:${row.state}`,
-      phase: t(`slices.phase.${row.phase}`),
-      models: row.models.join(', '),
-      state: t(`run.${row.state}`),
-      tone: RUN_TONE[row.state],
-    })),
+    progress: progressRows(data?.progress ?? []),
 
     title: t('slices.title', { count: fragments.length }),
     fragments: fragments.map((fragment) => {

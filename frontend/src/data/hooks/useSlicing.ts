@@ -2,38 +2,18 @@ import { useEffect, useRef, useState } from 'react';
 import type { Label, Slicing } from '../../domain/slicing';
 import { source } from '../config';
 import { toApiError, type ApiError } from '../errors';
-import { markStale, poll, type CouncilSlicing } from './stale';
-import { useQuery, type Query } from './useQuery';
-
-/** Через сколько после ответа на нарезку, пока она идёт, снова спрашивать ход работы и список советов, мс. */
-const SLICING_POLL = 5000;
+import { markStale } from './stale';
+import { useStageQuery } from './useStageQuery';
+import type { Query } from './useQuery';
+import { without } from './without';
 
 /**
  * Нарезка совета — GET /api/councils/<id>/slicing: ход работы и фрагменты. Пока нарезка идёт (running), ход работы
- * и список советов перезапрашиваются через 5 с после ответа на нарезку: экран видит, как работают модели и когда
- * нарезка кончилась. Запрос, который ещё ждёт ответа, опрос не перезапускает — на медленной связи ответы доходят.
- * Нарезка началась или кончилась — нарезка перезапрашивается, а до ответа её нет (data — undefined, loading): прежняя
- * — от другой нарезки.
+ * и список советов перезапрашиваются через 5 с после ответа на нарезку; нарезка началась или кончилась — до ответа
+ * на новый запрос нарезки нет (data — undefined): прежняя — от другой нарезки. См. useStageQuery().
  */
 export function useCouncilSlicing(id: string, running: boolean): Query<Slicing> {
-  const query = useQuery(
-    async (): Promise<CouncilSlicing> => ({ ...(await source.getSlicing(id)), council: id, running }),
-    [id, running],
-    'slicing',
-  );
-  const { data, loading, error, reload } = query;
-
-  useEffect(() => {
-    if (!running || loading) return undefined;
-    const timer = setTimeout(() => {
-      reload();
-      poll('councils');
-    }, SLICING_POLL);
-    return () => clearTimeout(timer);
-  }, [running, loading, reload]);
-
-  const fresh = data?.running === running;
-  return { ...query, data: fresh ? data : undefined, loading: loading || (!fresh && error === undefined) };
+  return useStageQuery('slicing', () => source.getSlicing(id), id, running);
 }
 
 export interface FragmentLabels {
@@ -46,10 +26,6 @@ export interface FragmentLabels {
   /** Дождаться ответа на смены, которые ещё идут. Ответ — сохранились ли последние; смен нет — true. */
   settle: () => Promise<boolean>;
 }
-
-/** Без ключа key. */
-const without = <T>(record: Readonly<Record<string, T>>, key: string): Record<string, T> =>
-  Object.fromEntries(Object.entries(record).filter(([k]) => k !== key));
 
 /**
  * Смена типа фрагмента — PATCH /api/councils/<id>/fragments/<fragmentId>, сразу по щелчку. У каждого фрагмента своя

@@ -1,17 +1,19 @@
-.panel {
+.plate {
   display: flex;
-  flex-direction: column;
-  gap: var(--space-10);
   min-width: 0;
-  padding: var(--space-18);
   border-radius: var(--radius-18);
   background: var(--color-surface-dark);
   color: var(--color-text-on-dark);
 }
 
+.head {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
 .title {
   margin: 0;
-  font-size: var(--text-xl);
   font-weight: var(--weight-bold);
   overflow-wrap: anywhere;
 }
@@ -19,13 +21,56 @@
 .text {
   margin: 0;
   font-size: var(--text-sm);
-  line-height: var(--leading-loose);
   color: var(--color-text-on-dark-muted);
   text-wrap: pretty;
 }
 
 .action {
-  align-self: flex-start;
   max-width: 100%;
+}
+
+/* Сбоку этапа: всё столбиком, кнопка слева. */
+.panel {
+  flex-direction: column;
+  gap: var(--space-10);
+  padding: var(--space-18);
+}
+
+.panel .head {
+  gap: var(--space-10);
+}
+
+.panel .title {
+  font-size: var(--text-xl);
+}
+
+.panel .text {
+  line-height: var(--leading-loose);
+}
+
+.panel .action {
+  align-self: flex-start;
   margin-top: var(--space-4);
+}
+
+/* Под этапом: заголовок и пояснение слева, кнопка справа; не влезает — кнопка уходит вниз. */
+.bar {
+  flex-direction: row;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-16);
+  padding: var(--space-18) var(--space-20);
+}
+
+.bar .head {
+  flex: 1 1 var(--stage-side-min);
+  gap: var(--space-3);
+}
+
+.bar .title {
+  font-size: var(--text-lg);
+}
+
+.bar .action {
+  flex: none;
 }

@@ -1,4 +1,5 @@
-import type { Fragment, Label, RunState, Slicing, SlicingStep } from '../../domain/slicing';
+import type { RunState } from '../../domain/run';
+import type { Fragment, Label, Slicing, SlicingStep } from '../../domain/slicing';
 
 /** Ход работы: у нарезки и разметки — модели совета, у судей — судья. */
 const progress = (
@@ -31,27 +32,27 @@ const fragment = (id: string, text: string, label: Label, decidedBy: Fragment['d
   decidedBy,
 });
 
-/** Нарезка g1 — из data-1.json (slicing): части и модели, фрагменты с типами; «F» + id — как в макете. */
-const G1: Slicing = {
-  progress: doneProgress(['sol', 'opus'], 'opus'),
-  fragments: [
-    fragment(
-      'F1',
-      'Обеспечить получение списка сервисов Generation из существующих данных Scan и вывести его в /generation.',
-      'idea',
-    ),
-    fragment(
-      'F2',
-      'В список входят сервисы read-in-full = 100%, partial или scanned, у которых в активном снимке есть хотя бы один эндпоинт.',
-      'proposal',
-      'judge',
-    ),
-    fragment('F3', 'Генерация, раскладка ресурсов и отслеживание PR в эту задачу не входят.', 'constraint'),
-  ],
-};
+/** Фрагменты g1 — из data-1.json (slicing.fragments); «F» + id — как в макете. */
+export const G1_FRAGMENTS: Fragment[] = [
+  fragment(
+    'F1',
+    'Обеспечить получение списка сервисов Generation из существующих данных Scan и вывести его в /generation.',
+    'idea',
+  ),
+  fragment(
+    'F2',
+    'В список входят сервисы read-in-full = 100%, partial или scanned, у которых в активном снимке есть хотя бы один эндпоинт.',
+    'proposal',
+    'judge',
+  ),
+  fragment('F3', 'Генерация, раскладка ресурсов и отслеживание PR в эту задачу не входят.', 'constraint'),
+];
+
+/** Нарезка g1 — из data-1.json (slicing): части и модели, фрагменты с типами. */
+const G1: Slicing = { progress: doneProgress(['sol', 'opus'], 'opus'), fragments: G1_FRAGMENTS };
 
 /** Фрагменты советов-примеров — FRAGS из prototype.js: в макете они одни на все советы, кроме g1. */
-const PROTO_FRAGMENTS: Fragment[] = [
+export const PROTO_FRAGMENTS: Fragment[] = [
   fragment('F1', 'Мастера на объектах часто без связи — подвал, промзона.', 'constraint'),
   fragment('F2', 'Заявка не сохраняется, если пропала сеть, и человек заполняет всё заново.', 'risk'),
   fragment('F3', 'Заявка копится на телефоне и уходит сама, когда сеть вернётся.', 'idea'),
