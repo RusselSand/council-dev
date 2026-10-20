@@ -3,6 +3,7 @@ import type { CouncilFields, CouncilSummary } from '../domain/council';
 import type { Model } from '../domain/model';
 import type { Project, ProjectFields } from '../domain/project';
 import type { Fragment, Label, Slicing } from '../domain/slicing';
+import type { Group, GroupFields, Structure } from '../domain/structure';
 
 /**
  * Источник данных: всё, что фронтенд просит у бекенда. Ручки — в docs/api-contract.md.
@@ -27,6 +28,18 @@ export interface DataSource {
   setFragmentLabel(id: string, fragmentId: string, label: Label): Promise<Fragment>;
   /** POST /api/councils/<id>/structure — «Предложить группы»: разложить фрагменты по группам; ответ — совет. */
   startStructure(id: string): Promise<CouncilSummary>;
+  /** GET /api/councils/<id>/structure — раскладка совета по группам: ход работы, группы, почему остановилась. */
+  getStructure(id: string): Promise<Structure>;
+  /** PATCH /api/councils/<id>/groups/<groupId> — название или идея группы; ответ — группа после правки. */
+  updateGroup(id: string, groupId: string, fields: GroupFields): Promise<Group>;
+  /** POST /api/councils/<id>/groups/<groupId>/merge — объединить группу с группой into; ответ — раскладка. */
+  mergeGroup(id: string, groupId: string, into: string): Promise<Structure>;
+  /** POST /api/councils/<id>/groups/<groupId>/split — вынести фрагменты в новую группу title; ответ — раскладка. */
+  splitGroup(id: string, groupId: string, fragmentIds: string[], title: string): Promise<Structure>;
+  /** POST /api/councils/<id>/structure/confirm — «Подтвердить группы»; ответ — совет. */
+  confirmStructure(id: string): Promise<CouncilSummary>;
+  /** POST /api/councils/<id>/structure/retry — «Запустить снова» остановившуюся раскладку; ответ — совет. */
+  retryStructure(id: string): Promise<CouncilSummary>;
   /** GET /api/models */
   listModels(): Promise<Model[]>;
   /** GET /api/projects */

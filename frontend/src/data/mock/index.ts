@@ -1,13 +1,29 @@
 import { cleanName, type CouncilFields, type CouncilSummary } from '../../domain/council';
 import { cleanFields, MAX_PROJECT_REPOS, type Project, type ProjectFields } from '../../domain/project';
 import { isLabel, type Slicing } from '../../domain/slicing';
+import type { Structure } from '../../domain/structure';
 import { ApiError } from '../errors';
 import type { DataSource } from '../source';
 import { BRIEFS } from './briefs';
-import { COUNCILS, newDraft, slicingStarted, structureStarted } from './councils';
+import {
+  COUNCILS,
+  newDraft,
+  slicingStarted,
+  structureConfirmed,
+  structureRetried,
+  structureStarted,
+} from './councils';
 import { MODELS } from './models';
 import { PROJECT_LIST, REPO_LIST, type MockProject } from './projects';
 import { noSlicing, SLICINGS, startedSlicing } from './slicings';
+import {
+  mergeGroups,
+  noStructure,
+  retriedStructure,
+  splitGroup,
+  startedStructure,
+  STRUCTURES,
+} from './structures';
 
 /** Копия, чтобы экран не мог поменять моки у себя в руках. */
 const copy = <T>(value: T): T => structuredClone(value);
@@ -23,6 +39,8 @@ const briefs = new Map(Object.entries(BRIEFS));
  * фрагменты одни и те же, а тип у каждого совета меняют свой.
  */
 const slicings = new Map(Object.entries(SLICINGS).map(([id, slicing]) => [id, copy(slicing)]));
+/** Раскладки по id совета: правка групп и новая раскладка меняют их здесь; у каждого совета — своя копия. */
+const structures = new Map(Object.entries(STRUCTURES).map(([id, structure]) => [id, copy(structure)]));
 /** Проекты моков: создание, правка и удаление меняют их здесь; живут, пока открыта вкладка. */
 const projects = copy(PROJECT_LIST);
 /** Idempotency-Key → id созданного по нему проекта. */
@@ -47,6 +65,25 @@ function checkNotSlicing(council: CouncilSummary) {
   if (council.stages.slices === 'running') {
     throw new ApiError('slicing_running', `Совет ${council.id} ещё режет текст`, 409);
   }
+}
+
+/** Раскладка совета; у совета, который не раскладывали, её не было. */
+function structureOf(id: string): Structure {
+  const structure = structures.get(id) ?? noStructure();
+  structures.set(id, structure);
+  return structure;
+}
+
+/** Пока модели раскладывают фрагменты, групп ещё нет: их не правят и не подтверждают. */
+function checkNotStructuring(council: CouncilSummary) {
+  if (council.stages.structure === 'running') {
+    throw new ApiError('structure_running', `Совет ${council.id} ещё раскладывает фрагменты по группам`, 409);
+  }
+}
+
+/** Совет поменяли: новое время изменения. */
+function touch(index: number) {
+  councils[index] = { ...councils[index], updatedAt: new Date().toISOString() };
 }
 
 /**
@@ -131,7 +168,7 @@ export const mockSource: DataSource = {
   async saveBrief(id, text) {
     const index = councilAt(id);
     briefs.set(id, text);
-    councils[index] = { ...councils[index], updatedAt: new Date().toISOString() };
+    touch(index);
     return { text };
   },
   async startSlicing(id) {
@@ -156,13 +193,71 @@ export const mockSource: DataSource = {
     if (at < 0) throw new ApiError('not_found', `Фрагмента ${fragmentId} у совета ${id} нет`, 404);
     if (!isLabel(label)) throw new ApiError('unknown_label', `Типа ${String(label)} нет`, 422);
     slicing.fragments[at] = { ...slicing.fragments[at], label };
-    councils[index] = { ...councils[index], updatedAt: new Date().toISOString() };
+    // Фрагмент идёт в группы с типом, который выбрал человек.
+    for (const group of structures.get(id)?.groups ?? []) {
+      group.fragments = group.fragments.map((f) => (f.id === fragmentId ? { ...f, label } : f));
+    }
+    touch(index);
     return copy(slicing.fragments[at]);
   },
   async startStructure(id) {
     const index = councilAt(id);
     checkNotSlicing(councils[index]);
+    const starting = councils[index].stages.structure === 'idle';
     councils[index] = structureStarted(councils[index], new Date().toISOString());
+    // Модели раскладывают фрагменты: групп пока нет. В моках раскладка не кончается.
+    if (starting) structures.set(id, startedStructure(councils[index].participants, councils[index].judge));
+    return copy(councils[index]);
+  },
+  async getStructure(id) {
+    councilAt(id);
+    return copy(structureOf(id));
+  },
+  async updateGroup(id, groupId, fields) {
+    const index = councilAt(id);
+    checkNotStructuring(councils[index]);
+    const structure = structureOf(id);
+    const at = structure.groups.findIndex((g) => g.id === groupId);
+    if (at < 0) throw new ApiError('not_found', `Группы ${groupId} у совета ${id} нет`, 404);
+    const group = { ...structure.groups[at] };
+    if (fields.title !== undefined) group.title = cleanName(fields.title);
+    // Идею вписал человек — она его, как в макете («вы»).
+    if (fields.idea !== undefined) {
+      group.idea = fields.idea;
+      group.ideaBy = 'user';
+    }
+    structure.groups[at] = group;
+    touch(index);
+    return copy(group);
+  },
+  async mergeGroup(id, groupId, into) {
+    const index = councilAt(id);
+    checkNotStructuring(councils[index]);
+    structures.set(id, mergeGroups(structureOf(id), groupId, into));
+    touch(index);
+    return copy(structureOf(id));
+  },
+  async splitGroup(id, groupId, fragmentIds, title) {
+    const index = councilAt(id);
+    checkNotStructuring(councils[index]);
+    structures.set(id, splitGroup(structureOf(id), groupId, fragmentIds, title));
+    touch(index);
+    return copy(structureOf(id));
+  },
+  async confirmStructure(id) {
+    const index = councilAt(id);
+    checkNotStructuring(councils[index]);
+    councils[index] = structureConfirmed(councils[index], new Date().toISOString());
+    return copy(councils[index]);
+  },
+  async retryStructure(id) {
+    const index = councilAt(id);
+    // Раскладка не останавливалась — не перезапускаем, отвечаем советом как есть.
+    if (councils[index].stages.structure === 'failed') {
+      const { participants, judge } = councils[index];
+      councils[index] = structureRetried(councils[index], new Date().toISOString());
+      structures.set(id, retriedStructure(structureOf(id), participants, judge));
+    }
     return copy(councils[index]);
   },
   async listModels() {

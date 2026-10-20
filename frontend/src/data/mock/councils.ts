@@ -212,6 +212,10 @@ export const slicingStarted = (council: CouncilSummary, updatedAt: string): Coun
   updatedAt,
 });
 
+/** Первый неготовый этап, начиная с from; все готовы — «Задачи». */
+const firstOpen = (stages: Record<Stage, State>, from: Stage): Stage =>
+  STAGES.slice(STAGES.indexOf(from)).find((s) => stages[s] !== 'done') ?? 'tasks';
+
 /**
  * Совет после «Предложить группы →» — как в макете (prototype.js, toGroups): «Нарезка» готова; раскладки по группам
  * ещё не было — она запускается («Группы» — ИИ работает; в макете они сразу ждут вас, будто модели уже поработали),
@@ -227,7 +231,7 @@ export const structureStarted = (council: CouncilSummary, updatedAt: string): Co
     slices: 'done',
     structure: starting ? 'running' : council.stages.structure,
   };
-  const stage = STAGES.slice(STAGES.indexOf('structure')).find((s) => stages[s] !== 'done') ?? 'tasks';
+  const stage = firstOpen(stages, 'structure');
   const gone: Stage[] = starting ? ['brief', 'slices', 'structure'] : ['brief', 'slices'];
   return {
     ...council,
@@ -241,6 +245,60 @@ export const structureStarted = (council: CouncilSummary, updatedAt: string): Co
         : []),
     ],
     summary: starting ? 'Группы — модели раскладывают фрагменты' : council.summary,
+    updatedAt,
+  };
+};
+
+/**
+ * Совет после «Запустить снова» на «Группах»: раскладка, которая остановилась, запускается снова — «Группы» и совет —
+ * ИИ работает, строка «Групп» на Сводке — что делают модели, как после «Предложить группы →». В макете «Группы» сразу
+ * ждут вас, будто модели уже поработали. Раскладка не останавливалась — совет как есть.
+ */
+export const structureRetried = (council: CouncilSummary, updatedAt: string): CouncilSummary => {
+  if (council.stages.structure !== 'failed') return council;
+  const stages: Record<Stage, State> = { ...council.stages, structure: 'running' };
+  const stage = firstOpen(stages, 'structure');
+  return {
+    ...council,
+    stage,
+    state: stages[stage],
+    stages,
+    activity: [
+      ...council.activity.filter((a) => a.stage !== 'structure'),
+      atStage('structure', 'running', `${modelsText(council.participants)} раскладывают фрагменты по группам`),
+    ],
+    summary: 'Группы — модели раскладывают фрагменты',
+    updatedAt,
+  };
+};
+
+/**
+ * Совет после «Подтвердить →» на «Группах» — как в макете (prototype.js, toResearch): «Группы» готовы; «Исследование»,
+ * если ещё не начато, ждёт вас. Совет встаёт на первый неготовый этап после «Групп», его состояние — состояние этого
+ * этапа. Строки «Групп» на Сводке уходят; «Исследование» стало ждать — строка о нём (текст — подсказка «Исследования»
+ * в макете). «Группы» уже подтверждены — совет как есть.
+ */
+export const structureConfirmed = (council: CouncilSummary, updatedAt: string): CouncilSummary => {
+  if (council.stages.structure === 'done') return council;
+  const starting = council.stages.research === 'idle';
+  const stages: Record<Stage, State> = {
+    ...council.stages,
+    structure: 'done',
+    research: starting ? 'waiting' : council.stages.research,
+  };
+  const stage = firstOpen(stages, 'research');
+  return {
+    ...council,
+    stage,
+    state: stages[stage],
+    stages,
+    activity: [
+      ...council.activity.filter((a) => a.stage !== 'structure'),
+      ...(starting
+        ? [atStage('research', 'waiting', 'Начните или пропустите оба исследования — потом группы станут потоками.')]
+        : []),
+    ],
+    summary: starting ? 'Исследование ждёт запуска' : council.summary,
     updatedAt,
   };
 };

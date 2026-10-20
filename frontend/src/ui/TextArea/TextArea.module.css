@@ -1,13 +1,25 @@
 .area {
   width: 100%;
   min-width: 0;
+  border: 0;
+  color: var(--color-ink);
+  resize: vertical;
+}
+
+.tall {
   min-height: var(--textarea-tall);
   padding: var(--space-16);
-  border: 0;
   border-radius: var(--radius-16);
   background: var(--color-surface-sunken);
   font-size: var(--text-base);
   line-height: var(--leading-wide);
-  color: var(--color-ink);
-  resize: vertical;
+}
+
+.bare {
+  padding: 0;
+  background: transparent;
+  font-size: var(--text-lg);
+  font-weight: var(--weight-semibold);
+  line-height: var(--leading-relaxed);
+  outline: none;
 }

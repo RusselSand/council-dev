@@ -1,11 +1,12 @@
 import { LoadState } from '../../components/LoadState';
+import { RunningStage } from '../../components/RunningStage';
+import { RunProgress } from '../../components/RunProgress';
 import type { CouncilSummary } from '../../domain/council';
 import { useI18n } from '../../i18n';
 import { Button } from '../../ui/Button';
 import { Columns } from '../../ui/Columns';
 import { NextStep } from '../../ui/NextStep';
 import { FragmentList } from './parts/FragmentList';
-import { SlicingRunning } from './parts/SlicingRunning';
 import { useSlices } from './useSlices';
 
 /**
@@ -17,7 +18,15 @@ export function Slices({ council }: { council: CouncilSummary }) {
   const { t } = useI18n();
   const screen = useSlices(council);
   if (!screen.loaded) return <LoadState loading={screen.loading} error={screen.error} onRetry={screen.reload} />;
-  if (screen.running) return <SlicingRunning progress={screen.progress} />;
+  if (screen.running) {
+    return (
+      <RunningStage
+        title={t('slices.running.title')}
+        intro={t('slices.running.intro')}
+        progress={<RunProgress rows={screen.progress} phaseLabel={(phase) => t(`slices.phase.${phase}`)} />}
+      />
+    );
+  }
   return (
     <Columns
       main={<FragmentList title={screen.title} fragments={screen.fragments} onPick={screen.pickLabel} />}

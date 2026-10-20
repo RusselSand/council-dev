@@ -4,6 +4,7 @@ import { Council } from '../features/council';
 import { Home } from '../features/home';
 import { Projects } from '../features/projects';
 import { Slices } from '../features/slices';
+import { Structure } from '../features/structure';
 import { ScreenStub } from '../features/stub';
 import { navigate, routePath, useRoute } from '../router';
 
@@ -26,6 +27,8 @@ export function Screen() {
           <Brief key={council.id} council={council} />
         ) : route.screen === 'stage' && route.stage === 'slices' ? (
           <Slices key={council.id} council={council} />
+        ) : route.screen === 'stage' && route.stage === 'structure' ? (
+          <Structure key={council.id} council={council} />
         ) : (
           // Остальные этапы пока не сделаны — под вкладками заглушка. Этап появится — его ветка встанет здесь.
           <ScreenStub route={route} />

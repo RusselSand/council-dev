@@ -16,6 +16,9 @@ export const ERROR_CODES = [
   'model_offline',
   'slicing_running',
   'unknown_label',
+  'structure_running',
+  'bad_merge',
+  'bad_split',
   'network',
   'unknown',
 ] as const;

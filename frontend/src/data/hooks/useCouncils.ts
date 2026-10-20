@@ -110,3 +110,33 @@ export function useStartStructure(): Mutation<[id: string], CouncilSummary> {
     (council) => markStale('councils', (list) => replaceIn(list, council)),
   );
 }
+
+/**
+ * «Подтвердить группы» — POST /api/councils/<id>/structure/confirm; ответ — совет после подтверждения. Он сразу встаёт
+ * в список советов на место старого: вкладки этапов, меню и Сводка видят, что «Группы» готовы. Раскладка успела
+ * начаться заново — список советов перезапрашивается: экран увидит, что модели раскладывают фрагменты.
+ */
+export function useConfirmStructure(): Mutation<[id: string], CouncilSummary> {
+  return useMutation(
+    async (id: string) => {
+      try {
+        return await source.confirmStructure(id);
+      } catch (error) {
+        if (error instanceof ApiError && error.code === 'structure_running') markStale('councils');
+        throw error;
+      }
+    },
+    (council) => markStale('councils', (list) => replaceIn(list, council)),
+  );
+}
+
+/**
+ * «Запустить снова» — POST /api/councils/<id>/structure/retry: раскладка, которая остановилась, запускается снова;
+ * ответ — совет после запуска. Он сразу встаёт в список советов на место старого: экран видит, что модели работают.
+ */
+export function useRetryStructure(): Mutation<[id: string], CouncilSummary> {
+  return useMutation(
+    (id: string) => source.retryStructure(id),
+    (council) => markStale('councils', (list) => replaceIn(list, council)),
+  );
+}

@@ -2,16 +2,25 @@ import type { CouncilSummary } from '../../domain/council';
 import type { Model } from '../../domain/model';
 import type { Project } from '../../domain/project';
 import type { Slicing } from '../../domain/slicing';
+import type { Structure } from '../../domain/structure';
 
-/** Нарезка и совет, чья она: правка фрагмента одного совета не должна попасть в нарезку другого. */
-export interface CouncilSlicing extends Slicing {
+/**
+ * Данные этапа, на котором работают модели, и чьи они: правка одного совета не должна попасть в данные другого.
+ */
+interface CouncilStage {
   council: string;
   /**
-   * Шла ли у совета нарезка, когда эту нарезку запросили: нарезка, запрошенная до того, как нарезка началась или
-   * кончилась, — от другой нарезки, экран её не показывает.
+   * Работали ли модели на этапе, когда данные запросили: запрошенные до того, как модели начали или кончили работу, —
+   * от другой работы, экран их не показывает.
    */
   running: boolean;
 }
+
+/** Нарезка и совет, чья она. */
+export interface CouncilSlicing extends Slicing, CouncilStage {}
+
+/** Раскладка по группам и совет, чья она. */
+export interface CouncilStructure extends Structure, CouncilStage {}
 
 /** Данные, которые может изменить действие, и их вид: после действия их запросы перезапрашиваются. */
 export interface Topics {
@@ -23,6 +32,8 @@ export interface Topics {
   repos: string[];
   /** Нарезка открытого совета. */
   slicing: CouncilSlicing;
+  /** Раскладка открытого совета по группам. */
+  structure: CouncilStructure;
 }
 export type Topic = keyof Topics;
 

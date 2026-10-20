@@ -1,0 +1,7 @@
+/* Строка связей стоит и пустой, как в макете: место под ней — то же, что у групп со связями. */
+.links {
+  margin: 0;
+  font-size: var(--text-xs);
+  color: var(--color-text-faint);
+  overflow-wrap: anywhere;
+}

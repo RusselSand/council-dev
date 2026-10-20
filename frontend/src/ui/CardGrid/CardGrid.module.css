@@ -10,3 +10,11 @@
 .lg {
   grid-template-columns: repeat(auto-fill, minmax(var(--card-min-lg), 1fr));
 }
+
+.stretch {
+  align-items: stretch;
+}
+
+.start {
+  align-items: start;
+}

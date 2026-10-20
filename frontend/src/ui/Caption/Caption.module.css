@@ -14,3 +14,9 @@
   font-size: var(--text-2xs);
   color: var(--color-text-on-dark-muted);
 }
+
+/* «Идея» на жёлтой плашке группы. */
+.onAttention {
+  font-size: var(--text-2xs);
+  color: var(--state-waiting-ink);
+}

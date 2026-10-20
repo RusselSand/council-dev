@@ -12,7 +12,8 @@
   font-size: var(--text-md);
 }
 
-.sm {
+.sm,
+.xs {
   font-size: var(--text-sm);
 }
 
@@ -30,6 +31,11 @@
   padding: var(--space-7) var(--space-14);
 }
 
+/* «В новую группу». */
+.primary.xs {
+  padding: var(--space-6) var(--space-14);
+}
+
 .outline {
   border: var(--border-thin) solid var(--color-ink);
   background: transparent;
@@ -42,6 +48,12 @@
 
 .outline.sm {
   padding: var(--space-7) var(--space-14);
+}
+
+/* Группа в «Объединить с»: на серой плашке — белая. */
+.outline.xs {
+  padding: var(--space-5) var(--space-12);
+  background: var(--color-paper);
 }
 
 /* Недоступная главная кнопка — серая, как «Начать исследование», пока не выбраны репозитории. */
@@ -84,6 +96,39 @@
 /* «Удалить» на карточке. */
 .text.sm {
   padding: var(--space-7) var(--space-10);
+}
+
+/* «Отмена» на серой плашке. */
+.text.xs {
+  padding: var(--space-5) var(--space-8);
+}
+
+/* «Объединить с…», «Разделить», «Переименовать» на карточке группы. */
+.subtle {
+  border: 0;
+  background: transparent;
+  color: var(--color-text-secondary);
+}
+
+.subtle.md {
+  padding: var(--space-10) var(--space-14);
+}
+
+.subtle.sm {
+  padding: var(--space-7) var(--space-10);
+}
+
+.subtle.xs {
+  padding: var(--space-5) var(--space-8);
+}
+
+.subtle:not(:disabled):hover {
+  background: var(--color-hover);
+  color: var(--color-ink);
+}
+
+.subtle:disabled {
+  color: var(--color-text-ghost);
 }
 
 .danger.primary {

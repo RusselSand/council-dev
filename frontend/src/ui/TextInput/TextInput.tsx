@@ -1,8 +1,11 @@
 import type { InputHTMLAttributes } from 'react';
 import styles from './TextInput.module.css';
 
-/** text — обычный текст: название; mono — моноширинный и плотнее: путь, имя файла. */
-export type TextInputVariant = 'text' | 'mono';
+/**
+ * text — обычный текст: название; mono — моноширинный и плотнее: путь, имя файла; title — заголовок карточки,
+ * который правят на месте: крупный жирный, белый, в тёмной рамке (название группы).
+ */
+export type TextInputVariant = 'text' | 'mono' | 'title';
 
 type TextInputProps = Omit<InputHTMLAttributes<HTMLInputElement>, 'onChange'> & {
   variant?: TextInputVariant;

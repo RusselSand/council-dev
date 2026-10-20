@@ -1,8 +1,8 @@
 import type { ReactNode } from 'react';
 import styles from './Caption.module.css';
 
-/** ink — на светлом; onDark — на тёмной плашке. */
-export type CaptionTone = 'ink' | 'onDark';
+/** ink — на светлом; onDark — на тёмной плашке; onAttention — на жёлтой плашке («Идея» группы). */
+export type CaptionTone = 'ink' | 'onDark' | 'onAttention';
 
 /** Подпись раздела капсом: «Репозитории», «Папка документации». */
 export function Caption({ tone = 'ink', children }: { tone?: CaptionTone; children: ReactNode }) {

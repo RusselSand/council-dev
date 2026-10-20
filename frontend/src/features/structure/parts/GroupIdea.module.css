@@ -1,0 +1,15 @@
+.idea {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-6);
+  padding: var(--space-14);
+  border-radius: var(--radius-16);
+  background: var(--color-attention-bg);
+}
+
+.head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-8);
+  color: var(--state-waiting-ink);
+}
