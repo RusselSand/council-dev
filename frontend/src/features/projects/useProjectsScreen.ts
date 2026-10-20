@@ -14,11 +14,11 @@ export interface ProjectCardView {
   docs: string;
   /** Первое «Удалить» нажато — кнопка стала «Да, удалить». */
   confirming: boolean;
-  /** «Удалить» недоступна: проект выбран в совете или удаляется проект. */
+  /** «Удалить» недоступна: проект выбран в совете (по списку или по ответу сервера) или удаляется проект. */
   deleteDisabled: boolean;
   /** Не вышло удалить этот проект. */
   error: ApiError | undefined;
-  /** После ошибки можно удалить ещё раз: проект по-прежнему не в советах. */
+  /** После ошибки можно удалить ещё раз: проект не в советах ни по списку, ни по ответу сервера. */
   retryable: boolean;
 }
 
@@ -58,7 +58,9 @@ export function useProjectsScreen(): ProjectsScreen {
   };
 
   const cards = projects.data?.map((project): ProjectCardView => {
-    const used = project.councilCount > 0;
+    const error = target === project.id ? deletion.error : undefined;
+    // Сервер ответил, что проект в советах, — удалять нельзя сразу, не дожидаясь нового списка с числом советов.
+    const used = project.councilCount > 0 || error?.code === 'project_in_use';
     return {
       id: project.id,
       name: project.name,
@@ -68,7 +70,7 @@ export function useProjectsScreen(): ProjectsScreen {
       // Пока спрашивали, проект успели выбрать в совете — спрашивать больше не о чем.
       confirming: !used && confirming === project.id,
       deleteDisabled: used || deletion.pending,
-      error: target === project.id ? deletion.error : undefined,
+      error,
       retryable: !used,
     };
   });
