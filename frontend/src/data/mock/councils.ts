@@ -9,6 +9,7 @@ import {
   type StreamSummary,
 } from '../../domain/council';
 import type { ProjectRef } from '../../domain/project';
+import { isPending, researchStatus, type Research, type ResearchStatus } from '../../domain/research';
 import { PROJECTS } from './projects';
 
 /** Состояния этапов по порядку: Ввод, Нарезка, Группы, Исследование, Потоки, Задачи. */
@@ -299,6 +300,83 @@ export const structureConfirmed = (council: CouncilSummary, updatedAt: string): 
         : []),
     ],
     summary: starting ? 'Исследование ждёт запуска' : council.summary,
+    updatedAt,
+  };
+};
+
+/** «код», «макет», «код и макет» — что исследуют модели, в строке «Исследования» на Сводке; строку пишет сервер. */
+const researchedText = (research: Research) => {
+  const code = research.code.state === 'running';
+  const design = research.design.state === 'running';
+  return code && design ? 'код и макет' : code ? 'код' : 'макет';
+};
+
+/** Строка «Исследования» на Сводке, пока оно ждёт человека, — как пояснение на плашке «Утвердить исследование». */
+const RESEARCH_WAITING: Record<ResearchStatus, string> = {
+  ready: 'Утвердите исследование — потом группы станут потоками.',
+  groups: 'Подтвердите группы — потом они станут потоками.',
+  pending: 'Находки ждут вашего решения — выводы и противоречия.',
+  running: 'Дождитесь окончания исследования.',
+  start: 'Начните или пропустите оба исследования — потом группы станут потоками.',
+};
+
+/**
+ * Совет после действия с исследованием — начать, пропустить, остановить, вернуть к настройке — или решения по находке,
+ * пока исследование не утверждено. «Исследование» — ИИ работает, пока хоть одно исследование идёт, иначе — ждёт вас:
+ * утверждение снимается. Совет встаёт на первый неготовый этап. Строка «Исследования» на Сводке — что делают модели или
+ * что нужно от человека. В макете действия с исследованием этапы совета не меняют.
+ */
+export const researchChanged = (council: CouncilSummary, research: Research, updatedAt: string): CouncilSummary => {
+  const running = research.code.state === 'running' || research.design.state === 'running';
+  const runs = [...research.code.runs, ...research.design.runs].filter((run) => run.state === 'running');
+  const stages: Record<Stage, State> = { ...council.stages, research: running ? 'running' : 'waiting' };
+  const stage = firstOpen(stages, 'brief');
+  const pending = research.findings.filter((f) => isPending(f.kind, f.decision)).length;
+  const text = running
+    ? `${modelsText([...new Set(runs.map((run) => run.model))])} исследуют ${researchedText(research)}`
+    : RESEARCH_WAITING[
+        researchStatus(research.code.state, research.design.state, pending, council.stages.structure === 'done')
+      ];
+  return {
+    ...council,
+    stage,
+    state: stages[stage],
+    stages,
+    activity: [
+      ...council.activity.filter((a) => a.stage !== 'research'),
+      atStage('research', running ? 'running' : 'waiting', text),
+    ],
+    summary: stage !== 'research' ? council.summary : running ? 'Исследование идёт' : 'Исследование ждёт вас',
+    updatedAt,
+  };
+};
+
+/**
+ * Совет после «К потокам →» — как в макете (prototype.js, toStreams): «Исследование» готово; «Потоки», если ещё
+ * не начаты, ждут вас — каждая группа становится потоком на шаге «Решения проекта». Совет встаёт на первый неготовый
+ * этап. Строка «Исследования» на Сводке уходит, у новых потоков — по строке. Уже утверждено — совет как есть.
+ */
+export const researchApproved = (council: CouncilSummary, groups: string[], updatedAt: string): CouncilSummary => {
+  if (council.stages.research === 'done') return council;
+  const starting = council.stages.streams === 'idle';
+  const stages: Record<Stage, State> = {
+    ...council.stages,
+    research: 'done',
+    streams: starting ? 'waiting' : council.stages.streams,
+  };
+  const streams: StreamSummary[] = starting ? groups.map((id) => ({ id, step: 'project' })) : council.streams;
+  const stage = firstOpen(stages, 'brief');
+  return {
+    ...council,
+    stage,
+    state: stages[stage],
+    stages,
+    streams,
+    activity: [
+      ...council.activity.filter((a) => a.stage !== 'research'),
+      ...(starting ? streams.map((s) => atStep(s.id, 'project', 'waiting', 'Отметьте прошлые решения проекта')) : []),
+    ],
+    summary: starting ? 'Потоки ждут вас' : council.summary,
     updatedAt,
   };
 };

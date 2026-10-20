@@ -2,6 +2,7 @@ import type { Brief } from '../../domain/brief';
 import type { CouncilSummary } from '../../domain/council';
 import type { Model } from '../../domain/model';
 import type { Project } from '../../domain/project';
+import type { Finding, Research } from '../../domain/research';
 import type { Fragment, Slicing } from '../../domain/slicing';
 import type { Group, Structure } from '../../domain/structure';
 import type { DataSource } from '../source';
@@ -12,6 +13,9 @@ const councilPath = (id: string) => `/councils/${encodeURIComponent(id)}`;
 
 /** Путь группы совета: /councils/<id>/groups/<groupId>. */
 const groupPath = (id: string, groupId: string) => `${councilPath(id)}/groups/${encodeURIComponent(groupId)}`;
+
+/** Путь исследования совета: /councils/<id>/research. */
+const researchPath = (id: string) => `${councilPath(id)}/research`;
 
 /** Настоящий сервер. */
 export const httpSource: DataSource = {
@@ -75,6 +79,39 @@ export const httpSource: DataSource = {
   },
   async retryStructure(id) {
     const { council } = await request<{ council: CouncilSummary }>('POST', `${councilPath(id)}/structure/retry`, {});
+    return council;
+  },
+  async getResearch(id) {
+    const { research } = await request<{ research: Research }>('GET', researchPath(id));
+    return research;
+  },
+  async startCodeResearch(id, repos) {
+    const { research } = await request<{ research: Research }>('POST', `${researchPath(id)}/code/start`, { repos });
+    return research;
+  },
+  async startDesignResearch(id, link) {
+    const { research } = await request<{ research: Research }>('POST', `${researchPath(id)}/design/start`, { link });
+    return research;
+  },
+  async skipResearch(id, kind) {
+    const { research } = await request<{ research: Research }>('POST', `${researchPath(id)}/${kind}/skip`, {});
+    return research;
+  },
+  async stopResearch(id, kind) {
+    const { research } = await request<{ research: Research }>('POST', `${researchPath(id)}/${kind}/stop`, {});
+    return research;
+  },
+  async resetResearch(id, kind) {
+    const { research } = await request<{ research: Research }>('POST', `${researchPath(id)}/${kind}/reset`, {});
+    return research;
+  },
+  async setFindingDecision(id, findingId, decision) {
+    const path = `${researchPath(id)}/findings/${encodeURIComponent(findingId)}`;
+    const { finding } = await request<{ finding: Finding }>('PATCH', path, { decision });
+    return finding;
+  },
+  async approveResearch(id) {
+    const { council } = await request<{ council: CouncilSummary }>('POST', `${researchPath(id)}/approve`, {});
     return council;
   },
   async listModels() {

@@ -1,0 +1,35 @@
+.sides {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(var(--conflict-side-min), 1fr));
+  gap: var(--space-8);
+}
+
+.side {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  min-width: 0;
+  padding: var(--space-10) var(--space-12);
+  border: var(--border-thick) solid var(--color-line-faint);
+  border-radius: var(--radius-12);
+  background: var(--color-paper);
+}
+
+/* Человек решил, что права эта сторона. */
+.chosen {
+  border-color: var(--color-ink);
+}
+
+.label {
+  font-size: var(--text-2xs);
+  font-weight: var(--weight-bold);
+  letter-spacing: var(--tracking-caps);
+  text-transform: uppercase;
+  color: var(--color-text-faint);
+}
+
+.text {
+  font-size: var(--text-md);
+  line-height: var(--leading-normal);
+  overflow-wrap: anywhere;
+}

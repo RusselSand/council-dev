@@ -1,8 +1,11 @@
 import type { ReactNode } from 'react';
 import styles from './CardGrid.module.css';
 
-/** Самая узкая карточка: md — советы на Сводке, группы; lg — проекты. */
-export type CardGridSize = 'md' | 'lg';
+/**
+ * Самая узкая карточка: md — советы на Сводке, группы; lg — проекты; xl — широкие блоки рядом, а карточек меньше, чем
+ * влезает, — растягиваются на всю ширину (исследования кода и макета).
+ */
+export type CardGridSize = 'md' | 'lg' | 'xl';
 
 /** stretch — карточки в строке одной высоты; start — каждая своей высоты, по верху (группы). */
 export type CardGridAlign = 'stretch' | 'start';

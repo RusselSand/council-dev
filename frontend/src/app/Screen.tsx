@@ -3,6 +3,7 @@ import { Brief } from '../features/brief';
 import { Council } from '../features/council';
 import { Home } from '../features/home';
 import { Projects } from '../features/projects';
+import { Research } from '../features/research';
 import { Slices } from '../features/slices';
 import { Structure } from '../features/structure';
 import { ScreenStub } from '../features/stub';
@@ -29,6 +30,8 @@ export function Screen() {
           <Slices key={council.id} council={council} />
         ) : route.screen === 'stage' && route.stage === 'structure' ? (
           <Structure key={council.id} council={council} />
+        ) : route.screen === 'stage' && route.stage === 'research' ? (
+          <Research key={council.id} council={council} />
         ) : (
           // Остальные этапы пока не сделаны — под вкладками заглушка. Этап появится — его ветка встанет здесь.
           <ScreenStub route={route} />

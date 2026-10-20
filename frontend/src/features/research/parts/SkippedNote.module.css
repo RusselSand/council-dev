@@ -1,0 +1,10 @@
+.note {
+  margin: 0;
+  padding: var(--space-14);
+  border: var(--border-thin) dashed var(--color-line-dashed);
+  border-radius: var(--radius-16);
+  font-size: var(--text-md);
+  line-height: var(--leading-relaxed);
+  color: var(--color-text-muted);
+  text-wrap: pretty;
+}

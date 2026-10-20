@@ -131,6 +131,28 @@ export function useConfirmStructure(): Mutation<[id: string], CouncilSummary> {
 }
 
 /**
+ * «К потокам →» — POST /api/councils/<id>/research/approve: утвердить исследование; ответ — совет после утверждения.
+ * Он сразу встаёт в список советов на место старого: вкладки этапов, меню и Сводка видят потоки. Исследование успели
+ * поменять в другой вкладке и оно не готово — исследование и список советов перезапрашиваются.
+ */
+export function useApproveResearch(): Mutation<[id: string], CouncilSummary> {
+  return useMutation(
+    async (id: string) => {
+      try {
+        return await source.approveResearch(id);
+      } catch (error) {
+        if (error instanceof ApiError && error.code === 'research_not_ready') {
+          markStale('research');
+          markStale('councils');
+        }
+        throw error;
+      }
+    },
+    (council) => markStale('councils', (list) => replaceIn(list, council)),
+  );
+}
+
+/**
  * «Запустить снова» — POST /api/councils/<id>/structure/retry: раскладка, которая остановилась, запускается снова;
  * ответ — совет после запуска. Он сразу встаёт в список советов на место старого: экран видит, что модели работают.
  */

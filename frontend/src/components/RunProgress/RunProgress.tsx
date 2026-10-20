@@ -5,8 +5,11 @@ import { Card } from '../../ui/Card';
 import { Dot, type DotTone } from '../../ui/Dot';
 import styles from './RunProgress.module.css';
 
-/** Цвет точки — как в макете: работает и готово — зелёная, ждёт и не понадобился — серая; не справилась — красная. */
-const RUN_TONE: Record<RunState, DotTone> = {
+/**
+ * Цвет точки работы модели — как в макете: работает и готово — зелёная, ждёт и не понадобился — серая; не справилась —
+ * красная. Тот же у строк работы моделей в исследовании.
+ */
+export const RUN_TONE: Record<RunState, DotTone> = {
   waiting: 'gray',
   running: 'green',
   done: 'green',

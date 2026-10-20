@@ -2,6 +2,7 @@ export { ApiError, errorKey, type ErrorCode } from './errors';
 export { useAutosave, type Autosave } from './hooks/useAutosave';
 export { holdBrief, useCouncilBrief, useSaveBrief } from './hooks/useBrief';
 export {
+  useApproveResearch,
   useConfirmStructure,
   useCouncils,
   useCreateCouncil,
@@ -12,6 +13,13 @@ export {
 } from './hooks/useCouncils';
 export { useModels } from './hooks/useModels';
 export { useCreateProject, useDeleteProject, useProjects, useRepos, useUpdateProject } from './hooks/useProjects';
+export {
+  useCouncilResearch,
+  useFindingDecisions,
+  useResearchAction,
+  type FindingDecisions,
+  type ResearchAction,
+} from './hooks/useResearch';
 export { useCouncilSlicing, useFragmentLabels, type FragmentLabels } from './hooks/useSlicing';
 export { useCouncilStructure, useGroupEdits, type GroupEdits } from './hooks/useStructure';
 export type { Mutation } from './hooks/useMutation';

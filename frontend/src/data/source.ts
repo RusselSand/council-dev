@@ -2,6 +2,7 @@ import type { Brief } from '../domain/brief';
 import type { CouncilFields, CouncilSummary } from '../domain/council';
 import type { Model } from '../domain/model';
 import type { Project, ProjectFields } from '../domain/project';
+import type { Decision, Finding, Research, ResearchKind } from '../domain/research';
 import type { Fragment, Label, Slicing } from '../domain/slicing';
 import type { Group, GroupFields, Structure } from '../domain/structure';
 
@@ -40,6 +41,22 @@ export interface DataSource {
   confirmStructure(id: string): Promise<CouncilSummary>;
   /** POST /api/councils/<id>/structure/retry — «Запустить снова» остановившуюся раскладку; ответ — совет. */
   retryStructure(id: string): Promise<CouncilSummary>;
+  /** GET /api/councils/<id>/research — исследование совета: код, макет, находки, сценарии, покрытие. */
+  getResearch(id: string): Promise<Research>;
+  /** POST /api/councils/<id>/research/code/start — начать исследование кода этих репозиториев; ответ — исследование. */
+  startCodeResearch(id: string, repos: string[]): Promise<Research>;
+  /** POST /api/councils/<id>/research/design/start — начать исследование макета по ссылке; ответ — исследование. */
+  startDesignResearch(id: string, link: string): Promise<Research>;
+  /** POST /api/councils/<id>/research/<kind>/skip — пропустить исследование; ответ — исследование. */
+  skipResearch(id: string, kind: ResearchKind): Promise<Research>;
+  /** POST /api/councils/<id>/research/<kind>/stop — остановить исследование, которое идёт; ответ — исследование. */
+  stopResearch(id: string, kind: ResearchKind): Promise<Research>;
+  /** POST /api/councils/<id>/research/<kind>/reset — вернуть готовое или пропущенное к настройке; ответ — исследование. */
+  resetResearch(id: string, kind: ResearchKind): Promise<Research>;
+  /** PATCH /api/councils/<id>/research/findings/<findingId> — решение по находке; ответ — находка после решения. */
+  setFindingDecision(id: string, findingId: string, decision: Decision): Promise<Finding>;
+  /** POST /api/councils/<id>/research/approve — «К потокам →»: утвердить исследование; ответ — совет. */
+  approveResearch(id: string): Promise<CouncilSummary>;
   /** GET /api/models */
   listModels(): Promise<Model[]>;
   /** GET /api/projects */

@@ -1,0 +1,22 @@
+/* Метка слева, часть кода справа от неё, почему — под частью кода. */
+.item {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: baseline;
+  gap: var(--space-4) var(--space-10);
+}
+
+.area {
+  font-size: var(--text-md);
+  font-weight: var(--weight-semibold);
+  line-height: var(--leading-compact);
+  overflow-wrap: anywhere;
+}
+
+.reason {
+  grid-column: 2;
+  font-size: var(--text-sm);
+  line-height: var(--leading-relaxed);
+  color: var(--color-text-muted);
+  overflow-wrap: anywhere;
+}
