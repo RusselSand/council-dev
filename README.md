@@ -6,7 +6,7 @@
 
 ```
 design/Совет - прототип.html   макет
-docs/api-contract.md            контракт API (появляется с первой задачей)
+docs/api-contract.md            контракт API
 frontend/                       фронтенд; как он устроен — frontend/README.md
 CLAUDE.md                       правила для агента
 .github/workflows/ci.yml        проверки PR
@@ -14,7 +14,7 @@ CLAUDE.md                       правила для агента
 
 ## Запуск
 
-Нужен Node.js 20. Команды — из корня репозитория:
+Нужен Node.js 20.19 или новее. Команды — из корня репозитория:
 
 ```
 npm --prefix frontend install
