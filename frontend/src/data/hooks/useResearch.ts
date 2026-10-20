@@ -9,13 +9,15 @@ import { useModelsPoll } from './useStageQuery';
 
 /**
  * Исследование совета — GET /api/councils/<id>/research: код, макет, находки, сценарии и покрытие. Пока хоть одно
- * исследование идёт, оно и список советов перезапрашиваются через 5 с после ответа на исследование —
- * см. useModelsPoll(). Перезапрашивается и после действий с исследованием и решений по находкам.
+ * исследование идёт или в списке советов этап «Исследование» ещё идёт (councilRunning), оно и список советов
+ * перезапрашиваются через 5 с после ответа на исследование — см. useModelsPoll(). Так список советов догоняет
+ * исследование, даже если его запросили за миг до того, как модели кончили. Перезапрашивается и после действий
+ * с исследованием и решений по находкам.
  */
-export function useCouncilResearch(id: string): Query<Research> {
+export function useCouncilResearch(id: string, councilRunning: boolean): Query<Research> {
   const query = useQuery(async () => ({ ...(await source.getResearch(id)), council: id }), [id], 'research');
   const { code, design } = query.data ?? {};
-  useModelsPoll(code?.state === 'running' || design?.state === 'running', query);
+  useModelsPoll(councilRunning || code?.state === 'running' || design?.state === 'running', query);
   return query;
 }
 

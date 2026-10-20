@@ -98,7 +98,9 @@ src/
 правок, потом запускает раскладку (`useRetryStructure()`). Пока группы подтверждаются или раскладка запускается снова,
 правки групп и обе кнопки не действуют.
 
-«Исследование» (`features/research`) ведёт себя по исследованию совета, а не по `stages.research`: два блока рядом —
+«Исследование» (`features/research`) ведёт себя по исследованию совета, а не по `stages.research`; по нему — только
+«уже утверждено» и опрос: пока этап в списке советов `running`, исследование и список опрашиваются, даже если
+исследование уже кончилось, — так список догоняет его (`useCouncilResearch(id, running)`). Два блока рядом —
 код (`parts/CodeBlock`) и макет (`parts/DesignBlock`) — на общем `parts/ResearchBlock`, который по состоянию блока
 показывает настройку, работу моделей (`parts/RunList`), результат (`parts/ResultLine`) или «пропущено»
 (`parts/SkippedNote`) и свои кнопки. Отметки репозиториев и ссылка на Figma живут в `useResearch()` рядом с экраном и
@@ -176,7 +178,7 @@ src/
 - `data/http/` — настоящий сервер: `request()` разбирает ответ и ошибку по контракту.
 - `data/config.ts` — какой источник взять, по `VITE_DATA_SOURCE`.
 - `data/hooks/` — хуки запросов: `useCouncils()`, `useCouncilBrief(id)`, `useCouncilSlicing(id, running)`,
-  `useCouncilStructure(id, running)`, `useCouncilResearch(id)`, `useModels()`, `useProjects()`, `useRepos()` →
+  `useCouncilStructure(id, running)`, `useCouncilResearch(id, running)`, `useModels()`, `useProjects()`, `useRepos()` →
   `{ data, error, loading, reload }`; хуки действий: `useCreateCouncil()`, `useUpdateCouncil()`, `useSaveBrief()`,
   `useStartSlicing()`, `useStartStructure()`, `useConfirmStructure()`, `useRetryStructure()`, `useResearchAction()`
   (`run(id, { action: 'start' | 'skip' | 'stop' | 'reset', kind, … })`), `useApproveResearch()`, `useCreateProject()`,

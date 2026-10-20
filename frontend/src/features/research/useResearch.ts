@@ -250,7 +250,7 @@ function choiceLabel(finding: Finding, decision: Decision, t: Translate): string
  */
 export function useResearch(council: CouncilSummary): ResearchScreen {
   const { t, formatNumber } = useI18n();
-  const query = useCouncilResearch(council.id);
+  const query = useCouncilResearch(council.id, council.stages.research === 'running');
   const structure = useCouncilStructure(council.id, council.stages.structure === 'running');
   const research = query.data ?? EMPTY;
   const { code, design, findings } = research;
@@ -270,8 +270,12 @@ export function useResearch(council: CouncilSummary): ResearchScreen {
   /** Последнее действие с блоком — для «Повторить»: запуск повторяется с тем, что отмечено сейчас. */
   const lastAction = useRef<Partial<Record<ResearchKind, ResearchAction['action']>>>({});
 
-  // Исследование ушло из настройки или вернулось в неё — отметки и ссылка снова с сервера.
-  useEffect(() => setChecks({}), [code.state]);
+  // Исследование ушло из настройки или вернулось в неё — отметки и ссылка снова с сервера. Сценарии у кода после
+  // нового запуска другие — открыт снова первый.
+  useEffect(() => {
+    setChecks({});
+    setOpenFlows({});
+  }, [code.state]);
   useEffect(() => setLinkDraft(null), [design.state]);
 
   /** «Исследование» на экране: ушли с него, пока исследование утверждалось, — «Потоки» не открываем. */

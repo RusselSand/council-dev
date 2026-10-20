@@ -326,8 +326,8 @@ const RESEARCH_WAITING: Record<ResearchStatus, string> = {
  * что нужно от человека. В макете действия с исследованием этапы совета не меняют.
  */
 export const researchChanged = (council: CouncilSummary, research: Research, updatedAt: string): CouncilSummary => {
+  const running = research.code.state === 'running' || research.design.state === 'running';
   const runs = [...research.code.runs, ...research.design.runs].filter((run) => run.state === 'running');
-  const running = runs.length > 0;
   const stages: Record<Stage, State> = { ...council.stages, research: running ? 'running' : 'waiting' };
   const stage = firstOpen(stages, 'brief');
   const pending = research.findings.filter((f) => isPending(f.kind, f.decision)).length;
