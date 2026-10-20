@@ -33,7 +33,7 @@ export function Structure({ council }: { council: CouncilSummary }) {
       {screen.failed && (
         <FailedBanner
           text={screen.failure}
-          retrying={screen.retrying}
+          disabled={screen.retryDisabled}
           error={screen.retryError}
           onRetry={screen.retry}
         />

@@ -21,7 +21,7 @@ export interface GroupEdits {
   pending: Readonly<Record<string, GroupFields>>;
   /**
    * Не вышло — по id группы: правка, объединение или разделение этой группы. Ошибка держится, пока с группой не
-   * сделают что-то снова.
+   * сделают что-то снова: ответ на правку, сделанную раньше, её не стирает.
    */
   errors: Readonly<Record<string, ApiError>>;
   /** Объединение или разделение ждёт ответа: группы вот-вот станут другими. */
@@ -32,7 +32,10 @@ export interface GroupEdits {
   merge: (groupId: string, into: string) => Promise<boolean>;
   /** Вынести фрагменты группы в новую группу с названием title. Ответ — раскладка после этого; не вышло — undefined. */
   split: (groupId: string, fragmentIds: string[], title: string) => Promise<Structure | undefined>;
-  /** Дождаться ответа на всё, что ещё идёт. Ответ — сохранились ли правки, которые шли; правок нет — true. */
+  /**
+   * Дождаться ответа на всё, что ещё идёт. Ответ — сохранились ли все правки, которые шли: не сохранилась хоть одна —
+   * false; правок нет — true.
+   */
   settle: () => Promise<boolean>;
 }
 
@@ -47,8 +50,9 @@ const STALE_GROUPS = ['not_found', 'bad_merge', 'bad_split'];
  * сделанную до него. Правка названия или идеи видна сразу, а запрос шлёт то, что человек ввёл последним, когда приходит
  * его черёд. Ответ встаёт в раскладку сразу; раскладка и список советов перезапрашиваются (у совета новое время
  * изменения). Не вышло — группа снова показывает то, что на сервере, у группы — ошибка. Модели начали или кончили
- * раскладку (running) — группы другие, хоть id у них те же: правки и ошибки прежних забываются, а ответы на запросы про
- * прежние не попадают ни в раскладку, ни в ошибки.
+ * раскладку (running) — группы другие, хоть id у них те же: правки и ошибки прежних забываются, объединение или
+ * разделение прежних, которое ещё ждёт черёда, не уходит, а ответы на запросы про прежние не попадают ни в раскладку,
+ * ни в ошибки.
  */
 export function useGroupEdits(councilId: string, running: boolean): GroupEdits {
   const [pending, setPending] = useState<Record<string, GroupFields>>({});
@@ -58,8 +62,8 @@ export function useGroupEdits(councilId: string, running: boolean): GroupEdits {
   const wanted = useRef<Record<string, GroupFields>>({});
   /** Очередь всех запросов: следующий уходит, когда ответил предыдущий. */
   const queue = useRef<Promise<unknown>>(Promise.resolve());
-  /** Сохранилась ли последняя правка группы — по id группы. */
-  const saved = useRef(new Map<string, Promise<boolean>>());
+  /** Правки, на которые сервер ещё не ответил, — сохранились ли: settle() ждёт их все. */
+  const unsettled = useRef(new Set<Promise<boolean>>());
   /** Номер набора групп: растёт, когда раскладка начинается или кончается. */
   const round = useRef(0);
 
@@ -76,6 +80,7 @@ export function useGroupEdits(councilId: string, running: boolean): GroupEdits {
     round.current += 1;
     want({});
     setErrors({});
+    unsettled.current.clear();
   }, [running]);
 
   const enqueue = <T>(task: () => Promise<T>): Promise<T> => {
@@ -98,16 +103,14 @@ export function useGroupEdits(councilId: string, running: boolean): GroupEdits {
   const change = (groupId: string, fields: GroupFields) => {
     want({ ...wanted.current, [groupId]: { ...wanted.current[groupId], ...fields } });
     clearError(groupId);
-    const previous = saved.current.get(groupId) ?? Promise.resolve(true);
     const result = enqueue(async () => {
-      // Черёд пришёл: шлём то, что человек ввёл последним; на это уже ответили — слать нечего, сохранилось ли — как
-      // у предыдущей правки группы.
+      // Черёд пришёл: шлём то, что человек ввёл последним; на это уже ответили — слать нечего: сохранилось ли, скажет
+      // ответ на запрос, который это отправил.
       const current = wanted.current[groupId] ?? {};
       const keys = (Object.keys(fields) as Field[]).filter((key) => key in current);
-      if (!keys.length) return previous;
+      if (!keys.length) return true;
       const sent: GroupFields = Object.fromEntries(keys.map((key) => [key, current[key]]));
       const sentIn = round.current;
-      clearError(groupId);
       let ok = true;
       try {
         const group = await source.updateGroup(councilId, groupId, sent);
@@ -131,16 +134,22 @@ export function useGroupEdits(councilId: string, running: boolean): GroupEdits {
       }
       return ok;
     });
-    saved.current.set(groupId, result);
+    unsettled.current.add(result);
+    const forget = () => unsettled.current.delete(result);
+    void result.then(forget, forget);
   };
 
-  /** Объединение или разделение: ответ — раскладка целиком, она сразу встаёт на место прежней. */
+  /**
+   * Объединение или разделение: ответ — раскладка целиком, она сразу встаёт на место прежней. Пока ждало черёда, модели
+   * начали или кончили раскладку — группы уже другие: не уходит.
+   */
   const reshape = (groupId: string, action: () => Promise<Structure>): Promise<Structure | undefined> => {
     setReshapes((n) => n + 1);
     clearError(groupId);
+    const sentIn = round.current;
     return enqueue(async () => {
-      const sentIn = round.current;
       try {
+        if (round.current !== sentIn) return undefined;
         const structure = await action();
         if (round.current === sentIn) {
           markStale('structure', (current) =>
@@ -159,7 +168,7 @@ export function useGroupEdits(councilId: string, running: boolean): GroupEdits {
   };
 
   const settle = async () => {
-    const waiting = Object.keys(wanted.current).map((id) => saved.current.get(id) ?? Promise.resolve(true));
+    const waiting = [...unsettled.current];
     await queue.current;
     return (await Promise.all(waiting)).every(Boolean);
   };

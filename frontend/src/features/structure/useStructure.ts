@@ -74,14 +74,16 @@ export interface StructureScreen {
   /** Пояснение на плашке: почему остановилась и что повтор не платит второй раз. */
   failure: string;
   retry: () => void;
-  /** Раскладка запускается снова: кнопка недоступна. */
-  retrying: boolean;
+  /** «Запустить снова» недоступна: раскладка запускается снова, группы вот-вот станут другими или подтверждаются. */
+  retryDisabled: boolean;
   retryError: ApiError | undefined;
 
   /** «ИИ предлагает 3 группы». */
   title: string;
   groups: GroupView[];
-  /** Группы вот-вот станут другими или подтверждаются: правки и кнопки групп не действуют. */
+  /**
+   * Группы вот-вот станут другими, подтверждаются или раскладка запускается снова: правки и кнопки групп не действуют.
+   */
   locked: boolean;
   /** Название, которое человек вводит в открытое поле. */
   titleDraft: string;
@@ -106,7 +108,7 @@ export interface StructureScreen {
   /** «Подтвердить →» или, когда группы уже подтверждены, «К исследованию →». */
   confirmLabel: string;
   confirm: () => void;
-  /** Группы подтверждаются или вот-вот станут другими: «Подтвердить →» недоступна. */
+  /** Группы подтверждаются, вот-вот станут другими или раскладка запускается снова: «Подтвердить →» недоступна. */
   confirmDisabled: boolean;
   confirmError: ApiError | undefined;
 }
@@ -127,9 +129,10 @@ function linkText(link: GroupLink, t: Translate): string {
  * «Группы» совета. Пока модели раскладывают фрагменты — ход работы; нет — группы, как в макете: и у готовой раскладки,
  * и у той, что остановилась (над группами — красная плашка и «Запустить снова»). Название группы сохраняется, когда
  * поле закрыли; идея — после паузы в наборе; объединение и разделение — сразу. Пока объединение или разделение ждёт
- * ответа и пока группы подтверждаются, правки не действуют. «Подтвердить →» сначала сохраняет всё, что ещё не
- * сохранено, — что-то не сохранилось, не подтверждает; потом открывает «Исследование». Ушли с «Групп», пока они
- * подтверждались, — «Исследование» не открывается.
+ * ответа, пока группы подтверждаются и пока раскладка запускается снова, правки, «Подтвердить →» и «Запустить снова»
+ * не действуют. «Подтвердить →» сначала сохраняет всё, что ещё не сохранено, — что-то не сохранилось, не подтверждает;
+ * потом открывает «Исследование». Ушли с «Групп», пока они подтверждались, — «Исследование» не открывается.
+ * «Запустить снова» тоже сначала отправляет набранное и дожидается ответа на правки — запросы не обгоняют друг друга.
  */
 export function useStructure(council: CouncilSummary): StructureScreen {
   const { t } = useI18n();
@@ -147,9 +150,11 @@ export function useStructure(council: CouncilSummary): StructureScreen {
   /** Идеи, которые человек вводит и которые ещё не ушли на сервер, — по id группы. */
   const [ideas, setIdeas] = useState<Readonly<Record<string, string>>>({});
   const [confirming, setConfirming] = useState(false);
+  /** «Запустить снова»: ждём ответа на правки, потом на сам запуск. */
+  const [restarting, setRestarting] = useState(false);
 
   const groups = structure.data?.groups ?? [];
-  const locked = edits.reshaping || confirming;
+  const locked = edits.reshaping || confirming || restarting;
 
   /** Последнее, что на экране: его читают то, что срабатывает позже, — пауза, закрытие экрана, ответ сервера. */
   const latest = useRef({ groups, ideas, mode, titleDraft, edits });
@@ -236,9 +241,19 @@ export function useStructure(council: CouncilSummary): StructureScreen {
       ? t('structure.failed.text', { reason: failureReason })
       : t('structure.failed.retryNote'),
     retry: () => {
-      if (!retryAction.pending) void retryAction.run(council.id);
+      if (locked) return;
+      setRestarting(true);
+      commitTitle();
+      setMode(null);
+      commitIdeas();
+      void (async () => {
+        // Запуск — после ответов на правки, которые ещё идут: он не обгонит их, а они — его.
+        await edits.settle();
+        await retryAction.run(council.id);
+        setRestarting(false);
+      })();
     },
-    retrying: retryAction.pending,
+    retryDisabled: locked,
     retryError: retryAction.error,
 
     title: t('structure.title', { count: groups.length }),
