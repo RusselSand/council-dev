@@ -1,0 +1,25 @@
+.head {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  min-width: 0;
+}
+
+.loose {
+  gap: var(--space-14);
+}
+
+.title {
+  margin: 0;
+  font-size: var(--text-3xl);
+  font-weight: var(--weight-bold);
+  overflow-wrap: anywhere;
+}
+
+.intro {
+  margin: 0;
+  font-size: var(--text-md);
+  line-height: var(--leading-relaxed);
+  color: var(--color-text-muted);
+  text-wrap: pretty;
+}

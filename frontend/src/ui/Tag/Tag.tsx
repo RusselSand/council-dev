@@ -7,8 +7,8 @@ import styles from './Tag.module.css';
  */
 export type TagTone = 'green' | 'yellow' | 'red' | 'gray' | 'dark' | 'ghost';
 
-/** sm — мелкая жирная, в строке меню; md — крупнее, на карточке. */
-export type TagSize = 'sm' | 'md';
+/** sm — мелкая жирная, в строке меню; md — крупнее, на карточке; lg — состояние этапа в начале главного блока. */
+export type TagSize = 'sm' | 'md' | 'lg';
 
 interface TagProps {
   tone: TagTone;

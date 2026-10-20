@@ -1,0 +1,49 @@
+.list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-12);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-10);
+  min-width: 0;
+  font-size: var(--text-md);
+}
+
+/* Длинная подпись части переносится; места мало — первыми сжимаются модели. */
+.phase {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow-wrap: anywhere;
+  font-weight: var(--weight-semibold);
+}
+
+.models {
+  flex: 0 100 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--text-sm);
+  color: var(--color-text-faint);
+}
+
+.state {
+  flex: none;
+  margin-left: auto;
+  font-size: var(--text-sm);
+  color: var(--color-text-muted);
+}
+
+.note {
+  margin: 0;
+  font-size: var(--text-sm);
+  line-height: var(--leading-relaxed);
+  color: var(--color-text-subtle);
+  text-wrap: pretty;
+}

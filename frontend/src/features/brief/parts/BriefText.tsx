@@ -1,6 +1,7 @@
 import { LoadState } from '../../../components/LoadState';
 import type { ApiError } from '../../../data';
 import { useI18n } from '../../../i18n';
+import { BlockTitle } from '../../../ui/BlockTitle';
 import { Button } from '../../../ui/Button';
 import { Card } from '../../../ui/Card';
 import { TextArea } from '../../../ui/TextArea';
@@ -39,10 +40,7 @@ export function BriefText({
   const { t } = useI18n();
   return (
     <Card size="xl">
-      <div className={styles.head}>
-        <h2 className={styles.title}>{t('brief.title')}</h2>
-        <p className={styles.intro}>{t('brief.intro')}</p>
-      </div>
+      <BlockTitle title={t('brief.title')} intro={t('brief.intro')} />
       <TextArea
         value={text}
         onChange={onChange}

@@ -3,5 +3,14 @@
   font-weight: var(--weight-bold);
   letter-spacing: var(--tracking-caps);
   text-transform: uppercase;
+}
+
+.ink {
   color: var(--color-text-faint);
+}
+
+/* «Дальше» на тёмной плашке. */
+.onDark {
+  font-size: var(--text-2xs);
+  color: var(--color-text-on-dark-muted);
 }

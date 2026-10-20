@@ -12,6 +12,12 @@
   border-radius: var(--radius-18);
 }
 
+.row {
+  gap: var(--space-10);
+  padding: var(--space-14) var(--space-16);
+  border-radius: var(--radius-18);
+}
+
 .md {
   gap: var(--space-12);
   padding: var(--space-18);

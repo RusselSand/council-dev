@@ -1,6 +1,12 @@
 import type { CouncilSummary } from '../../domain/council';
 import type { Model } from '../../domain/model';
 import type { Project } from '../../domain/project';
+import type { Slicing } from '../../domain/slicing';
+
+/** Нарезка и совет, чья она: правка фрагмента одного совета не должна попасть в нарезку другого. */
+export interface CouncilSlicing extends Slicing {
+  council: string;
+}
 
 /** Данные, которые может изменить действие, и их вид: после действия их запросы перезапрашиваются. */
 export interface Topics {
@@ -10,6 +16,8 @@ export interface Topics {
   projects: Project[];
   /** Рабочие копии git из COUNCIL_REPOS. */
   repos: string[];
+  /** Нарезка открытого совета. */
+  slicing: CouncilSlicing;
 }
 export type Topic = keyof Topics;
 

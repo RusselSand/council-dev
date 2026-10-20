@@ -2,6 +2,7 @@ import type { Brief } from '../domain/brief';
 import type { CouncilFields, CouncilSummary } from '../domain/council';
 import type { Model } from '../domain/model';
 import type { Project, ProjectFields } from '../domain/project';
+import type { Fragment, Label, Slicing } from '../domain/slicing';
 
 /**
  * Источник данных: всё, что фронтенд просит у бекенда. Ручки — в docs/api-contract.md.
@@ -20,6 +21,12 @@ export interface DataSource {
   saveBrief(id: string, text: string): Promise<Brief>;
   /** POST /api/councils/<id>/slicing — нарезать текст ввода; ответ — совет после запуска нарезки. */
   startSlicing(id: string): Promise<CouncilSummary>;
+  /** GET /api/councils/<id>/slicing — нарезка совета: ход работы и фрагменты. */
+  getSlicing(id: string): Promise<Slicing>;
+  /** PATCH /api/councils/<id>/fragments/<fragmentId> — сменить тип фрагмента; ответ — фрагмент после правки. */
+  setFragmentLabel(id: string, fragmentId: string, label: Label): Promise<Fragment>;
+  /** POST /api/councils/<id>/structure — «Предложить группы»: разложить фрагменты по группам; ответ — совет. */
+  startStructure(id: string): Promise<CouncilSummary>;
   /** GET /api/models */
   listModels(): Promise<Model[]>;
   /** GET /api/projects */

@@ -1,11 +1,13 @@
 import { cleanName, type CouncilFields, type CouncilSummary } from '../../domain/council';
 import { cleanFields, MAX_PROJECT_REPOS, type Project, type ProjectFields } from '../../domain/project';
+import { isLabel, type Slicing } from '../../domain/slicing';
 import { ApiError } from '../errors';
 import type { DataSource } from '../source';
 import { BRIEFS } from './briefs';
-import { COUNCILS, newDraft, slicingStarted } from './councils';
+import { COUNCILS, newDraft, slicingStarted, structureStarted } from './councils';
 import { MODELS } from './models';
 import { PROJECT_LIST, REPO_LIST, type MockProject } from './projects';
+import { noSlicing, SLICINGS, startedSlicing } from './slicings';
 
 /** Копия, чтобы экран не мог поменять моки у себя в руках. */
 const copy = <T>(value: T): T => structuredClone(value);
@@ -16,6 +18,11 @@ const councils = copy(COUNCILS);
 const createdByKey = new Map<string, string>();
 /** Тексты ввода по id совета: сохранение меняет их здесь; у нового совета текста нет. */
 const briefs = new Map(Object.entries(BRIEFS));
+/**
+ * Нарезки по id совета: смена типа и новая нарезка меняют их здесь. У каждого совета — своя копия: у советов-примеров
+ * фрагменты одни и те же, а тип у каждого совета меняют свой.
+ */
+const slicings = new Map(Object.entries(SLICINGS).map(([id, slicing]) => [id, copy(slicing)]));
 /** Проекты моков: создание, правка и удаление меняют их здесь; живут, пока открыта вкладка. */
 const projects = copy(PROJECT_LIST);
 /** Idempotency-Key → id созданного по нему проекта. */
@@ -26,6 +33,20 @@ function councilAt(id: string): number {
   const index = councils.findIndex((council) => council.id === id);
   if (index < 0) throw new ApiError('not_found', `Совет ${id} не найден`, 404);
   return index;
+}
+
+/** Нарезка совета; у нового совета её не было. */
+function slicingOf(id: string): Slicing {
+  const slicing = slicings.get(id) ?? noSlicing();
+  slicings.set(id, slicing);
+  return slicing;
+}
+
+/** Пока нарезка идёт, фрагментов ещё нет: типы не меняют, группы не предлагают. */
+function checkNotSlicing(council: CouncilSummary) {
+  if (council.stages.slices === 'running') {
+    throw new ApiError('slicing_running', `Совет ${council.id} ещё режет текст`, 409);
+  }
 }
 
 /**
@@ -118,7 +139,30 @@ export const mockSource: DataSource = {
     // Нарезка уже идёт — не перезапускаем, отвечаем советом как есть.
     if (councils[index].stages.slices !== 'running') {
       councils[index] = slicingStarted(councils[index], new Date().toISOString());
+      // Модели режут текст заново: фрагментов прошлой нарезки больше нет. В моках нарезка не кончается.
+      slicings.set(id, startedSlicing(councils[index].participants, councils[index].judge));
     }
+    return copy(councils[index]);
+  },
+  async getSlicing(id) {
+    councilAt(id);
+    return copy(slicingOf(id));
+  },
+  async setFragmentLabel(id, fragmentId, label) {
+    const index = councilAt(id);
+    checkNotSlicing(councils[index]);
+    const slicing = slicingOf(id);
+    const at = slicing.fragments.findIndex((f) => f.id === fragmentId);
+    if (at < 0) throw new ApiError('not_found', `Фрагмента ${fragmentId} у совета ${id} нет`, 404);
+    if (!isLabel(label)) throw new ApiError('unknown_label', `Типа ${String(label)} нет`, 422);
+    slicing.fragments[at] = { ...slicing.fragments[at], label };
+    councils[index] = { ...councils[index], updatedAt: new Date().toISOString() };
+    return copy(slicing.fragments[at]);
+  },
+  async startStructure(id) {
+    const index = councilAt(id);
+    checkNotSlicing(councils[index]);
+    councils[index] = structureStarted(councils[index], new Date().toISOString());
     return copy(councils[index]);
   },
   async listModels() {

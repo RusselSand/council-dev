@@ -2,6 +2,7 @@ import type { Brief } from '../../domain/brief';
 import type { CouncilSummary } from '../../domain/council';
 import type { Model } from '../../domain/model';
 import type { Project } from '../../domain/project';
+import type { Fragment, Slicing } from '../../domain/slicing';
 import type { DataSource } from '../source';
 import { request } from './request';
 
@@ -32,6 +33,19 @@ export const httpSource: DataSource = {
   },
   async startSlicing(id) {
     const { council } = await request<{ council: CouncilSummary }>('POST', `${councilPath(id)}/slicing`, {});
+    return council;
+  },
+  async getSlicing(id) {
+    const { slicing } = await request<{ slicing: Slicing }>('GET', `${councilPath(id)}/slicing`);
+    return slicing;
+  },
+  async setFragmentLabel(id, fragmentId, label) {
+    const path = `${councilPath(id)}/fragments/${encodeURIComponent(fragmentId)}`;
+    const { fragment } = await request<{ fragment: Fragment }>('PATCH', path, { label });
+    return fragment;
+  },
+  async startStructure(id) {
+    const { council } = await request<{ council: CouncilSummary }>('POST', `${councilPath(id)}/structure`, {});
     return council;
   },
   async listModels() {

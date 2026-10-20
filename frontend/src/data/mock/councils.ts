@@ -1,4 +1,13 @@
-import type { Activity, ActivityState, CouncilSummary, Stage, State, Step, StreamSummary } from '../../domain/council';
+import {
+  STAGES,
+  type Activity,
+  type ActivityState,
+  type CouncilSummary,
+  type Stage,
+  type State,
+  type Step,
+  type StreamSummary,
+} from '../../domain/council';
 import type { ProjectRef } from '../../domain/project';
 import { PROJECTS } from './projects';
 
@@ -202,6 +211,39 @@ export const slicingStarted = (council: CouncilSummary, updatedAt: string): Coun
   summary: 'Нарезка — модели режут текст',
   updatedAt,
 });
+
+/**
+ * Совет после «Предложить группы →» — как в макете (prototype.js, toGroups): «Нарезка» готова; раскладки по группам
+ * ещё не было — она запускается («Группы» — ИИ работает; в макете они сразу ждут вас, будто модели уже поработали),
+ * была или идёт — не перезапускается. Совет встаёт на первый неготовый этап после «Нарезки», его состояние —
+ * состояние этого этапа. Строки «Ввода» и «Нарезки» на Сводке уходят (совет уже не черновик), строка «Групп» — как
+ * у «Нарезки»: что делают модели. Ничего не поменялось — совет как есть.
+ */
+export const structureStarted = (council: CouncilSummary, updatedAt: string): CouncilSummary => {
+  const starting = council.stages.structure === 'idle';
+  if (!starting && council.stages.slices === 'done') return council;
+  const stages: Record<Stage, State> = {
+    ...council.stages,
+    slices: 'done',
+    structure: starting ? 'running' : council.stages.structure,
+  };
+  const stage = STAGES.slice(STAGES.indexOf('structure')).find((s) => stages[s] !== 'done') ?? 'tasks';
+  const gone: Stage[] = starting ? ['brief', 'slices', 'structure'] : ['brief', 'slices'];
+  return {
+    ...council,
+    stage,
+    state: stages[stage],
+    stages,
+    activity: [
+      ...council.activity.filter((a) => !gone.includes(a.stage)),
+      ...(starting
+        ? [atStage('structure', 'running', `${modelsText(council.participants)} раскладывают фрагменты по группам`)]
+        : []),
+    ],
+    summary: starting ? 'Группы — модели раскладывают фрагменты' : council.summary,
+    updatedAt,
+  };
+};
 
 /**
  * Новый совет — как в макете (prototype.js, newCouncil): черновик без названия на «Вводе», все этапы не начаты,

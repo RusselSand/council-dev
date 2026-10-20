@@ -23,6 +23,10 @@
   background: var(--color-paper);
 }
 
+.sm {
+  padding: var(--space-4) var(--space-12);
+}
+
 .selected {
   border-color: var(--color-ink);
   background: var(--color-ink);
