@@ -17,3 +17,15 @@ export const PROJECT_LIST: MockProject[] = [
   { ...PROJECTS.looper, repos: ['looper'], docs: '' },
   { ...PROJECTS.site, repos: ['site'], docs: 'site/docs/adr' },
   { ...PROJECTS.gen, repos: ['gen_sdk_tooling', 'python-t-cloud'], docs: '/repos/claude_notes' },];
+
+/** Рабочие копии git из COUNCIL_REPOS — в порядке макета (prototype.js, REPOS_ALL). */
+export const REPO_LIST: string[] = [
+  'gen_sdk_tooling',
+  'python-t-cloud',
+  'kromka-api',
+  'kromka-frontend',
+  'kromka-android',
+  'looper',
+  'site',
+  'agent-workers',
+];

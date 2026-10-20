@@ -4,7 +4,16 @@ import type { MessageKey } from '../i18n';
  * Коды ошибок, у которых есть текст в словаре (error.<код>). Серверные — в docs/api-contract.md;
  * network и unknown ставит сам фронтенд: сервер не ответил / ответ не разобрать.
  */
-export const ERROR_CODES = ['not_found', 'internal', 'project_in_use', 'network', 'unknown'] as const;
+export const ERROR_CODES = [
+  'not_found',
+  'internal',
+  'project_in_use',
+  'name_required',
+  'too_many_repos',
+  'unknown_repo',
+  'network',
+  'unknown',
+] as const;
 export type ErrorCode = (typeof ERROR_CODES)[number];
 
 const isErrorCode = (code: string): code is ErrorCode => (ERROR_CODES as readonly string[]).includes(code);

@@ -1,12 +1,10 @@
 import { useRef } from 'react';
 import type { CouncilSummary } from '../../domain/council';
 import { source } from '../config';
+import { newKey } from './idempotency';
 import { markStale } from './stale';
 import { useMutation, type Mutation } from './useMutation';
 import { useQuery, type Query } from './useQuery';
-
-/** Ключ одного нового совета — для заголовка Idempotency-Key. */
-const newKey = () => Array.from(crypto.getRandomValues(new Uint8Array(16)), (b) => b.toString(16).padStart(2, '0')).join('');
 
 /** Список советов — GET /api/councils. Перезапрашивается после действий с советами. */
 export function useCouncils(): Query<CouncilSummary[]> {
