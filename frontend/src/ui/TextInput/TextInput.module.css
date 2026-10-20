@@ -1,0 +1,19 @@
+.input {
+  width: 100%;
+  min-width: 0;
+  border: 0;
+  border-radius: var(--radius-14);
+  background: var(--color-surface-sunken);
+  color: var(--color-ink);
+}
+
+.text {
+  padding: var(--space-10) var(--space-14);
+  font-size: var(--text-base);
+}
+
+.mono {
+  padding: var(--space-8) var(--space-12);
+  font-family: var(--font-mono);
+  font-size: var(--text-md);
+}

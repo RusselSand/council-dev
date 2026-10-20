@@ -14,6 +14,8 @@ interface ProjectCardProps {
   repos: string[];
   /** Папка документации; пустая строка — папки нет. */
   docs: string;
+  /** «Править» — открыть окно проекта. */
+  onEdit: () => void;
   /** Первое «Удалить» нажато — кнопка стала «Да, удалить». */
   confirming: boolean;
   /** «Удалить» недоступна: проект в советах или удаляется проект. */
@@ -27,13 +29,14 @@ interface ProjectCardProps {
 
 /**
  * Карточка проекта: название и в скольких советах он выбран, репозитории, папка документации (нет — красная
- * подпись), «Править» и «Удалить». «Править» пока ничего не делает: окно проекта — своя задача.
+ * подпись), «Править» и «Удалить».
  */
 export function ProjectCard({
   name,
   usage,
   repos,
   docs,
+  onEdit,
   confirming,
   deleteDisabled,
   onDelete,
@@ -47,15 +50,15 @@ export function ProjectCard({
         <h3 className={styles.name}>{name}</h3>
         <span className={styles.usage}>{usage}</span>
       </div>
-      <ProjectField label={t('projects.repos')}>
+      <ProjectField label={t('project.repos')}>
         <RepoList repos={repos} />
       </ProjectField>
-      <ProjectField label={t('projects.docs')}>
+      <ProjectField label={t('project.docs')}>
         <span className={docs ? styles.docs : `${styles.docs} ${styles.noDocs}`}>{docs || t('projects.noDocs')}</span>
       </ProjectField>
       <div className={styles.actions}>
         <div className={styles.buttons}>
-          <Button variant="outline" size="sm">
+          <Button variant="outline" size="sm" onClick={onEdit}>
             {t('projects.edit')}
           </Button>
           <Button

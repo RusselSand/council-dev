@@ -1,5 +1,6 @@
 import { useEffect, useMemo } from 'react';
 import { NewCouncilProvider } from '../components/NewCouncil';
+import { ProjectDialogProvider } from '../components/ProjectDialog';
 import { Frame } from '../features/frame';
 import { detectLocale, I18nProvider, useI18n } from '../i18n';
 import { Screen } from './Screen';
@@ -18,9 +19,11 @@ export function App() {
     <I18nProvider locale={locale}>
       <DocumentTitle />
       <NewCouncilProvider>
-        <Frame>
-          <Screen />
-        </Frame>
+        <ProjectDialogProvider>
+          <Frame>
+            <Screen />
+          </Frame>
+        </ProjectDialogProvider>
       </NewCouncilProvider>
     </I18nProvider>
   );

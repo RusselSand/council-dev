@@ -5,6 +5,8 @@ import type { Project } from '../../domain/project';
 export interface Topics {
   councils: CouncilSummary[];
   projects: Project[];
+  /** Рабочие копии git из COUNCIL_REPOS. */
+  repos: string[];
 }
 export type Topic = keyof Topics;
 

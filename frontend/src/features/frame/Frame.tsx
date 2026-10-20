@@ -15,11 +15,11 @@ import { useFrame } from './useFrame';
 /**
  * Рамка вокруг всех экранов: меню слева и шапка страницы. Экран — children, под шапкой; свои переключатели в шапке
  * экран ставит через PageTools. «Новый совет» создаёт совет и открывает его «Ввод»; не вышло — ошибка под шапкой.
- * «+ Новый проект» пока ничего не делает: окно проекта — своя задача.
+ * «+ Новый проект» (только на «Проектах») открывает окно «Новый проект».
  */
 export function Frame({ children }: { children: ReactNode }) {
   const { t } = useI18n();
-  const { section, homePath, projectsPath, councils, models, header, newCouncil } = useFrame();
+  const { section, homePath, projectsPath, councils, models, header, newCouncil, newProject } = useFrame();
 
   const nav = (
     <Sidebar>
@@ -39,7 +39,11 @@ export function Frame({ children }: { children: ReactNode }) {
 
   const actions = (
     <>
-      {header.newProject && <Button variant="outline">{t('project.newButton')}</Button>}
+      {header.newProject && (
+        <Button variant="outline" onClick={newProject}>
+          {t('project.newButton')}
+        </Button>
+      )}
       <Button onClick={newCouncil.create} disabled={newCouncil.pending}>
         {t('council.newButton')}
       </Button>

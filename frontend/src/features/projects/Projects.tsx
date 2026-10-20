@@ -5,7 +5,10 @@ import { ProjectCard } from './parts/ProjectCard';
 import { useProjectsScreen } from './useProjectsScreen';
 import styles from './Projects.module.css';
 
-/** Проекты: пояснение и карточки проектов сеткой. «+ Новый проект» — в шапке рамки. */
+/**
+ * Проекты: пояснение и карточки проектов сеткой. «+ Новый проект» — в шапке рамки; окно проекта, которое открывают
+ * он и «Править», — components/ProjectDialog.
+ */
 export function Projects() {
   const { t } = useI18n();
   const screen = useProjectsScreen();
@@ -21,6 +24,7 @@ export function Projects() {
               usage={card.usage}
               repos={card.repos}
               docs={card.docs}
+              onEdit={() => screen.edit(card.id)}
               confirming={card.confirming}
               deleteDisabled={card.deleteDisabled}
               onDelete={() => screen.remove(card.id)}
