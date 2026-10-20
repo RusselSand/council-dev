@@ -1,5 +1,6 @@
 import { Fragment, type ReactNode } from 'react';
 import { Link } from '../../../router';
+import { PageToolsSlot } from '../../../ui/PageTools';
 import type { Crumb } from '../useFrame';
 import styles from './PageHeader.module.css';
 
@@ -13,7 +14,7 @@ interface PageHeaderProps {
   actions: ReactNode;
 }
 
-/** Шапка страницы: путь, заголовок, строка под ним и кнопки справа. */
+/** Шапка страницы: путь, заголовок, строка под ним; дальше — переключатели экрана (PageTools) и кнопки справа. */
 export function PageHeader({ crumbs, title, meta, actions }: PageHeaderProps) {
   return (
     <header className={styles.header}>
@@ -37,7 +38,7 @@ export function PageHeader({ crumbs, title, meta, actions }: PageHeaderProps) {
         {title !== undefined && <h1 className={styles.title}>{title}</h1>}
         {meta !== undefined && <p className={styles.meta}>{meta}</p>}
       </div>
-      <div className={styles.spacer} />
+      <PageToolsSlot className={styles.tools} />
       <div className={styles.actions}>{actions}</div>
     </header>
   );

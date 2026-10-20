@@ -9,6 +9,13 @@ export const en = translation({
 
   'nav.councils': 'Councils',
 
+  'home.view.kanban': 'Kanban',
+  'home.view.list': 'List',
+  'home.filter.all': 'All',
+  'home.legend.progress': 'AI at work / done',
+  'home.place.stream': 'Stream {stream} · {step}',
+  'home.done': 'Done',
+
   'council.untitled': 'Untitled',
   'council.new': 'New council',
   'council.newButton': '+ New council',

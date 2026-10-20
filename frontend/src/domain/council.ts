@@ -29,6 +29,23 @@ export interface StreamSummary {
   step: Step;
 }
 
+/** Место в совете: этап; на «Потоках» — ещё поток и его шаг, на других этапах они null. */
+export interface Place {
+  stage: Stage;
+  stream: string | null;
+  step: Step | null;
+}
+
+/** Состояние пункта активности: ошибка, ждёт вас, ИИ работает. */
+export type ActivityState = Extract<State, 'failed' | 'waiting' | 'running'>;
+
+/** Что сейчас происходит в одном месте совета: там ошибка, ждут человека или работает ИИ. */
+export interface Activity extends Place {
+  state: ActivityState;
+  /** Что нужно от человека или что делает ИИ; текст пишет сервер, интерфейс показывает его как есть. */
+  text: string;
+}
+
 /** Совет в списке советов. */
 export interface CouncilSummary {
   id: string;
@@ -50,7 +67,18 @@ export interface CouncilSummary {
   judge: string;
   /** Когда совет менялся последний раз, ISO 8601. */
   updatedAt: string;
+  /** Где в совете ошибка, где ждут человека, где работает ИИ — в порядке сервера; готовый совет — пусто. */
+  activity: Activity[];
+  /** Итог совета одной строкой; текст пишет сервер. */
+  summary: string;
 }
+
+/** Порядок советов в списке Сводки — как в макете: ошибка, ждёт вас, ИИ работает, черновик, готово. */
+const URGENCY: readonly State[] = ['failed', 'waiting', 'running', 'idle', 'done'];
+
+/** Советы по срочности; при равной — в порядке списка. */
+export const byUrgency = (councils: readonly CouncilSummary[]): CouncilSummary[] =>
+  [...councils].sort((a, b) => URGENCY.indexOf(a.state) - URGENCY.indexOf(b.state));
 
 /** Советы одного проекта; project null — советы без проекта. */
 export interface ProjectGroup {

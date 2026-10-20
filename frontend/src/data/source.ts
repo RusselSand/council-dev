@@ -8,6 +8,8 @@ import type { Model } from '../domain/model';
 export interface DataSource {
   /** GET /api/councils */
   listCouncils(): Promise<CouncilSummary[]>;
+  /** POST /api/councils — новый совет; ответ — созданный совет. */
+  createCouncil(): Promise<CouncilSummary>;
   /** GET /api/models */
   listModels(): Promise<Model[]>;
 }

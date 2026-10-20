@@ -1,0 +1,15 @@
+.tile {
+  padding: var(--space-12);
+  border: var(--border-thick) dashed var(--color-line-dashed);
+  border-radius: var(--radius-16);
+  background: transparent;
+  font-size: var(--text-md);
+  font-weight: var(--weight-semibold);
+  color: var(--color-text-secondary);
+  cursor: pointer;
+}
+
+.tile:hover {
+  border-color: var(--color-ink);
+  color: var(--color-ink);
+}

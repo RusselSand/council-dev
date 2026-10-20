@@ -1,3 +1,4 @@
+import { useNewCouncil, type NewCouncilAction } from '../../components/NewCouncil';
 import { useCouncils, useModels, type ApiError } from '../../data';
 import { groupByProject, type CouncilSummary, type State } from '../../domain/council';
 import { modelRole, type Model, type ModelRole } from '../../domain/model';
@@ -60,6 +61,8 @@ export interface FrameView {
     /** «+ Новый проект» — только на «Проектах». */
     newProject: boolean;
   };
+  /** «Новый совет» — в шапке и в меню. */
+  newCouncil: NewCouncilAction;
 }
 
 const HOME = routePath({ screen: 'home' });
@@ -122,13 +125,17 @@ function headerOf(
   }
 }
 
-/** Рамка вокруг экранов: меню слева — разделы, советы по проектам, модели; шапка — путь, заголовок и строка под ним. */
+/**
+ * Рамка вокруг экранов: меню слева — разделы, советы по проектам, модели; шапка — путь, заголовок и строка под ним;
+ * «Новый совет».
+ */
 export function useFrame(): FrameView {
   const i18n = useI18n();
   const { t } = i18n;
   const route = useRoute();
   const councils = useCouncils();
   const models = useModels();
+  const newCouncil = useNewCouncil();
 
   const openId = openCouncilId(route);
   const council = openId === undefined ? undefined : councils.data?.find((c) => c.id === openId);
@@ -140,5 +147,6 @@ export function useFrame(): FrameView {
     councils: { ...councils, data: councils.data && groupsOf(councils.data, openId, t) },
     models: { ...models, data: models.data && modelsOf(models.data, council?.judge) },
     header: headerOf(route, council, i18n),
+    newCouncil,
   };
 }

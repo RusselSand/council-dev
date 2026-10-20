@@ -1,0 +1,8 @@
+/* Шесть колонок — по этапу; не влезают — канбан прокручивается вбок, как в макете. */
+.board {
+  display: grid;
+  grid-template-columns: repeat(6, minmax(var(--kanban-column-min), 1fr));
+  gap: var(--space-10);
+  padding-bottom: var(--space-6);
+  overflow-x: auto;
+}
