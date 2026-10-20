@@ -33,3 +33,26 @@
 .ink {
   background: var(--color-ink);
 }
+
+/* Расходящееся кольцо вокруг точки — как у модели, которая думает, в макете. */
+.pulse {
+  animation: pulse 1.4s ease-out infinite;
+}
+
+@keyframes pulse {
+  0% {
+    box-shadow: 0 0 0 0 var(--state-running-pulse);
+  }
+  70% {
+    box-shadow: 0 0 0 var(--pulse-spread) transparent;
+  }
+  100% {
+    box-shadow: 0 0 0 0 transparent;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .pulse {
+    animation: none;
+  }
+}

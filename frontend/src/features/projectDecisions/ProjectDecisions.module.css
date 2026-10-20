@@ -1,0 +1,34 @@
+.idea {
+  margin: 0;
+  font-size: var(--text-base);
+  font-weight: var(--weight-semibold);
+  line-height: var(--leading-relaxed);
+  color: var(--color-ink);
+  overflow-wrap: anywhere;
+}
+
+/* «Потоки B, C не выгружены в заметки…» — жёлтым, как в макете. */
+.unexported {
+  margin: 0;
+  font-size: var(--text-sm);
+  color: var(--state-waiting-ink);
+}
+
+.catalog {
+  margin: 0;
+  font-family: var(--font-mono);
+  font-size: var(--text-sm);
+  color: var(--color-text-secondary);
+  overflow-wrap: anywhere;
+}
+
+.list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-8);
+}
+
+.count {
+  font-size: var(--text-sm);
+  color: var(--color-text-subtle);
+}

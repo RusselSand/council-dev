@@ -2,13 +2,29 @@
   flex: none;
   display: grid;
   place-items: center;
-  min-width: var(--badge-md);
-  height: var(--badge-md);
   padding: 0 var(--space-6);
   border-radius: var(--radius-pill);
-  background: var(--color-ink);
-  color: var(--color-paper);
   font-size: var(--text-sm);
   font-weight: var(--weight-heavy);
   white-space: nowrap;
+}
+
+.md {
+  min-width: var(--badge-md);
+  height: var(--badge-md);
+}
+
+.sm {
+  min-width: var(--badge-sm);
+  height: var(--badge-sm);
+}
+
+.dark {
+  background: var(--color-ink);
+  color: var(--color-paper);
+}
+
+.light {
+  background: var(--color-paper);
+  color: var(--color-ink);
 }

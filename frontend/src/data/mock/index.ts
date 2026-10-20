@@ -2,6 +2,7 @@ import { cleanName, type CouncilFields, type CouncilSummary } from '../../domain
 import { cleanFields, MAX_PROJECT_REPOS, type Project, type ProjectFields } from '../../domain/project';
 import { fitsKind, isFigmaLink, isPending, isSettled, researchStatus, type Research } from '../../domain/research';
 import { isLabel, type Slicing } from '../../domain/slicing';
+import type { ProjectDecisions } from '../../domain/stream';
 import type { Structure } from '../../domain/structure';
 import { ApiError } from '../errors';
 import type { DataSource } from '../source';
@@ -12,6 +13,7 @@ import {
   researchApproved,
   researchChanged,
   slicingStarted,
+  streamsChanged,
   structureConfirmed,
   structureRetried,
   structureStarted,
@@ -20,6 +22,15 @@ import { MODELS } from './models';
 import { PROJECT_LIST, REPO_LIST, type MockProject } from './projects';
 import { noResearch, RESEARCHES, startedCode, startedDesign, toSetup } from './research';
 import { noSlicing, SLICINGS, startedSlicing } from './slicings';
+import {
+  decisionsApproved,
+  decisionsKey,
+  newDecisions,
+  newStreams,
+  PROJECT_DECISIONS,
+  STREAMS,
+  streamRetried,
+} from './streams';
 import {
   mergeGroups,
   noStructure,
@@ -47,6 +58,10 @@ const slicings = new Map(Object.entries(SLICINGS).map(([id, slicing]) => [id, co
 const structures = new Map(Object.entries(STRUCTURES).map(([id, structure]) => [id, copy(structure)]));
 /** Исследования по id совета: действия и решения по находкам меняют их здесь; у каждого совета — своя копия. */
 const researches = new Map(Object.entries(RESEARCHES).map(([id, research]) => [id, copy(research)]));
+/** Потоки по id совета: «К потокам →» создаёт их, действия с шагами меняют их здесь. */
+const streams = new Map(Object.entries(STREAMS).map(([id, list]) => [id, copy(list)]));
+/** Прошлые решения по совету и потоку (decisionsKey): отбор меняет их здесь. */
+const projectDecisions = new Map(Object.entries(PROJECT_DECISIONS).map(([key, value]) => [key, copy(value)]));
 /** Проекты моков: создание, правка и удаление меняют их здесь; живут, пока открыта вкладка. */
 const projects = copy(PROJECT_LIST);
 /** Idempotency-Key → id созданного по нему проекта. */
@@ -104,6 +119,21 @@ function researchOf(id: string): Research {
 /** С исследованием что-то сделали: этап «Исследование» и совет — по исследованию, утверждение снимается. */
 function researchDone(index: number, research: Research) {
   councils[index] = researchChanged(councils[index], research, new Date().toISOString());
+}
+
+/** Номер потока в потоках совета; потока нет — not_found, как у сервера. */
+function streamAt(id: string, streamId: string): number {
+  const index = (streams.get(id) ?? []).findIndex((stream) => stream.id === streamId);
+  if (index < 0) throw new ApiError('not_found', `Потока ${streamId} у совета ${id} нет`, 404);
+  return index;
+}
+
+/** Прошлые решения потока; у потока, которого нет в моках, каталога нет. */
+function decisionsOf(id: string, streamId: string): ProjectDecisions {
+  const key = decisionsKey(id, streamId);
+  const decisions = projectDecisions.get(key) ?? { catalog: null, decisions: [] };
+  projectDecisions.set(key, decisions);
+  return decisions;
 }
 
 /** Совет поменяли: новое время изменения. */
@@ -369,9 +399,53 @@ export const mockSource: DataSource = {
     if (stages.research !== 'done' && status !== 'ready') {
       throw new ApiError('research_not_ready', `Исследование совета ${id} не готово или группы не подтверждены`, 409);
     }
-    const groups = structureOf(id).groups.map((g) => g.id);
-    councils[index] = researchApproved(councils[index], groups, new Date().toISOString());
+    const { groups } = structureOf(id);
+    const starting = stages.streams === 'idle';
+    councils[index] = researchApproved(councils[index], groups.map((g) => g.id), new Date().toISOString());
+    // «Потоки» не начаты — каждая группа становится потоком; прошлые решения — из папки документации проекта.
+    if (starting) {
+      const docs = projects.find((p) => p.id === councils[index].project?.id)?.docs ?? '';
+      for (const group of groups) projectDecisions.set(decisionsKey(id, group.id), newDecisions(docs));
+      streams.set(id, newStreams(groups, (stream) => decisionsOf(id, stream)));
+    }
     return copy(councils[index]);
+  },
+  async listStreams(id) {
+    councilAt(id);
+    return copy(streams.get(id) ?? []);
+  },
+  async retryStream(id, streamId) {
+    const index = councilAt(id);
+    const at = streamAt(id, streamId);
+    const list = streams.get(id) ?? [];
+    // Шаг не останавливался — не перезапускаем, отвечаем потоком как есть.
+    if (list[at].steps.some((step) => step.state === 'failed')) {
+      const now = new Date().toISOString();
+      list[at] = streamRetried(list[at], now);
+      councils[index] = streamsChanged(councils[index], list, streamId, now);
+    }
+    return copy(list[at]);
+  },
+  async getProjectDecisions(id, streamId) {
+    councilAt(id);
+    streamAt(id, streamId);
+    return copy(decisionsOf(id, streamId));
+  },
+  async approveProjectDecisions(id, streamId, selected) {
+    const index = councilAt(id);
+    const at = streamAt(id, streamId);
+    const decisions = decisionsOf(id, streamId);
+    const unknown = selected.find((d) => !decisions.decisions.some((known) => known.id === d));
+    if (unknown !== undefined) throw new ApiError('unknown_decision', `Решения ${unknown} нет у потока ${streamId}`, 422);
+    // Отмеченные — по порядку списка, без повторов.
+    const chosen = decisions.decisions.filter((d) => selected.includes(d.id)).map((d) => d.id);
+    decisions.decisions = decisions.decisions.map((d) => ({ ...d, selected: chosen.includes(d.id) }));
+    const list = streams.get(id) ?? [];
+    const now = new Date().toISOString();
+    const { participants, judge } = councils[index];
+    list[at] = decisionsApproved(list[at], chosen, participants, judge, now);
+    councils[index] = streamsChanged(councils[index], list, streamId, now);
+    return copy(list[at]);
   },
   async listModels() {
     return copy(MODELS);

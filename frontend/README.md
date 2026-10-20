@@ -56,7 +56,8 @@ src/
 
 Экраны: `features/home` — Сводка, `features/projects` — Проекты, `features/council` — совет, `features/brief` — его
 этап «Ввод», `features/slices` — этап «Нарезка», `features/structure` — этап «Группы», `features/research` — этап
-«Исследование».
+«Исследование», `features/stream` — шаг потока (общее для всех шагов), `features/projectDecisions` — шаг «Решения
+проекта».
 
 Экран совета (`features/council`, `<Council route>`) — общий для всех этапов и шагов потока: под шапкой рамки вкладки
 шести этапов, под ними — этап, который `app/Screen.tsx` выбирает по адресу и получает совет из списка
@@ -113,6 +114,23 @@ src/
 (`useApproveResearch()`) и открывает первый поток; уже утверждено — просто открывает его. Расчёты — что будет
 с находкой, какие у неё кнопки, можно ли начать и утвердить — `domain/research.ts`.
 
+Шаг потока (`features/stream`, `<Stream council route>`) — общий для всех шагов, как совет для этапов: под вкладками
+этапов — вкладки потоков (`parts/StreamTabs`), слева цепочка шагов (`parts/StepChain`), плашка состояния открытого шага
+с «Запустить снова» (`parts/StepBanner`) и «Ход работы» вида «grouped» (`parts/RunPanel`: у шага с ошибкой и у шага, где
+работают модели), справа — карточка шага (`parts/StepCard`: подпись капсом, название, пояснение). Внутри карточки —
+шаг, который `app/Screen.tsx` выбирает по адресу и получает поток, все потоки совета и шаг (`{({ stream, streams, step })
+=> …}`); шаг не начат — «Шаг откроется, когда пройдены предыдущие.» вместо него. Шага ещё нет — в карточке заглушка
+`features/stub`. Потоки даёт `useCouncilStreams(id, running)` из `data/`: пока на шаге работают модели, потоки и список
+советов опрашиваются (`useModelsPoll()`). Потока из адреса нет — открывается первый поток на его текущем шаге. Расчёты —
+текущий шаг и состояние потока, когда показывать «Ход работы», состояние части шага, «думает 0:12» — `domain/stream.ts`.
+Переходы шага — внизу карточки (`ui/CardFooter`), у каждого шага свои.
+
+«Решения проекта» (`features/projectDecisions`) — идея потока на жёлтой плашке (`ui/Highlight`); шаг готов — что учтено
+и «Изменить отбор» (`parts/SelectionSummary`); ждёт вас или отбор открыт — невыгруженные потоки, каталог, прошлые
+решения с галочками (`parts/DecisionCard` на `CheckTile variant="card"`) и два перехода к вопросам. Галочки живут
+в `useProjectDecisionsStep()` рядом с экраном до перехода; переход — `useApproveProjectDecisions()`, потом открываются
+«Вопросы» потока. Экран ставится с `key` по совету и потоку.
+
 «Новый совет» — одно действие на все его кнопки (шапка, меню, колонка «Ввод» на Сводке): `useNewCouncil()` из
 `components/NewCouncil` создаёт совет и открывает его «Ввод». `NewCouncilProvider` ставит `app/App.tsx`; ошибку
 создания рамка показывает под шапкой.
@@ -130,8 +148,9 @@ src/
 `Field` — подпись поля, поле и пояснение (`hintPosition`: под подписью или под полем), `TextInput` — поле ввода
 (`text`, `mono` — путь, `title` — название карточки, которое правят на месте), `TextArea` — поле для длинного текста
 (`tall` — высокое, текст ввода; `bare` — без поля, идея группы на плашке), `CheckTile` — галочка с подписью
-на плитке (`mono` — подпись моноширинным, `meta` — пояснение мелко справа), `Switch` — переключатель «вкл / выкл», `Dot`
-— цветная точка (цвета состояний и `ink` — тёмная), `Tag` —
+на плитке (`mono` — подпись моноширинным, `meta` — пояснение мелко справа; `variant`: `tile` — серая плитка в строку,
+`card` — карточка с содержимым в несколько строк, отмеченная — в тёмной рамке), `Switch` — переключатель «вкл / выкл»,
+`Dot` — цветная точка (цвета состояний и `ink` — тёмная; `pulse` — пульсирует: модель думает), `Tag` —
 метка-«таблетка» (`green`, `yellow`, `red`, `gray`, `dark`, `ghost`, `glass` — белая полупрозрачная на цветной плашке;
 размер `xs` — в строке текста, `sm`, `md`, `lg` — в начале главного блока этапа), `Chip` — чип-выбор с числом
 (`glass` — на фоне страницы, `paper` — белый с рамкой на карточке; размер
@@ -143,10 +162,15 @@ src/
 карточка своей высоты), `Caption` — подпись раздела капсом
 (`onDark` — на тёмной плашке, `onAttention` — на жёлтой), `PageTools` —
 переключатели экрана в шапке, `Columns` — две колонки этапа: главная и боковая (`stickySide` — боковая не уезжает при
-прокрутке), `BlockTitle` — заголовок блока этапа и пояснение (`layout`: `stack` — под ним, `loose` — под ним
-просторнее, `inline` — в строку с ним), `NextStep` — тёмная плашка «что дальше» с кнопкой (`panel` — столбиком сбоку
+прокрутке; `sideFirst` — боковая слева и не шире `--stage-side-max`, цепочка шагов потока), `BlockTitle` — заголовок
+блока этапа и пояснение (`layout`: `stack` — под ним, `loose` — под ним просторнее, `inline` — в строку с ним; `size`:
+`lg` — крупнее, название шага потока), `NextStep` — тёмная плашка «что дальше» с кнопкой (`panel` — столбиком сбоку
 этапа, `bar` — строкой под этапом), `Skeleton` — серые строки на месте того, что ещё готовится, `Alert` — красная
-плашка «работа остановилась» со знаком «!» и кнопкой, `Badge` — тёмный кружок с буквой группы. В `components/`:
+плашка «работа остановилась» со знаком «!» и кнопкой, `Badge` — кружок с буквой группы или потока (`dark` — тёмный,
+`light` — белый на тёмной вкладке; `sm` — на вкладке потока), `CardFooter` — низ карточки под чертой: слева пояснение
+или второе действие, справа главное, `DashedNote` — пояснение на пунктирной плашке на месте того, чего нет
+(«Пропущено — …», «Шаг откроется, …»), `Highlight` — жёлтая плашка с подписью капсом (идея группы, идея потока).
+В `components/`:
 `StateDot` — точка состояния совета, этапа или шага; `StateTag` — метка состояния; `LoadState` — загрузка и ошибка
 (без `onRetry` — только текст ошибки); `NewCouncil` — действие «Новый совет»; `ProjectDialog` — окно проекта: новый
 и правка; `RunningStage` — этап, пока на нём работают модели: «ИИ работает», что происходит, серые строки и справа —
@@ -173,17 +197,20 @@ src/
 Экран не ходит в `fetch` сам — только через хуки из `data/`.
 
 - `data/source.ts` — интерфейс источника `DataSource`: по методу на ручку контракта.
-- `data/mock/` — моки. Совет `g1`, его нарезка, группы и исследование — из `data-1.json` макета, остальные советы, их
-  фрагменты, группы, находки и проекты — из `prototype.js`.
+- `data/mock/` — моки. Совет `g1`, его нарезка, группы, исследование и поток — из `data-1.json` макета, остальные
+  советы, их фрагменты, группы, находки, потоки, прошлые решения и проекты — из `prototype.js`. «К потокам →» в моках
+  создаёт потоки из групп.
   Моки отдают копию данных: экран не может их испортить.
 - `data/http/` — настоящий сервер: `request()` разбирает ответ и ошибку по контракту.
 - `data/config.ts` — какой источник взять, по `VITE_DATA_SOURCE`.
 - `data/hooks/` — хуки запросов: `useCouncils()`, `useCouncilBrief(id)`, `useCouncilSlicing(id, running)`,
-  `useCouncilStructure(id, running)`, `useCouncilResearch(id, running)`, `useModels()`, `useProjects()`, `useRepos()` →
+  `useCouncilStructure(id, running)`, `useCouncilResearch(id, running)`, `useCouncilStreams(id, running)`,
+  `useProjectDecisions(id, streamId)`, `useModels()`, `useProjects()`, `useRepos()` →
   `{ data, error, loading, reload }`; хуки действий: `useCreateCouncil()`, `useUpdateCouncil()`, `useSaveBrief()`,
   `useStartSlicing()`, `useStartStructure()`, `useConfirmStructure()`, `useRetryStructure()`, `useResearchAction()`
-  (`run(id, { action: 'start' | 'skip' | 'stop' | 'reset', kind, … })`), `useApproveResearch()`, `useCreateProject()`,
-  `useUpdateProject()`, `useDeleteProject()` → `{ run, pending, error }`.
+  (`run(id, { action: 'start' | 'skip' | 'stop' | 'reset', kind, … })`), `useApproveResearch()`, `useRetryStream()`,
+  `useApproveProjectDecisions()`, `useCreateProject()`, `useUpdateProject()`, `useDeleteProject()` →
+  `{ run, pending, error }`.
   `run()` отвечает изменённым объектом (удаление — id удалённого) или `undefined`, если не вышло (причина — в `error`).
   `useFragmentLabels(id, running)` — смена типа фрагмента по щелчку, `useFindingDecisions(id, round)` — решение по
   находке по щелчку: оба — на `useQueuedSaves()` (у каждого ключа своя очередь, на сервере — последний выбор; `pending`
@@ -372,6 +399,24 @@ src/
 | Покрытие        | Coverage          |
 | Утвердить исследование | Approve research |
 | К потокам       | To streams        |
+| Цепочка         | Chain             |
+| не начато (шаг) | not started       |
+| Ход за вами     | Your move         |
+| Сбой            | Failure           |
+| думает          | thinking          |
+| последний запуск | last run         |
+| Сбор вопросов   | Collecting questions |
+| Поиск вариантов | Finding options   |
+| прошлое решение | past decision     |
+| каталог решений | catalog           |
+| относится       | relevant          |
+| может противоречить | may conflict  |
+| неясно          | unclear           |
+| след в коде     | code trail        |
+| Идея потока     | Stream idea       |
+| Изменить отбор  | Change selection  |
+| Учитываются     | Taken into account |
+| выгружен в заметки | exported to notes |
 
 ## Токены
 
@@ -394,8 +439,11 @@ src/
   с id фрагмента), `--badge-md` (кружок с буквой группы), `--alert-icon` (знак «!» на красной плашке),
   `--checkbox-size-sm` (галочка в строке фрагмента группы), `--card-min-xl` (широкие блоки рядом: исследования кода
   и макета), `--ref-min` («где найдено» на находке), `--conflict-side-min` (сторона противоречия), `--flow-step-num`
-  (кружок с номером шага сценария в коде);
-- прозрачность — `--opacity-count` (число на чипе), `--opacity-disabled` (недоступный переключатель);
+  (кружок с номером шага сценария в коде), `--stage-side-max` (боковая колонка слева: цепочка шагов потока),
+  `--badge-sm` (буква потока на вкладке), `--step-num`, `--chain-line`, `--chain-line-min` (кружок шага и черта в
+  цепочке), `--hint-width` (пояснение шага потока), `--pulse-spread` (кольцо вокруг точки модели, которая думает);
+- прозрачность — `--opacity-count` (число на чипе), `--opacity-disabled` (недоступный переключатель), `--opacity-idle`
+  (не начатый шаг в цепочке);
 - тени — `--shadow-card`, `--shadow-modal`, `--shadow-knob`; фон страницы — `--page-background`; затемнение под
   окном — `--overlay-bg`, `--overlay-blur`.
 
@@ -421,6 +469,14 @@ npm --prefix frontend run shot -- --name slices --proto "#/c/g1/slices" --app "/
 
 ```
 npm --prefix frontend run shot -- --name projedit --proto "#/projects" --click "Править" --app "/projects" --app-click "Править"
+```
+
+Шаги потока: `g1` — все шаги готовы; у `c1` поток A ждёт вас на «Документации», B — на «Вариантах», C остановился на
+«Вопросах»; отбор прошлых решений — «Изменить отбор»:
+
+```
+npm --prefix frontend run shot -- --name project --proto "#/c/c1/streams/A/project" --click "Изменить отбор" --app "/c/c1/streams/A/project" --app-click "Изменить отбор"
+npm --prefix frontend run shot -- --name failed --proto "#/c/c1/streams/C/questions" --app "/c/c1/streams/C/questions"
 ```
 
 Для снимков нужен браузер: один раз `npx playwright install chromium` в `frontend/`. Если его нет, скрипт снимает в

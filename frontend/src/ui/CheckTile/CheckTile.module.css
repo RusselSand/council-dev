@@ -1,11 +1,8 @@
-.tile {
+.item {
   display: flex;
   align-items: center;
   gap: var(--space-10);
   min-width: 0;
-  padding: var(--space-9) var(--space-12);
-  border-radius: var(--radius-14);
-  background: var(--color-surface-sunken);
   cursor: pointer;
 }
 
@@ -36,6 +33,36 @@
   color: var(--color-text-faint);
   text-align: right;
   overflow-wrap: anywhere;
+}
+
+/* tile — серая плитка в строку. */
+.tile {
+  padding: var(--space-9) var(--space-12);
+  border-radius: var(--radius-14);
+  background: var(--color-surface-sunken);
+}
+
+/* card — галочка у первой строки, содержимое столбиком; отмеченная — серее и в тёмной рамке. */
+.card {
+  align-items: flex-start;
+  gap: var(--space-12);
+  padding: var(--space-14) var(--space-16);
+  border-radius: var(--radius-16);
+  background: var(--color-surface);
+  box-shadow: inset 0 0 0 var(--border-thin) var(--color-line-soft);
+}
+
+.card .box {
+  margin: var(--space-2) 0 0;
+}
+
+.card .label {
+  flex: 1;
+}
+
+.card.checked {
+  background: var(--color-surface-muted);
+  box-shadow: inset 0 0 0 var(--border-thick) var(--color-ink);
 }
 
 .disabled {

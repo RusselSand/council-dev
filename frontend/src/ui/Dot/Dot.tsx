@@ -8,13 +8,15 @@ interface DotProps {
   tone: DotTone;
   /** sm — 7px, в строке; md — 9px, у совета в меню. */
   size?: DotSize;
+  /** Точка пульсирует: модель сейчас думает. */
+  pulse?: boolean;
   /** Что значит цвет — для экранного диктора. Без подписи точка только украшение. */
   label?: string;
 }
 
 /** Цветная точка: состояние совета, этапа, модели. */
-export function Dot({ tone, size = 'sm', label }: DotProps) {
-  const className = `${styles.dot} ${styles[tone]} ${styles[size]}`;
+export function Dot({ tone, size = 'sm', pulse = false, label }: DotProps) {
+  const className = [styles.dot, styles[tone], styles[size], pulse && styles.pulse].filter(Boolean).join(' ');
   return label ? (
     <span className={className} role="img" aria-label={label} />
   ) : (

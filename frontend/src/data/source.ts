@@ -4,6 +4,7 @@ import type { Model } from '../domain/model';
 import type { Project, ProjectFields } from '../domain/project';
 import type { Decision, Finding, Research, ResearchKind } from '../domain/research';
 import type { Fragment, Label, Slicing } from '../domain/slicing';
+import type { ProjectDecisions, Stream } from '../domain/stream';
 import type { Group, GroupFields, Structure } from '../domain/structure';
 
 /**
@@ -57,6 +58,17 @@ export interface DataSource {
   setFindingDecision(id: string, findingId: string, decision: Decision): Promise<Finding>;
   /** POST /api/councils/<id>/research/approve — «К потокам →»: утвердить исследование; ответ — совет. */
   approveResearch(id: string): Promise<CouncilSummary>;
+  /** GET /api/councils/<id>/streams — потоки совета с шагами; до «Потоков» — пусто. */
+  listStreams(id: string): Promise<Stream[]>;
+  /** POST /api/councils/<id>/streams/<streamId>/retry — «Запустить снова» шаг, который остановился; ответ — поток. */
+  retryStream(id: string, streamId: string): Promise<Stream>;
+  /** GET /api/councils/<id>/streams/<streamId>/project-decisions — каталог и прошлые решения потока. */
+  getProjectDecisions(id: string, streamId: string): Promise<ProjectDecisions>;
+  /**
+   * POST /api/councils/<id>/streams/<streamId>/project-decisions/approve — учитывать эти прошлые решения (пусто —
+   * без прошлых решений) и перейти к вопросам; ответ — поток.
+   */
+  approveProjectDecisions(id: string, streamId: string, selected: string[]): Promise<Stream>;
   /** GET /api/models */
   listModels(): Promise<Model[]>;
   /** GET /api/projects */

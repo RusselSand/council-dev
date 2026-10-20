@@ -3,6 +3,7 @@ import type { Model } from '../../domain/model';
 import type { Project } from '../../domain/project';
 import type { Research } from '../../domain/research';
 import type { Slicing } from '../../domain/slicing';
+import type { ProjectDecisions, Stream } from '../../domain/stream';
 import type { Structure } from '../../domain/structure';
 
 /**
@@ -28,6 +29,18 @@ export interface CouncilResearch extends Research {
   council: string;
 }
 
+/** Потоки совета и совет, чьи они: ответ действия с потоком одного совета не должен попасть в потоки другого. */
+export interface CouncilStreams {
+  council: string;
+  streams: Stream[];
+}
+
+/** Прошлые решения потока и чьи они — совет и поток. */
+export interface StreamProjectDecisions extends ProjectDecisions {
+  council: string;
+  stream: string;
+}
+
 /** Данные, которые может изменить действие, и их вид: после действия их запросы перезапрашиваются. */
 export interface Topics {
   councils: CouncilSummary[];
@@ -42,6 +55,10 @@ export interface Topics {
   structure: CouncilStructure;
   /** Исследование открытого совета. */
   research: CouncilResearch;
+  /** Потоки открытого совета. */
+  streams: CouncilStreams;
+  /** Прошлые решения открытого потока. */
+  projectDecisions: StreamProjectDecisions;
 }
 export type Topic = keyof Topics;
 

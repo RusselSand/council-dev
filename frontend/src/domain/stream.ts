@@ -1,0 +1,160 @@
+import { STEPS, type State, type Step } from './council';
+import type { Run, RunState } from './run';
+
+/**
+ * Части шага потока, где работают модели, — по порядку; так их называют шаги потока у настоящего совета g1
+ * (data-1.json: questions.steps, proposals.steps, analysis.steps, outcomes.steps). У «Решений проекта» и «Документации»
+ * частей нет: там модели не работают.
+ */
+export const STEP_PHASES = [
+  'question_discovery',
+  'question_judge',
+  'proposal_discovery',
+  'proposal_judge',
+  'decision_analysis',
+  'decision_judge',
+  'outcome_discovery',
+  'outcome_judge',
+] as const;
+export type StepPhase = (typeof STEP_PHASES)[number];
+
+/** Работа модели на шаге потока: как у нарезки, и ещё — когда модель начала работать. */
+export interface StepRun extends Run {
+  /** Когда модель начала работать, ISO 8601; только у running, иначе null. */
+  startedAt: string | null;
+}
+
+/** Часть шага («Сбор вопросов», «Судья вариантов») и работа моделей в ней. */
+export interface StepProgress {
+  phase: StepPhase;
+  /** Модели этой части по порядку: модели совета или судья. */
+  runs: StepRun[];
+}
+
+/** Шаг потока: состояние, строка в цепочке, что на плашке и ход последнего запуска. */
+export interface StreamStep {
+  step: Step;
+  state: State;
+  /** Строка под шагом в цепочке: «отобрано 4 вопроса»; пишет сервер. У не начатого шага — пустая. */
+  note: string;
+  /** У шага с ошибкой — почему он остановился, у шага, где работают модели, — что они делают; иначе null. */
+  text: string | null;
+  /** Ход последнего запуска шага по частям; модели на шаге не работали — пусто. */
+  progress: StepProgress[];
+}
+
+/** Поток совета: группа, ставшая потоком, и шесть шагов по порядку. */
+export interface Stream {
+  /** id потока — буква группы: «A». */
+  id: string;
+  title: string;
+  /** Идея потока — идея группы, утверждённая на «Группах». */
+  idea: string;
+  /** Шесть шагов по порядку STEPS. */
+  steps: StreamStep[];
+}
+
+/** Шаг потока по ключу; у потока его нет — шаг не начат. */
+export function stepOf(stream: Stream, step: Step): StreamStep {
+  return stream.steps.find((s) => s.step === step) ?? { step, state: 'idle', note: '', text: null, progress: [] };
+}
+
+/** Текущий шаг потока — первый неготовый; все готовы — последний. */
+export function currentStep(stream: Stream): StreamStep {
+  return stream.steps.find((s) => s.state !== 'done') ?? stepOf(stream, STEPS[STEPS.length - 1]);
+}
+
+/** Состояние потока на вкладке — состояние его текущего шага; все шаги готовы — готово. */
+export const streamState = (stream: Stream): State => currentStep(stream).state;
+
+/** Потоки совета, кроме этого, которые ещё не выгружены в заметки: их «Документация» не готова. */
+export const unexported = (streams: readonly Stream[], id: string): string[] =>
+  streams.filter((s) => s.id !== id && stepOf(s, 'notes').state !== 'done').map((s) => s.id);
+
+/**
+ * «Ход работы» показывается у шага с ошибкой и у шага, где работают модели: в макете — у шага с ошибкой, в том числе
+ * пока он запускается снова.
+ */
+export const showsRuns = (step: StreamStep): boolean =>
+  (step.state === 'failed' || step.state === 'running') && step.progress.length > 0;
+
+/**
+ * Состояние части шага по её моделям — подпись справа от части в «Ходе работы»: хоть одна не справилась — сбой; хоть
+ * одна работает — думает; хоть одна ждёт — ждёт; все не понадобились — не понадобился; иначе — готово.
+ */
+export function phaseState(runs: readonly Run[]): RunState {
+  const states = runs.map((run) => run.state);
+  if (states.includes('failed')) return 'failed';
+  if (states.includes('running')) return 'running';
+  if (states.includes('waiting')) return 'waiting';
+  if (states.length > 0 && states.every((s) => s === 'skipped')) return 'skipped';
+  return 'done';
+}
+
+/** Сколько секунд модель работает к моменту now (мс); время не разобрать — 0. */
+export function workedSeconds(startedAt: string, now: number): number {
+  const start = Date.parse(startedAt);
+  return Number.isNaN(start) ? 0 : Math.max(0, Math.floor((now - start) / 1000));
+}
+
+/** Время работы часами: «0:12», «14:05» — минуты и секунды. */
+export const clock = (seconds: number): string => `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, '0')}`;
+
+/** Как прошлое решение относится к идее потока: относится, может противоречить, неясно. */
+export const RELATIONS = ['applicable', 'potential_conflict', 'uncertain'] as const;
+export type Relation = (typeof RELATIONS)[number];
+
+/** Статус прошлого решения в каталоге: действует, под вопросом, заменено другим. */
+export const DECISION_STATUSES = ['active', 'under_review', 'superseded'] as const;
+export type DecisionStatus = (typeof DECISION_STATUSES)[number];
+
+/** След решения в коде: задача, файл, коммит. */
+export interface TrailEntry {
+  issue: string;
+  path: string;
+  /** Коммит — как его пишет каталог: «a91c3e2». */
+  commit: string;
+}
+
+/** Прошлое решение проекта, которое совет счёл относящимся к идее потока. */
+export interface PastDecision {
+  /** id решения в каталоге: «ADR-0003». */
+  id: string;
+  /** Что решено. */
+  decision: string;
+  /** На какой вопрос решение отвечает. */
+  question: string;
+  relation: Relation;
+  status: DecisionStatus;
+  /** Каким решением заменено — у superseded; иначе null. */
+  supersededBy: string | null;
+  /** Почему совет счёл его относящимся к идее. */
+  reason: string;
+  trail: TrailEntry[];
+  /** Галочка стоит: шаг готов — решение учитывается; не готов — совет предлагает его учесть. */
+  selected: boolean;
+}
+
+/** Каталог решений проекта: откуда «Решения проекта» берут прошлые решения. */
+export interface DecisionCatalog {
+  /** Папка документации проекта. */
+  path: string;
+  /** Сколько решений в каталоге. */
+  total: number;
+  /** Сколько из них со следом в коде. */
+  traced: number;
+}
+
+/** Шаг «Решения проекта» потока: каталог и прошлые решения, относящиеся к идее. */
+export interface ProjectDecisions {
+  /** У совета нет проекта или у проекта нет папки документации — null. */
+  catalog: DecisionCatalog | null;
+  /** Прошлые решения в порядке сервера; нет — пусто. */
+  decisions: PastDecision[];
+}
+
+/** Отмеченные решения — id по порядку списка: галочка, которую поставил или снял человек, иначе — с сервера. */
+export const checkedIds = (
+  decisions: readonly PastDecision[],
+  checks: Readonly<Record<string, boolean>>,
+): string[] => decisions.filter((d) => checks[d.id] ?? d.selected).map((d) => d.id);
