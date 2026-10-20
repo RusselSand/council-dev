@@ -1,0 +1,1 @@
+export { CheckTile } from './CheckTile';

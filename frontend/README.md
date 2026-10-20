@@ -61,14 +61,23 @@ src/
 `components/NewCouncil` создаёт совет и открывает его «Ввод». `NewCouncilProvider` ставит `app/App.tsx`; ошибку
 создания рамка показывает под шапкой.
 
+Окно проекта — одно на все кнопки, которые его открывают («+ Новый проект» в шапке «Проектов», «Править» на карточке
+проекта): `useProjectDialog()` из `components/ProjectDialog` → `openNew()` или `openEdit(project)`.
+`ProjectDialogProvider` ставит `app/App.tsx` и показывает окно поверх рамки и экрана. Поля, рабочие копии и сохранение —
+`useProjectForm()` рядом с окном; расчёты (не больше 10 репозиториев, порядок отметок, что можно сохранить) —
+`domain/project.ts`.
+
 Готовое в `ui/`: `Shell` — стеклянная рамка страницы с местом под меню, `Button` (`primary`, `outline`, `text` —
-только текст; размер `md`, `sm` — на карточке; `tone="danger"` — красная), `Dot` — цветная точка, `Tag` —
+только текст; размер `md` — в шапке и окнах, `sm` — на карточке; `tone="danger"` — красная; недоступная `primary` —
+серая), `Dialog` — окно поверх страницы с заголовком, «×» и кнопками внизу (закрывается «×», кликом мимо и Esc),
+`Field` — подпись поля, поле и пояснение (`hintPosition`: под подписью или под полем), `TextInput` — поле ввода
+(`text`, `mono` — путь), `CheckTile` — галочка с подписью на плитке (`mono` — подпись моноширинным), `Dot` — цветная точка, `Tag` —
 метка-«таблетка» (`green`, `yellow`, `red`, `gray`, `dark`, `ghost`; размер `sm`, `md`), `Chip` — чип-фильтр с числом,
 `Segmented` — переключатель из нескольких кнопок, `Card` — белая карточка (`sm` — в колонке канбана, `md` — в сетке,
 `lg` — карточка проекта), `CardGrid` — сетка карточек (`md` — советы, `lg` — проекты), `Caption` — подпись раздела
 капсом, `PageTools` — переключатели экрана в шапке. В `components/`: `StateDot` — точка состояния совета, этапа или
 шага; `StateTag` — метка состояния; `LoadState` — загрузка и ошибка (без `onRetry` — только текст ошибки);
-`NewCouncil` — действие «Новый совет».
+`NewCouncil` — действие «Новый совет»; `ProjectDialog` — окно проекта: новый и правка.
 
 ## Адреса
 
@@ -95,16 +104,18 @@ src/
   Моки отдают копию данных: экран не может их испортить.
 - `data/http/` — настоящий сервер: `request()` разбирает ответ и ошибку по контракту.
 - `data/config.ts` — какой источник взять, по `VITE_DATA_SOURCE`.
-- `data/hooks/` — хуки запросов: `useCouncils()`, `useModels()`, `useProjects()` → `{ data, error, loading, reload }`;
-  хуки действий: `useCreateCouncil()`, `useDeleteProject()` → `{ run, pending, error }`. `run()` отвечает изменённым
-  объектом (удаление — id удалённого) или `undefined`, если не вышло (причина — в `error`).
+- `data/hooks/` — хуки запросов: `useCouncils()`, `useModels()`, `useProjects()`, `useRepos()` →
+  `{ data, error, loading, reload }`; хуки действий: `useCreateCouncil()`, `useCreateProject()`, `useUpdateProject()`,
+  `useDeleteProject()` → `{ run, pending, error }`. `run()` отвечает изменённым объектом (удаление — id удалённого) или
+  `undefined`, если не вышло (причина — в `error`).
 - После действия данные, которые оно меняет, перезапрашиваются сами: действие после успеха помечает их устаревшими
   (`useMutation(action, (result) => markStale('councils', patch))`), запрос на них подписан
   (`useQuery(…, deps, 'councils')`). Правка `patch` вносит ответ действия в данные сразу, до перезапроса, и остаётся,
   если перезапрос не вышел: созданный совет виден в шапке и меню без нового списка. Данные и их вид — `Topics`
   в `data/hooks/stale.ts`.
-- Действие, которое создаёт объект, шлёт `Idempotency-Key`: пока объект не создан, все попытки идут с одним ключом,
-  и повтор после оборванного ответа не создаёт второй (`useCreateCouncil()`).
+- Действие, которое создаёт объект, шлёт `Idempotency-Key` (`data/hooks/idempotency.ts`): пока объект не создан, все
+  попытки идут с одним ключом, и повтор после оборванного ответа не создаёт второй (`useCreateCouncil()`,
+  `useCreateProject()`). Ключ живёт столько же, сколько хук: у проекта — пока открыто окно «Новый проект».
 - `data/errors.ts` — `ApiError` с `code`; текст ошибки — `t(errorKey(error.code))`, а не `message`.
 
 Новая ручка: описать в `docs/api-contract.md` → тип в `domain/` → метод в `DataSource` → мок → http → хук.
@@ -200,7 +211,13 @@ src/
 | Новый проект    | New project       |
 | Проекты         | Projects          |
 | репозиторий     | repository        |
+| рабочая копия git | git working copy |
 | папка документации | documentation folder |
+| Название        | Name              |
+| Создать проект  | Create project    |
+| Сохранить       | Save              |
+| Отмена          | Cancel            |
+| Закрыть         | Close             |
 | заметки         | notes             |
 | Править         | Edit              |
 | Удалить         | Delete            |
@@ -222,9 +239,12 @@ src/
   `--leading-*`, `--tracking-*`;
 - отступы и радиусы — числом пикселей: `--space-14`, `--radius-18`; плюс `--radius-pill`, `--radius-round`;
 - размеры — по назначению: `--sidebar-width`, `--logo-size`, `--dot-sm`, `--dot-md`, `--icon-sm`, `--card-min`
-  и `--card-min-lg` (самая узкая карточка в сетке), `--intro-width` (абзац-пояснение под шапкой);
+  и `--card-min-lg` (самая узкая карточка в сетке), `--intro-width` (абзац-пояснение под шапкой), `--dialog-width`
+  и `--dialog-max-height` (окно), `--icon-button` (круглая кнопка «×»), `--checkbox-size` (галочка),
+  `--check-tile-min` (самая узкая плитка с галочкой в сетке);
 - прозрачность — `--opacity-count` (число на чипе);
-- тени — `--shadow-card`, `--shadow-modal`, `--shadow-knob`; фон страницы — `--page-background`.
+- тени — `--shadow-card`, `--shadow-modal`, `--shadow-knob`; фон страницы — `--page-background`; затемнение под
+  окном — `--overlay-bg`, `--overlay-blur`.
 
 Шрифты Manrope и JetBrains Mono подключены пакетами `@fontsource` (`styles/fonts.css`), без запросов к Google Fonts.
 
@@ -243,7 +263,12 @@ npm --prefix frontend run shot -- --name slices --proto "#/c/g1/slices" --app "/
 Снимки — `design/.shots/<name>-proto.png` и `<name>-app.png`. Макет снимается после того, как загрузит данные `g1`.
 Флаги: `--click` / `--app-click` — клик по тексту, `css:<селектор>`, `fill:<селектор>=<текст>`, `key:<клавиша>`;
 `--full` — страница целиком; `--height` — высота окна; `--locale en-US` — наш экран на английском. Остальное — в
-начале `scripts/shot.mjs`.
+начале `scripts/shot.mjs`. В селекторе `fill:` не должно быть `=` — по нему отделяется текст: вместо
+`input[type=text] >> nth=1` пишите `:nth-match(dialog input[placeholder], 2)`. Окно проекта:
+
+```
+npm --prefix frontend run shot -- --name projedit --proto "#/projects" --click "Править" --app "/projects" --app-click "Править"
+```
 
 Для снимков нужен браузер: один раз `npx playwright install chromium` в `frontend/`. Если его нет, скрипт снимает в
 установленном Chrome или Edge.

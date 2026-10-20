@@ -44,11 +44,25 @@
   padding: var(--space-7) var(--space-14);
 }
 
+/* Недоступная главная кнопка — серая, как «Начать исследование», пока не выбраны репозитории. */
+.primary:disabled {
+  background: var(--color-disabled);
+}
+
 .text {
-  padding: var(--space-7) var(--space-10);
   border: 0;
   background: transparent;
   color: var(--color-text-secondary);
+}
+
+/* «Отмена» в окне. */
+.text.md {
+  padding: var(--space-10) var(--space-16);
+}
+
+/* «Удалить» на карточке. */
+.text.sm {
+  padding: var(--space-7) var(--space-10);
 }
 
 .danger.primary {

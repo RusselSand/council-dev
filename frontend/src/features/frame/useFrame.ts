@@ -1,4 +1,5 @@
 import { useNewCouncil, type NewCouncilAction } from '../../components/NewCouncil';
+import { useProjectDialog } from '../../components/ProjectDialog';
 import { useCouncils, useModels, type ApiError } from '../../data';
 import { groupByProject, type CouncilSummary, type State } from '../../domain/council';
 import { modelRole, type Model, type ModelRole } from '../../domain/model';
@@ -63,6 +64,8 @@ export interface FrameView {
   };
   /** «Новый совет» — в шапке и в меню. */
   newCouncil: NewCouncilAction;
+  /** «+ Новый проект» — открыть окно «Новый проект». */
+  newProject: () => void;
 }
 
 const HOME = routePath({ screen: 'home' });
@@ -127,7 +130,7 @@ function headerOf(
 
 /**
  * Рамка вокруг экранов: меню слева — разделы, советы по проектам, модели; шапка — путь, заголовок и строка под ним;
- * «Новый совет».
+ * «Новый совет» и «+ Новый проект».
  */
 export function useFrame(): FrameView {
   const i18n = useI18n();
@@ -136,6 +139,7 @@ export function useFrame(): FrameView {
   const councils = useCouncils();
   const models = useModels();
   const newCouncil = useNewCouncil();
+  const projectDialog = useProjectDialog();
 
   const openId = openCouncilId(route);
   const council = openId === undefined ? undefined : councils.data?.find((c) => c.id === openId);
@@ -148,5 +152,6 @@ export function useFrame(): FrameView {
     models: { ...models, data: models.data && modelsOf(models.data, council?.judge) },
     header: headerOf(route, council, i18n),
     newCouncil,
+    newProject: projectDialog.openNew,
   };
 }

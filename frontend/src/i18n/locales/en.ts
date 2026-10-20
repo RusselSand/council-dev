@@ -24,13 +24,27 @@ export const en = translation({
 
   'project.none': 'No project',
   'project.newButton': '+ New project',
+  'project.repos': 'Repositories',
+  'project.docs': 'Documentation folder',
+
+  'project.dialog.titleNew': 'New project',
+  'project.dialog.titleEdit': 'Project',
+  'project.dialog.name': 'Name',
+  'project.dialog.namePlaceholder': 'For example, Kromka',
+  'project.dialog.reposHint': 'Git working copies from COUNCIL_REPOS — check the ones you need. No more than {max}.',
+  'project.dialog.docsPlaceholder': 'path from COUNCIL_REPOS, e.g. project/docs/reasoning',
+  'project.dialog.docsHint':
+    'The “Tasks” stage exports notes here, and “Project decisions” takes past decisions from here. Empty — no folder.',
+  'project.dialog.create': 'Create project',
+  'project.dialog.save': 'Save',
+
+  'dialog.cancel': 'Cancel',
+  'dialog.close': 'Close',
 
   'projects.intro':
     'Repositories and the documentation folder that a council takes from its project instead of entering them in every stream. The project is chosen on the council’s “Brief”.',
   'projects.usage': { one: 'in {count} council', other: 'in {count} councils' },
   'projects.unused': 'not used',
-  'projects.repos': 'Repositories',
-  'projects.docs': 'Documentation folder',
   'projects.noDocs': 'No folder: streams can’t be exported to notes',
   'projects.edit': 'Edit',
   'projects.delete': 'Delete',
@@ -67,6 +81,10 @@ export const en = translation({
   'error.not_found': 'Not found — it may have been deleted.',
   'error.internal': 'The server could not handle the request. Please try again.',
   'error.project_in_use': 'The project is already chosen in a council, so it can’t be deleted.',
+  'error.name_required': 'Name the project.',
+  'error.too_many_repos': 'Check no more than 10 repositories.',
+  'error.unknown_repo':
+    'One of the checked repositories is no longer in COUNCIL_REPOS. The list has been refreshed — check your selection.',
   'error.network': 'No connection to the server. Check your network and try again.',
   'error.unknown': 'Something went wrong. Please try again.',
 

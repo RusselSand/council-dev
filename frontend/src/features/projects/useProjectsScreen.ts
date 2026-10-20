@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { useProjectDialog } from '../../components/ProjectDialog';
 import { useDeleteProject, useProjects, type ApiError } from '../../data';
 import type { Project } from '../../domain/project';
 import { useI18n, type Translate } from '../../i18n';
@@ -28,6 +29,8 @@ export interface ProjectsScreen {
   loading: boolean;
   error: ApiError | undefined;
   reload: () => void;
+  /** «Править»: открыть окно проекта. */
+  edit: (id: string) => void;
   /** «Удалить»: первое нажатие спрашивает «Да, удалить», второе удаляет. */
   remove: (id: string) => void;
   /** Удалить ещё раз, если не вышло. */
@@ -38,13 +41,15 @@ const usageOf = ({ councilCount }: Project, t: Translate) =>
   councilCount ? t('projects.usage', { count: councilCount }) : t('projects.unused');
 
 /**
- * Проекты: карточка на проект — репозитории, папка документации, в скольких советах выбран. Удаление — как в макете:
- * проект в советах не удалить; иначе первое «Удалить» превращается в «Да, удалить», второе удаляет.
+ * Проекты: карточка на проект — репозитории, папка документации, в скольких советах выбран. «Править» открывает окно
+ * проекта. Удаление — как в макете: проект в советах не удалить; иначе первое «Удалить» превращается в «Да, удалить»,
+ * второе удаляет.
  */
 export function useProjectsScreen(): ProjectsScreen {
   const { t } = useI18n();
   const projects = useProjects();
   const deletion = useDeleteProject();
+  const dialog = useProjectDialog();
   /** Проект, у которого «Удалить» уже спросило «Да, удалить». */
   const [confirming, setConfirming] = useState<string>();
   /** Проект, который удаляли последним: его ошибку показывает карточка. */
@@ -96,6 +101,10 @@ export function useProjectsScreen(): ProjectsScreen {
     loading: projects.loading,
     error: projects.error,
     reload: projects.reload,
+    edit: (id) => {
+      const project = projects.data?.find((p) => p.id === id);
+      if (project) dialog.openEdit(project);
+    },
     remove: (id) => {
       const current = card(id);
       if (!current || current.deleteDisabled) return;
