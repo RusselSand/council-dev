@@ -9,8 +9,8 @@ export const httpSource: DataSource = {
     const { councils } = await request<{ councils: CouncilSummary[] }>('GET', '/councils');
     return councils;
   },
-  async createCouncil() {
-    const { council } = await request<{ council: CouncilSummary }>('POST', '/councils', {});
+  async createCouncil(key) {
+    const { council } = await request<{ council: CouncilSummary }>('POST', '/councils', {}, { 'Idempotency-Key': key });
     return council;
   },
   async listModels() {

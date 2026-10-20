@@ -96,8 +96,13 @@ src/
 - `data/hooks/` — хуки запросов: `useCouncils()`, `useModels()` → `{ data, error, loading, reload }`; хуки действий:
   `useCreateCouncil()` → `{ run, pending, error }`. `run()` отвечает изменённым объектом или `undefined`, если не
   вышло (причина — в `error`).
-- После действия данные, которые оно меняет, перезапрашиваются сами: действие называет их (`useMutation(…, ['councils'])`),
-  запрос на них подписан (`useQuery(…, deps, 'councils')`). Список — `Topic` в `data/hooks/stale.ts`.
+- После действия данные, которые оно меняет, перезапрашиваются сами: действие после успеха помечает их устаревшими
+  (`useMutation(action, (result) => markStale('councils', patch))`), запрос на них подписан
+  (`useQuery(…, deps, 'councils')`). Правка `patch` вносит ответ действия в данные сразу, до перезапроса, и остаётся,
+  если перезапрос не вышел: созданный совет виден в шапке и меню без нового списка. Данные и их вид — `Topics`
+  в `data/hooks/stale.ts`.
+- Действие, которое создаёт объект, шлёт `Idempotency-Key`: пока объект не создан, все попытки идут с одним ключом,
+  и повтор после оборванного ответа не создаёт второй (`useCreateCouncil()`).
 - `data/errors.ts` — `ApiError` с `code`; текст ошибки — `t(errorKey(error.code))`, а не `message`.
 
 Новая ручка: описать в `docs/api-contract.md` → тип в `domain/` → метод в `DataSource` → мок → http → хук.

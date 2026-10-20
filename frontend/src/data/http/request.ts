@@ -7,10 +7,16 @@ type Method = 'GET' | 'POST' | 'PATCH' | 'PUT' | 'DELETE';
 
 /**
  * Запрос к API. Ответ 2xx — JSON; ошибка — { "error": { "code", "message" } } (docs/api-contract.md, «Ошибки»).
- * Сервер не ответил — ApiError network; ответ не разобрать — ApiError unknown.
+ * Сервер не ответил — ApiError network; ответ не разобрать — ApiError unknown. extraHeaders — заголовки ручки
+ * сверх общих (Idempotency-Key).
  */
-export async function request<T>(method: Method, path: string, body?: unknown): Promise<T> {
-  const headers: Record<string, string> = { Accept: 'application/json' };
+export async function request<T>(
+  method: Method,
+  path: string,
+  body?: unknown,
+  extraHeaders?: Record<string, string>,
+): Promise<T> {
+  const headers: Record<string, string> = { Accept: 'application/json', ...extraHeaders };
   if (body !== undefined) headers['Content-Type'] = 'application/json';
 
   let response: Response;

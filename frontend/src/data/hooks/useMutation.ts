@@ -1,6 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { toApiError, type ApiError } from '../errors';
-import { markStale, type Topic } from './stale';
 
 export interface Mutation<A extends unknown[], T> {
   /** Выполнить действие. Ответ — изменённый объект; не вышло — undefined, причина — в error. */
@@ -16,14 +15,19 @@ interface MutationState {
   error: ApiError | undefined;
 }
 
-/** Действие с данными. После успеха запросы данных stale перезапрашиваются. */
+/**
+ * Действие с данными. После успеха зовёт done с ответом: там действие помечает данные, которые изменило,
+ * устаревшими (markStale) и правит их ответом.
+ */
 export function useMutation<A extends unknown[], T>(
   action: (...args: A) => Promise<T>,
-  stale: readonly Topic[],
+  done: (result: T) => void,
 ): Mutation<A, T> {
   const [state, setState] = useState<MutationState>({ pending: false, error: undefined });
   const actionRef = useRef(action);
   actionRef.current = action;
+  const doneRef = useRef(done);
+  doneRef.current = done;
   const mounted = useRef(false);
 
   useEffect(() => {
@@ -33,21 +37,18 @@ export function useMutation<A extends unknown[], T>(
     };
   }, []);
 
-  const run = useCallback(
-    async (...args: A) => {
-      setState({ pending: true, error: undefined });
-      try {
-        const result = await actionRef.current(...args);
-        if (mounted.current) setState({ pending: false, error: undefined });
-        markStale(stale);
-        return result;
-      } catch (error) {
-        if (mounted.current) setState({ pending: false, error: toApiError(error) });
-        return undefined;
-      }
-    },
-    [stale],
-  );
+  const run = useCallback(async (...args: A) => {
+    setState({ pending: true, error: undefined });
+    try {
+      const result = await actionRef.current(...args);
+      if (mounted.current) setState({ pending: false, error: undefined });
+      doneRef.current(result);
+      return result;
+    } catch (error) {
+      if (mounted.current) setState({ pending: false, error: toApiError(error) });
+      return undefined;
+    }
+  }, []);
 
   return { ...state, run };
 }
