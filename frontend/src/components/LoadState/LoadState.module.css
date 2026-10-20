@@ -1,0 +1,25 @@
+.line {
+  margin: 0;
+  font-size: var(--text-sm);
+  line-height: var(--leading-relaxed);
+  color: var(--color-text-faint);
+  overflow-wrap: anywhere;
+}
+
+.error {
+  color: var(--state-failed-ink);
+}
+
+.retry {
+  padding: 0;
+  border: 0;
+  background: transparent;
+  font-size: inherit;
+  font-weight: var(--weight-semibold);
+  color: var(--color-text-secondary);
+  cursor: pointer;
+}
+
+.retry:hover {
+  color: var(--color-ink);
+}

@@ -1,0 +1,20 @@
+.button {
+  border-radius: var(--radius-pill);
+  font-size: var(--text-md);
+  font-weight: var(--weight-semibold);
+  cursor: pointer;
+}
+
+.primary {
+  padding: var(--space-10) var(--space-20);
+  border: 0;
+  background: var(--color-ink);
+  color: var(--color-paper);
+}
+
+.outline {
+  padding: var(--space-9) var(--space-19);
+  border: var(--border-thin) solid var(--color-ink);
+  background: transparent;
+  color: var(--color-ink);
+}

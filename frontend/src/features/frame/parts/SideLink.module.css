@@ -1,0 +1,30 @@
+.link {
+  display: flex;
+  align-items: center;
+  gap: var(--space-10);
+  min-width: 0;
+  border-radius: var(--radius-pill);
+  font-size: var(--text-base);
+  color: var(--color-ink);
+  text-decoration: none;
+}
+
+.link:hover {
+  color: var(--color-ink-hover);
+}
+
+.section {
+  padding: var(--space-11) var(--space-16);
+  font-weight: var(--weight-semibold);
+}
+
+.council {
+  padding: var(--space-8) var(--space-12) var(--space-8) var(--space-16);
+  font-weight: var(--weight-medium);
+}
+
+.active,
+.active:hover {
+  background: var(--color-ink);
+  color: var(--color-paper);
+}

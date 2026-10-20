@@ -1,0 +1,17 @@
+.tag {
+  padding: var(--space-2) var(--space-8);
+  border-radius: var(--radius-pill);
+  font-size: var(--text-2xs);
+  font-weight: var(--weight-bold);
+  white-space: nowrap;
+}
+
+.green {
+  background: var(--state-done-bg);
+  color: var(--state-done-ink);
+}
+
+.ghost {
+  background: transparent;
+  color: var(--color-text-ghost);
+}

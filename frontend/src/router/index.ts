@@ -3,7 +3,7 @@ import { parseRoute, type Route } from './routes';
 
 export { navigate, usePathname } from './history';
 export { Link } from './Link';
-export { parseRoute, routePath, type Route, type StagePage } from './routes';
+export { councilRoute, parseRoute, routePath, type Route, type StagePage } from './routes';
 
 /** Текущий адрес приложения; незнакомый — null. */
 export function useRoute(): Route | null {

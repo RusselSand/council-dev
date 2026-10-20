@@ -1,0 +1,31 @@
+.dot {
+  flex: none;
+  display: inline-block;
+  border-radius: var(--radius-round);
+}
+
+.sm {
+  width: var(--dot-sm);
+  height: var(--dot-sm);
+}
+
+.md {
+  width: var(--dot-md);
+  height: var(--dot-md);
+}
+
+.green {
+  background: var(--state-done);
+}
+
+.yellow {
+  background: var(--state-waiting);
+}
+
+.red {
+  background: var(--state-failed);
+}
+
+.gray {
+  background: var(--state-idle);
+}

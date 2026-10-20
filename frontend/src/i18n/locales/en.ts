@@ -7,6 +7,19 @@ export const en = translation({
   'screen.home': 'Overview',
   'screen.projects': 'Projects',
 
+  'nav.councils': 'Councils',
+
+  'council.untitled': 'Untitled',
+  'council.new': 'New council',
+  'council.newButton': '+ New council',
+
+  'project.none': 'No project',
+  'project.newButton': '+ New project',
+
+  'models.title': 'Council models',
+  'model.member': 'in council',
+  'model.offline': 'offline',
+
   'stage.brief': 'Brief',
   'stage.slices': 'Slicing',
   'stage.structure': 'Groups',
@@ -35,8 +48,12 @@ export const en = translation({
   'error.network': 'No connection to the server. Check your network and try again.',
   'error.unknown': 'Something went wrong. Please try again.',
 
+  'load.loading': 'Loading…',
+  'load.retry': 'Try again',
+
   'stub.address': 'Address',
   'stub.council': 'Council',
   'stub.stage': 'Stage',
   'stub.stream': 'Stream',
-  'stub.step': 'Step',});
+  'stub.step': 'Step',
+});
