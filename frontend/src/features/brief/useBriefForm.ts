@@ -7,15 +7,15 @@ import {
   useStartSlicing,
   useUpdateCouncil,
   type ApiError,
-  type Mutation,
 } from '../../data';
 import { countWords } from '../../domain/brief';
-import { toggleParticipant, type CouncilFields, type CouncilSummary } from '../../domain/council';
+import { toggleParticipant, type CouncilSummary } from '../../domain/council';
 import { modelPath } from '../../domain/model';
 import type { Project } from '../../domain/project';
 import { useI18n, type Translate } from '../../i18n';
 import { navigate, routePath } from '../../router';
 import type { SegmentedOption } from '../../ui/Segmented';
+import { useCouncilEdit } from './useCouncilEdit';
 
 /** Сколько ждать после последней набранной буквы, прежде чем сохранить текст или название, мс. */
 const TYPING_PAUSE = 600;
@@ -114,14 +114,12 @@ export function useBriefForm(council: CouncilSummary, initialText: string): Brie
   const projects = useProjects();
   const saveBrief = useSaveBrief();
   const saveName = useUpdateCouncil();
-  const saveProject = useUpdateCouncil();
-  const saveMembers = useUpdateCouncil();
+  const projectEdit = useCouncilEdit(council.id);
+  const membersEdit = useCouncilEdit(council.id);
   const slicing = useStartSlicing();
 
   const [text, setText] = useState(initialText);
   const [name, setName] = useState(council.name);
-  /** Правки проекта, моделей и судьи, на которые сервер ещё не ответил. */
-  const [pending, setPending] = useState<CouncilFields>({});
   const [starting, setStarting] = useState(false);
 
   const textSave = useAutosave(text, (value) => ok(saveBrief.run(council.id, value)), { delay: TYPING_PAUSE });
@@ -129,23 +127,10 @@ export function useBriefForm(council: CouncilSummary, initialText: string): Brie
     delay: TYPING_PAUSE,
   });
 
-  const change = (mutation: Mutation<[string, CouncilFields], CouncilSummary>, fields: CouncilFields) => {
-    setPending((p) => ({ ...p, ...fields }));
-    void mutation.run(council.id, fields).then(() =>
-      setPending((p) => {
-        // Ответ пришёл — правка больше не ждёт; если человек успел выбрать другое, ждёт уже новая.
-        const next = { ...p };
-        for (const key of Object.keys(fields) as (keyof CouncilFields)[]) {
-          if (next[key] === fields[key]) delete next[key];
-        }
-        return next;
-      }),
-    );
-  };
-
-  const projectId = pending.projectId !== undefined ? pending.projectId : (council.project?.id ?? null);
-  const participants = pending.participants ?? council.participants;
-  const judge = pending.judge ?? council.judge;
+  const projectId =
+    projectEdit.pending.projectId !== undefined ? projectEdit.pending.projectId : (council.project?.id ?? null);
+  const participants = membersEdit.pending.participants ?? council.participants;
+  const judge = membersEdit.pending.judge ?? council.judge;
 
   const projectKey = projectId ?? NO_PROJECT;
   const projectChoices = projects.data && [
@@ -183,10 +168,10 @@ export function useBriefForm(council: CouncilSummary, initialText: string): Brie
     projectsState: { loading: projects.loading, error: projects.error, reload: projects.reload },
     pickProject: (key) => {
       const next = key === NO_PROJECT ? null : key;
-      if (next !== projectId) change(saveProject, { projectId: next });
+      if (next !== projectId) projectEdit.change({ projectId: next });
     },
     projectHint: hintOf(projectId, projects.data?.find((p) => p.id === projectId), t),
-    projectError: saveProject.error,
+    projectError: projectEdit.error,
     projectsPath: routePath({ screen: 'projects' }),
 
     members: models.data?.map((model) => ({
@@ -201,13 +186,13 @@ export function useBriefForm(council: CouncilSummary, initialText: string): Brie
       // Как в макете: не подключённую модель не включить и не выключить.
       if (!model?.online || !models.data) return;
       const order = models.data.map((m) => m.id);
-      change(saveMembers, { participants: toggleParticipant(participants, id, order) });
+      membersEdit.change({ participants: toggleParticipant(participants, id, order) });
     },
     judges: (models.data ?? []).filter((m) => m.online).map((m) => ({ value: m.id, label: m.id })),
     judge,
     pickJudge: (id) => {
-      if (id !== judge) change(saveMembers, { judge: id });
+      if (id !== judge) membersEdit.change({ judge: id });
     },
-    membersError: saveMembers.error,
+    membersError: membersEdit.error,
   };
 }

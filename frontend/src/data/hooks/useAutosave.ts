@@ -33,6 +33,11 @@ export function useAutosave<T>(
   equalRef.current = equal;
   /** Последнее значение, которое сохранил сервер. */
   const stored = useRef(value);
+  /**
+   * Растёт, когда сервер сохранил новое значение. Правку, сделанную, пока шёл запрос, с ним надо сравнить заново:
+   * человек мог вернуть прежнее значение, а сохранилось то, что ушло в запросе.
+   */
+  const [storedVersion, setStoredVersion] = useState(0);
   /** Очередь запросов: следующий уходит, когда ответил предыдущий. */
   const queue = useRef<Promise<boolean>>(Promise.resolve(true));
   const [sending, setSending] = useState(0);
@@ -43,7 +48,10 @@ export function useAutosave<T>(
       if (equalRef.current(next, stored.current)) return true;
       setSending((n) => n + 1);
       const ok = await saveRef.current(next);
-      if (ok) stored.current = next;
+      if (ok) {
+        stored.current = next;
+        setStoredVersion((n) => n + 1);
+      }
       setSending((n) => n - 1);
       return ok;
     });
@@ -54,7 +62,7 @@ export function useAutosave<T>(
     if (equalRef.current(value, stored.current)) return undefined;
     const timer = setTimeout(() => void flush(), delay);
     return () => clearTimeout(timer);
-  }, [value, delay, flush]);
+  }, [value, storedVersion, delay, flush]);
 
   // Экран закрыли до конца паузы — отправляем сразу.
   useEffect(() => () => void flush(), [flush]);
