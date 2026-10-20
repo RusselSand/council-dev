@@ -1,5 +1,5 @@
 import { STEPS, type State, type Step } from '../../domain/council';
-import type { RunState } from '../../domain/run';
+import type { Run, RunState } from '../../domain/run';
 import type { Group } from '../../domain/structure';
 import type {
   DecisionCatalog,
@@ -364,27 +364,35 @@ export function decisionsApproved(
 
 /**
  * «Запустить снова» — шаг, который остановился, запускается снова: модели, которые уже ответили, заново не работают —
- * их ответы сохранены и второй раз не оплачиваются, как в макете; остальные модели работают заново, судья ждёт своей
- * очереди. В моках шаг не кончается. Шага с ошибкой нет — поток как есть.
+ * их ответы сохранены и второй раз не оплачиваются, как в макете. Шаг идёт снова с первой части, где ответили не все
+ * (модели совета или судья): её модели работают заново, модели следующих частей ждут своей очереди. В моках шаг
+ * не кончается. Шага с ошибкой нет — поток как есть.
  */
 export function streamRetried(stream: Stream, now: string): Stream {
   return {
     ...stream,
     steps: stream.steps.map((step): StreamStep => {
       if (step.state !== 'failed') return step;
+      const answered = (run: Run) => run.state === 'done' || run.state === 'skipped';
+      const from = step.progress.findIndex((phase) => !phase.runs.every(answered));
       const progressNow = step.progress.map((phase, i) => ({
         ...phase,
         runs: phase.runs.map((run) =>
-          run.state === 'done' || run.state === 'skipped'
+          answered(run)
             ? run
-            : i === 0
+            : i === from
               ? { ...run, state: 'running' as const, startedAt: now }
               : { ...run, state: 'waiting' as const, startedAt: null },
         ),
       }));
-      const [first] = progressNow;
-      const rerun = first?.runs.filter((run) => run.state === 'running').map((run) => run.model) ?? [];
-      const kept = first?.runs.filter((run) => run.state === 'done').map((run) => run.model) ?? [];
+      const rerun = progressNow[from]?.runs.filter((run) => run.state === 'running').map((run) => run.model) ?? [];
+      const kept = [
+        ...new Set(
+          progressNow
+            .slice(0, from + 1)
+            .flatMap((phase) => phase.runs.filter((run) => run.state === 'done').map((run) => run.model)),
+        ),
+      ];
       const work = workText(step.step, rerun);
       return {
         ...step,

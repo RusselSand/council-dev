@@ -59,7 +59,7 @@ export function ProjectDecisions({ councilId, streamId, idea, state, unexported 
               {t('projectDecisions.approve')}
             </Button>
           </CardFooter>
-          <LoadState loading={false} error={step.approveError} onRetry={step.retry} />
+          <LoadState loading={step.refreshing} error={step.approveError} onRetry={step.retry} />
         </>
       )}
     </>

@@ -50,10 +50,16 @@ export interface ProjectDecisionsStep {
   skip: () => void;
   /** «Учитывать отмеченные → к вопросам». */
   approve: () => void;
-  /** Отбор уходит на сервер: галочки и кнопки не действуют. */
+  /**
+   * Отбор уходит на сервер, прошлые решения перезапрашиваются или не обновились: галочки и кнопки не действуют —
+   * на экране, может быть, решения, которых уже нет.
+   */
   busy: boolean;
+  /** Прошлые решения перезапрашиваются, а на экране — прежние: под кнопками «Загружаем…». */
+  refreshing: boolean;
+  /** Под кнопками: прошлые решения не обновились — их ошибка; иначе — ошибка отбора. */
   approveError: ApiError | undefined;
-  /** Повторить то, что не вышло: без прошлых решений или с отмеченными сейчас. */
+  /** Повторить то, что не вышло: перезапросить прошлые решения или отправить отбор без них или с отмеченными сейчас. */
   retry: () => void;
 }
 
@@ -68,7 +74,8 @@ function statusLabel(decision: PastDecision, t: Translate): string | null {
  * Шаг «Решения проекта», как в макете. Шаг ждёт вас или нажали «Изменить отбор» — отбор: невыгруженные потоки,
  * каталог, прошлые решения с галочками, «Без прошлых решений → к вопросам» и «Учитывать отмеченные → к вопросам». Шаг
  * готов — что учтено и «Изменить отбор». Галочки человек ставит на экране, на сервер они уходят с «… → к вопросам»;
- * ушёл с экрана раньше — при возврате снова как на сервере. После ответа открываются «Вопросы» потока; ушёл с экрана,
+ * ушёл с экрана раньше — при возврате снова как на сервере. Отмеченного решения уже нет — прошлые решения
+ * перезапрашиваются, и, пока не пришли, отбор не отправляется. После ответа открываются «Вопросы» потока; ушёл с экрана,
  * пока отбор уходил, — не открываются. Другой поток — другой экран: ставьте с key по совету и потоку.
  */
 export function useProjectDecisionsStep(
@@ -100,9 +107,14 @@ export function useProjectDecisionsStep(
   const { catalog } = query.data ?? { catalog: null };
   const selected = decisions.filter((d) => d.selected).map((d) => d.id);
   const chosen = checkedIds(decisions, checks);
+  const loaded = query.data !== undefined;
+  /** Прошлые решения на экране, но перезапрашиваются (отмеченного уже нет) или не обновились. */
+  const refreshing = loaded && query.loading;
+  const outdated = refreshing || (loaded && query.error !== undefined);
+  const busy = action.pending || outdated;
 
   const send = (ids: string[], skip: boolean) => {
-    if (action.pending) return;
+    if (busy) return;
     lastSkip.current = skip;
     void (async () => {
       const stream = await action.run(councilId, streamId, ids);
@@ -114,7 +126,7 @@ export function useProjectDecisionsStep(
   };
 
   return {
-    loaded: query.data !== undefined,
+    loaded,
     loading: query.loading,
     error: query.error,
     reload: query.reload,
@@ -146,14 +158,15 @@ export function useProjectDecisionsStep(
       checked: chosen.includes(d.id),
     })),
     toggle: (id) => {
-      if (action.pending) return;
+      if (busy) return;
       setChecks((current) => ({ ...current, [id]: !chosen.includes(id) }));
     },
     count: t('projectDecisions.count', { selected: chosen.length, total: decisions.length }),
     skip: () => send([], true),
     approve: () => send(chosen, false),
-    busy: action.pending,
-    approveError: action.error,
-    retry: () => send(lastSkip.current ? [] : chosen, lastSkip.current),
+    busy,
+    refreshing,
+    approveError: refreshing ? undefined : (query.error ?? action.error),
+    retry: () => (query.error ? query.reload() : send(lastSkip.current ? [] : chosen, lastSkip.current)),
   };
 }

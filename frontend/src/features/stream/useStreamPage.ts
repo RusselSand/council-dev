@@ -100,6 +100,7 @@ export interface StreamPage {
   /** «Запустить снова» шаг с ошибкой. */
   retry: () => void;
   retrying: boolean;
+  /** Ошибка «Запустить снова» этого шага; ушли на другой шаг или поток, шаг больше не с ошибкой — сбрасывается. */
   retryError: ApiError | undefined;
 }
 
@@ -180,6 +181,15 @@ export function useStreamPage(council: CouncilSummary, route: StepRoute): Stream
     : [];
 
   const state = step?.state ?? 'idle';
+
+  /** Шаг, который запускали снова, — «поток/шаг»: ошибку перезапуска показываем только у него, пока он с ошибкой. */
+  const [retried, setRetried] = useState<string | null>(null);
+  const here = `${route.stream}/${route.step}`;
+  const retriedHere = retried === here && state === 'failed';
+  useEffect(() => {
+    if (!retriedHere) setRetried(null);
+  }, [retriedHere]);
+
   const caps =
     state === 'waiting'
       ? t('stream.caps.waiting', { step: stepTitle })
@@ -233,9 +243,11 @@ export function useStreamPage(council: CouncilSummary, route: StepRoute): Stream
     banner,
     runs,
     retry: () => {
-      if (state === 'failed' && !retryAction.pending) void retryAction.run(council.id, route.stream);
+      if (state !== 'failed' || retryAction.pending) return;
+      setRetried(here);
+      void retryAction.run(council.id, route.stream);
     },
     retrying: retryAction.pending,
-    retryError: retryAction.error,
+    retryError: retriedHere ? retryAction.error : undefined,
   };
 }
