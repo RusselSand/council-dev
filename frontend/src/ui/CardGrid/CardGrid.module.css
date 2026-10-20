@@ -11,6 +11,11 @@
   grid-template-columns: repeat(auto-fill, minmax(var(--card-min-lg), 1fr));
 }
 
+/* Уже, чем самая узкая, места нет — карточка во всю ширину. */
+.xl {
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, var(--card-min-xl)), 1fr));
+}
+
 .stretch {
   align-items: stretch;
 }

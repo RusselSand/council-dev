@@ -55,7 +55,8 @@ src/
 держит для них место между заголовком и кнопками.
 
 Экраны: `features/home` — Сводка, `features/projects` — Проекты, `features/council` — совет, `features/brief` — его
-этап «Ввод», `features/slices` — этап «Нарезка», `features/structure` — этап «Группы».
+этап «Ввод», `features/slices` — этап «Нарезка», `features/structure` — этап «Группы», `features/research` — этап
+«Исследование».
 
 Экран совета (`features/council`, `<Council route>`) — общий для всех этапов и шагов потока: под шапкой рамки вкладки
 шести этапов, под ними — этап, который `app/Screen.tsx` выбирает по адресу и получает совет из списка
@@ -97,6 +98,18 @@ src/
 правок, потом запускает раскладку (`useRetryStructure()`). Пока группы подтверждаются или раскладка запускается снова,
 правки групп и обе кнопки не действуют.
 
+«Исследование» (`features/research`) ведёт себя по исследованию совета, а не по `stages.research`: два блока рядом —
+код (`parts/CodeBlock`) и макет (`parts/DesignBlock`) — на общем `parts/ResearchBlock`, который по состоянию блока
+показывает настройку, работу моделей (`parts/RunList`), результат (`parts/ResultLine`) или «пропущено»
+(`parts/SkippedNote`) и свои кнопки. Отметки репозиториев и ссылка на Figma живут в `useResearch()` рядом с экраном и
+уходят на сервер с «Начать исследование»; блок сменил состояние — снова как на сервере. Действия с блоком —
+`useResearchAction()`, по экземпляру на блок: у каждого своё «ждёт ответа» и своя ошибка. Есть находки — «Что пойдёт
+в потоки» (`parts/Findings`, `parts/FindingCard`, `parts/ConflictSides`): фильтр — на экране, группы — из раскладки
+(`useCouncilStructure()`), решение по находке сохраняется сразу (`useFindingDecisions()`). Код исследован — сценарии
+(`parts/CodeFlows`) и покрытие (`parts/CoverageList`). «К потокам →» дожидается решений, потом утверждает исследование
+(`useApproveResearch()`) и открывает первый поток; уже утверждено — просто открывает его. Расчёты — что будет
+с находкой, какие у неё кнопки, можно ли начать и утвердить — `domain/research.ts`.
+
 «Новый совет» — одно действие на все его кнопки (шапка, меню, колонка «Ввод» на Сводке): `useNewCouncil()` из
 `components/NewCouncil` создаёт совет и открывает его «Ввод». `NewCouncilProvider` ставит `app/App.tsx`; ошибку
 создания рамка показывает под шапкой.
@@ -114,14 +127,17 @@ src/
 `Field` — подпись поля, поле и пояснение (`hintPosition`: под подписью или под полем), `TextInput` — поле ввода
 (`text`, `mono` — путь, `title` — название карточки, которое правят на месте), `TextArea` — поле для длинного текста
 (`tall` — высокое, текст ввода; `bare` — без поля, идея группы на плашке), `CheckTile` — галочка с подписью
-на плитке (`mono` — подпись моноширинным), `Switch` — переключатель «вкл / выкл», `Dot` — цветная точка, `Tag` —
+на плитке (`mono` — подпись моноширинным, `meta` — пояснение мелко справа), `Switch` — переключатель «вкл / выкл», `Dot`
+— цветная точка (цвета состояний и `ink` — тёмная), `Tag` —
 метка-«таблетка» (`green`, `yellow`, `red`, `gray`, `dark`, `ghost`, `glass` — белая полупрозрачная на цветной плашке;
 размер `xs` — в строке текста, `sm`, `md`, `lg` — в начале главного блока этапа), `Chip` — чип-выбор с числом
 (`glass` — на фоне страницы, `paper` — белый с рамкой на карточке; размер
-`sm` — теснее, тип фрагмента), `Segmented` — переключатель из нескольких кнопок
+`sm` — теснее, тип фрагмента; `dot` — цветная точка перед подписью, фильтр находок), `Segmented` — переключатель из
+нескольких кнопок
 (`glass` — в шапке, `solid` — на карточке), `Card` — белая карточка (`sm` — в колонке канбана, `row` — строка списка
 на этапе, `md` — в сетке, `lg` — карточка проекта, `xl` — главный блок этапа), `CardGrid` — сетка карточек (`md` —
-советы и группы, `lg` — проекты; `align="start"` — каждая карточка своей высоты), `Caption` — подпись раздела капсом
+советы и группы, `lg` — проекты, `xl` — широкие блоки рядом, исследования кода и макета; `align="start"` — каждая
+карточка своей высоты), `Caption` — подпись раздела капсом
 (`onDark` — на тёмной плашке, `onAttention` — на жёлтой), `PageTools` —
 переключатели экрана в шапке, `Columns` — две колонки этапа: главная и боковая (`stickySide` — боковая не уезжает при
 прокрутке), `BlockTitle` — заголовок блока этапа и пояснение (`layout`: `stack` — под ним, `loose` — под ним
@@ -131,7 +147,7 @@ src/
 `StateDot` — точка состояния совета, этапа или шага; `StateTag` — метка состояния; `LoadState` — загрузка и ошибка
 (без `onRetry` — только текст ошибки); `NewCouncil` — действие «Новый совет»; `ProjectDialog` — окно проекта: новый
 и правка; `RunningStage` — этап, пока на нём работают модели: «ИИ работает», что происходит, серые строки и справа —
-ход работы; `RunProgress` — «Ход работы»: части и состояния моделей.
+ход работы; `RunProgress` — «Ход работы»: части и состояния моделей (`RUN_TONE` — цвет точки по состоянию модели).
 
 ## Адреса
 
@@ -154,20 +170,23 @@ src/
 Экран не ходит в `fetch` сам — только через хуки из `data/`.
 
 - `data/source.ts` — интерфейс источника `DataSource`: по методу на ручку контракта.
-- `data/mock/` — моки. Совет `g1`, его нарезка и группы — из `data-1.json` макета, остальные советы, их фрагменты,
-  группы и проекты — из `prototype.js`.
+- `data/mock/` — моки. Совет `g1`, его нарезка, группы и исследование — из `data-1.json` макета, остальные советы, их
+  фрагменты, группы, находки и проекты — из `prototype.js`.
   Моки отдают копию данных: экран не может их испортить.
 - `data/http/` — настоящий сервер: `request()` разбирает ответ и ошибку по контракту.
 - `data/config.ts` — какой источник взять, по `VITE_DATA_SOURCE`.
 - `data/hooks/` — хуки запросов: `useCouncils()`, `useCouncilBrief(id)`, `useCouncilSlicing(id, running)`,
-  `useCouncilStructure(id, running)`, `useModels()`, `useProjects()`, `useRepos()` → `{ data, error, loading, reload }`;
-  хуки действий: `useCreateCouncil()`, `useUpdateCouncil()`, `useSaveBrief()`, `useStartSlicing()`,
-  `useStartStructure()`, `useConfirmStructure()`, `useRetryStructure()`, `useCreateProject()`, `useUpdateProject()`,
-  `useDeleteProject()` → `{ run, pending, error }`.
+  `useCouncilStructure(id, running)`, `useCouncilResearch(id)`, `useModels()`, `useProjects()`, `useRepos()` →
+  `{ data, error, loading, reload }`; хуки действий: `useCreateCouncil()`, `useUpdateCouncil()`, `useSaveBrief()`,
+  `useStartSlicing()`, `useStartStructure()`, `useConfirmStructure()`, `useRetryStructure()`, `useResearchAction()`
+  (`run(id, { action: 'start' | 'skip' | 'stop' | 'reset', kind, … })`), `useApproveResearch()`, `useCreateProject()`,
+  `useUpdateProject()`, `useDeleteProject()` → `{ run, pending, error }`.
   `run()` отвечает изменённым объектом (удаление — id удалённого) или `undefined`, если не вышло (причина — в `error`).
-  `useFragmentLabels(id, running)` — смена типа фрагмента по щелчку: `pending` и `errors` по id фрагмента, `change()`,
-  `settle()`. `useGroupEdits(id, running)` — правки групп: `change()` (название, идея), `merge()`, `split()`, `pending`
-  и `errors` по id группы, `reshaping`, `settle()`.
+  `useFragmentLabels(id, running)` — смена типа фрагмента по щелчку, `useFindingDecisions(id, round)` — решение по
+  находке по щелчку: оба — на `useQueuedSaves()` (у каждого ключа своя очередь, на сервере — последний выбор; `pending`
+  и `errors` по ключу, `change()`, `settle()`; сменился набор `round` — выборы прежних забываются).
+  `useGroupEdits(id, running)` — правки групп: `change()` (название, идея), `merge()`, `split()`, `pending` и `errors`
+  по id группы, `reshaping`, `settle()`.
 - `useAutosave(value, save, { delay, equal, stored })` — автосохранение того, что набирают: правка уходит после паузы,
   запросы — по одному с последним значением, закрыли экран — несохранённое уходит сразу; `saved` — всё сохранено,
   `flush()` — сохранить сейчас. `equal` — одинаковы ли значения для сервера (у названия — без пробелов по краям);
@@ -179,8 +198,9 @@ src/
   в `data/hooks/stale.ts`.
 - Опрос — когда данные могут поменяться без наших действий (модели работают): `poll('councils')` перезапрашивает
   запросы по ним, кроме тех, что ещё ждут ответа, — на медленной связи ответ не отбрасывается следующим опросом.
-  Следующий опрос — через паузу после ответа на прошлый, а не по часам: этап, где работают модели (нарезка, раскладка),
-  запрашивает `useStageQuery()`.
+  Следующий опрос — через паузу после ответа на прошлый, а не по часам (`useModelsPoll(running, query)`): этап, где
+  работают модели (нарезка, раскладка), запрашивает `useStageQuery()`; исследование опрашивается, пока по нему самому
+  видно, что хоть одно исследование идёт.
 - Действие, которое создаёт объект, шлёт `Idempotency-Key` (`data/hooks/idempotency.ts`): пока объект не создан, все
   попытки идут с одним ключом, и повтор после оборванного ответа не создаёт второй (`useCreateCouncil()`,
   `useCreateProject()`). Ключ живёт столько же, сколько хук: у проекта — пока открыто окно «Новый проект».
@@ -328,6 +348,27 @@ src/
 | Новая группа    | New group         |
 | Подтвердить     | Confirm           |
 | Запустить снова | Run again         |
+| Исследование кода | Code research   |
+| Исследование макета | Design research |
+| макет (Figma)   | design            |
+| необязательно   | optional          |
+| не начато       | not started       |
+| идёт            | in progress       |
+| пропущено       | skipped           |
+| Пропустить      | Skip              |
+| Начать исследование | Start research |
+| Остановить      | Stop              |
+| Изменить и перезапустить | Change and restart |
+| находка         | finding           |
+| факт            | fact              |
+| вывод ИИ        | AI inference      |
+| противоречие    | conflict          |
+| пробел          | gap               |
+| карта кода      | code map          |
+| Потоки в коде (сценарии) | Code flows |
+| Покрытие        | Coverage          |
+| Утвердить исследование | Approve research |
+| К потокам       | To streams        |
 
 ## Токены
 
@@ -348,7 +389,9 @@ src/
   (поле текста ввода), `--switch-width`, `--switch-height`, `--switch-knob` (переключатель), `--skeleton-line`,
   `--skeleton-width-second`, `--skeleton-width-third` (серые строки «ещё готовится»), `--fragment-id-width` (колонка
   с id фрагмента), `--badge-md` (кружок с буквой группы), `--alert-icon` (знак «!» на красной плашке),
-  `--checkbox-size-sm` (галочка в строке фрагмента группы);
+  `--checkbox-size-sm` (галочка в строке фрагмента группы), `--card-min-xl` (широкие блоки рядом: исследования кода
+  и макета), `--ref-min` («где найдено» на находке), `--conflict-side-min` (сторона противоречия), `--flow-step-num`
+  (кружок с номером шага сценария в коде);
 - прозрачность — `--opacity-count` (число на чипе), `--opacity-disabled` (недоступный переключатель);
 - тени — `--shadow-card`, `--shadow-modal`, `--shadow-knob`; фон страницы — `--page-background`; затемнение под
   окном — `--overlay-bg`, `--overlay-blur`.

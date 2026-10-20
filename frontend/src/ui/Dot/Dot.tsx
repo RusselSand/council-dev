@@ -1,6 +1,7 @@
 import styles from './Dot.module.css';
 
-export type DotTone = 'green' | 'yellow' | 'red' | 'gray';
+/** Цвета состояний; ink — тёмная, без состояния (фильтр «Все»). */
+export type DotTone = 'green' | 'yellow' | 'red' | 'gray' | 'ink';
 export type DotSize = 'sm' | 'md';
 
 interface DotProps {

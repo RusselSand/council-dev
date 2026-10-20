@@ -29,3 +29,7 @@
 .gray {
   background: var(--state-idle);
 }
+
+.ink {
+  background: var(--color-ink);
+}

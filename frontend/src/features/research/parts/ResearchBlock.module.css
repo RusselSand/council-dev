@@ -1,0 +1,36 @@
+.head {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  min-width: 0;
+}
+
+/* Подпись слева, метка справа; подпись длинная — переносится, метка не сжимается. */
+.kicker {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-8);
+  min-width: 0;
+}
+
+/* Пояснение или «Пропустить» слева, главная кнопка — справа; не влезают — кнопка уходит на следующую строку. */
+.footer {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-8);
+  padding-top: var(--space-14);
+  border-top: var(--border-thin) solid var(--color-line);
+}
+
+.note {
+  min-width: 0;
+  font-size: var(--text-sm);
+  color: var(--color-text-subtle);
+  overflow-wrap: anywhere;
+}
+
+.action {
+  margin-left: auto;
+}

@@ -19,6 +19,10 @@ export const ERROR_CODES = [
   'structure_running',
   'bad_merge',
   'bad_split',
+  'no_repos',
+  'bad_link',
+  'bad_decision',
+  'research_not_ready',
   'network',
   'unknown',
 ] as const;

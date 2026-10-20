@@ -28,6 +28,16 @@
   font-family: var(--font-mono);
 }
 
+/* «репозиторий проекта» справа на плитке: места мало — переносится, а не налезает на подпись. */
+.meta {
+  margin-left: auto;
+  min-width: 0;
+  font-size: var(--text-xs);
+  color: var(--color-text-faint);
+  text-align: right;
+  overflow-wrap: anywhere;
+}
+
 .disabled {
   cursor: default;
 }

@@ -1,6 +1,7 @@
 import type { CouncilSummary } from '../../domain/council';
 import type { Model } from '../../domain/model';
 import type { Project } from '../../domain/project';
+import type { Research } from '../../domain/research';
 import type { Slicing } from '../../domain/slicing';
 import type { Structure } from '../../domain/structure';
 
@@ -22,6 +23,11 @@ export interface CouncilSlicing extends Slicing, CouncilStage {}
 /** Раскладка по группам и совет, чья она. */
 export interface CouncilStructure extends Structure, CouncilStage {}
 
+/** Исследование и совет, чьё оно: действие с исследованием одного совета не должно попасть в исследование другого. */
+export interface CouncilResearch extends Research {
+  council: string;
+}
+
 /** Данные, которые может изменить действие, и их вид: после действия их запросы перезапрашиваются. */
 export interface Topics {
   councils: CouncilSummary[];
@@ -34,6 +40,8 @@ export interface Topics {
   slicing: CouncilSlicing;
   /** Раскладка открытого совета по группам. */
   structure: CouncilStructure;
+  /** Исследование открытого совета. */
+  research: CouncilResearch;
 }
 export type Topic = keyof Topics;
 

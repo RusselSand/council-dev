@@ -1,5 +1,6 @@
 import { cleanName, type CouncilFields, type CouncilSummary } from '../../domain/council';
 import { cleanFields, MAX_PROJECT_REPOS, type Project, type ProjectFields } from '../../domain/project';
+import { fitsKind, isFigmaLink, isPending, isSettled, researchStatus, type Research } from '../../domain/research';
 import { isLabel, type Slicing } from '../../domain/slicing';
 import type { Structure } from '../../domain/structure';
 import { ApiError } from '../errors';
@@ -8,6 +9,8 @@ import { BRIEFS } from './briefs';
 import {
   COUNCILS,
   newDraft,
+  researchApproved,
+  researchChanged,
   slicingStarted,
   structureConfirmed,
   structureRetried,
@@ -15,6 +18,7 @@ import {
 } from './councils';
 import { MODELS } from './models';
 import { PROJECT_LIST, REPO_LIST, type MockProject } from './projects';
+import { noResearch, RESEARCHES, startedCode, startedDesign, toSetup } from './research';
 import { noSlicing, SLICINGS, startedSlicing } from './slicings';
 import {
   mergeGroups,
@@ -41,6 +45,8 @@ const briefs = new Map(Object.entries(BRIEFS));
 const slicings = new Map(Object.entries(SLICINGS).map(([id, slicing]) => [id, copy(slicing)]));
 /** Раскладки по id совета: правка групп и новая раскладка меняют их здесь; у каждого совета — своя копия. */
 const structures = new Map(Object.entries(STRUCTURES).map(([id, structure]) => [id, copy(structure)]));
+/** Исследования по id совета: действия и решения по находкам меняют их здесь; у каждого совета — своя копия. */
+const researches = new Map(Object.entries(RESEARCHES).map(([id, research]) => [id, copy(research)]));
 /** Проекты моков: создание, правка и удаление меняют их здесь; живут, пока открыта вкладка. */
 const projects = copy(PROJECT_LIST);
 /** Idempotency-Key → id созданного по нему проекта. */
@@ -79,6 +85,25 @@ function checkNotStructuring(council: CouncilSummary) {
   if (council.stages.structure === 'running') {
     throw new ApiError('structure_running', `Совет ${council.id} ещё раскладывает фрагменты по группам`, 409);
   }
+}
+
+/**
+ * Исследование совета; у совета, который не исследовали, оба исследования не начаты. Репозитории — те, что у проекта
+ * совета сейчас: проект могли сменить или поправить; отметки у прежних остаются, новые — отмечены.
+ */
+function researchOf(id: string): Research {
+  const council = councils[councilAt(id)];
+  const repos = projects.find((p) => p.id === council.project?.id)?.repos ?? [];
+  const research = researches.get(id) ?? noResearch(repos);
+  const selected = new Map(research.code.repos.map((repo) => [repo.name, repo.selected]));
+  research.code.repos = repos.map((name) => ({ name, selected: selected.get(name) ?? true }));
+  researches.set(id, research);
+  return research;
+}
+
+/** С исследованием что-то сделали: этап «Исследование» и совет — по исследованию, утверждение снимается. */
+function researchDone(index: number, research: Research) {
+  councils[index] = researchChanged(councils[index], research, new Date().toISOString());
 }
 
 /** Совет поменяли: новое время изменения. */
@@ -258,6 +283,87 @@ export const mockSource: DataSource = {
       councils[index] = structureRetried(councils[index], new Date().toISOString());
       structures.set(id, retriedStructure(structureOf(id), participants, judge));
     }
+    return copy(councils[index]);
+  },
+  async getResearch(id) {
+    councilAt(id);
+    return copy(researchOf(id));
+  },
+  async startCodeResearch(id, repos) {
+    const index = councilAt(id);
+    const research = researchOf(id);
+    // Не в настройке — не запускаем, отвечаем исследованием как есть.
+    if (research.code.state === 'setup') {
+      if (!repos.length) throw new ApiError('no_repos', 'Не отмечено ни одного репозитория', 422);
+      const unknown = repos.find((repo) => !research.code.repos.some((r) => r.name === repo));
+      if (unknown !== undefined) throw new ApiError('unknown_repo', `Репозитория ${unknown} нет в проекте`, 422);
+      research.code = startedCode(research.code, repos, councils[index].participants);
+      researchDone(index, research);
+    }
+    return copy(research);
+  },
+  async startDesignResearch(id, link) {
+    const index = councilAt(id);
+    const research = researchOf(id);
+    if (research.design.state === 'setup') {
+      const clean = link.trim();
+      if (!isFigmaLink(clean)) throw new ApiError('bad_link', `${clean} — не ссылка на Figma`, 422);
+      research.design = startedDesign(research.design, clean, councils[index].participants);
+      researchDone(index, research);
+    }
+    return copy(research);
+  },
+  async skipResearch(id, kind) {
+    const index = councilAt(id);
+    const research = researchOf(id);
+    if (research[kind].state === 'setup') {
+      if (kind === 'code') research.code = { ...research.code, state: 'skipped' };
+      else research.design = { ...research.design, state: 'skipped' };
+      researchDone(index, research);
+    }
+    return copy(research);
+  },
+  async stopResearch(id, kind) {
+    const index = councilAt(id);
+    // Не идёт — успело кончиться: находки остаются, отвечаем как есть.
+    if (researchOf(id)[kind].state === 'running') {
+      researches.set(id, toSetup(researchOf(id), kind));
+      researchDone(index, researchOf(id));
+    }
+    return copy(researchOf(id));
+  },
+  async resetResearch(id, kind) {
+    const index = councilAt(id);
+    if (isSettled(researchOf(id)[kind].state)) {
+      researches.set(id, toSetup(researchOf(id), kind));
+      researchDone(index, researchOf(id));
+    }
+    return copy(researchOf(id));
+  },
+  async setFindingDecision(id, findingId, decision) {
+    const index = councilAt(id);
+    const research = researchOf(id);
+    const at = research.findings.findIndex((f) => f.id === findingId);
+    if (at < 0) throw new ApiError('not_found', `Находки ${findingId} у совета ${id} нет`, 404);
+    const found = research.findings[at];
+    if (!fitsKind(found.kind, decision)) {
+      throw new ApiError('bad_decision', `Решение ${String(decision)} не подходит находке ${findingId}`, 422);
+    }
+    research.findings[at] = { ...found, decision };
+    // Решения состояния этапов не меняют; пока исследование не утверждено, меняется строка на Сводке.
+    if (councils[index].stages.research === 'done') touch(index);
+    else researchDone(index, research);
+    return copy(research.findings[at]);
+  },
+  async approveResearch(id) {
+    const index = councilAt(id);
+    const { code, design, findings } = researchOf(id);
+    const pending = findings.filter((f) => isPending(f.kind, f.decision)).length;
+    if (councils[index].stages.research !== 'done' && researchStatus(code.state, design.state, pending) !== 'ready') {
+      throw new ApiError('research_not_ready', `Исследование совета ${id} не готово`, 409);
+    }
+    const groups = structureOf(id).groups.map((g) => g.id);
+    councils[index] = researchApproved(councils[index], groups, new Date().toISOString());
     return copy(councils[index]);
   },
   async listModels() {
