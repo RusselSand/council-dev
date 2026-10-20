@@ -1,0 +1,31 @@
+.switch {
+  flex: none;
+  display: flex;
+  justify-content: flex-start;
+  align-items: center;
+  width: var(--switch-width);
+  height: var(--switch-height);
+  padding: var(--space-3);
+  border: 0;
+  border-radius: var(--radius-pill);
+  background: var(--color-line-idle);
+  cursor: pointer;
+}
+
+.on {
+  justify-content: flex-end;
+  background: var(--color-ink);
+}
+
+.switch:disabled {
+  opacity: var(--opacity-disabled);
+  cursor: default;
+}
+
+.knob {
+  width: var(--switch-knob);
+  height: var(--switch-knob);
+  border-radius: var(--radius-round);
+  background: var(--color-paper);
+  box-shadow: var(--shadow-knob);
+}

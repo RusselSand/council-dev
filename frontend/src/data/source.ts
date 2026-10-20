@@ -1,4 +1,5 @@
-import type { CouncilSummary } from '../domain/council';
+import type { Brief } from '../domain/brief';
+import type { CouncilFields, CouncilSummary } from '../domain/council';
 import type { Model } from '../domain/model';
 import type { Project, ProjectFields } from '../domain/project';
 
@@ -11,6 +12,14 @@ export interface DataSource {
   listCouncils(): Promise<CouncilSummary[]>;
   /** POST /api/councils — новый совет; ответ — созданный совет. key — Idempotency-Key: тот же ключ — тот же совет. */
   createCouncil(key: string): Promise<CouncilSummary>;
+  /** PATCH /api/councils/<id> — название, проект, модели или судья совета; ответ — совет после правки. */
+  updateCouncil(id: string, fields: CouncilFields): Promise<CouncilSummary>;
+  /** GET /api/councils/<id>/brief — текст ввода совета. */
+  getBrief(id: string): Promise<Brief>;
+  /** PUT /api/councils/<id>/brief — сохранить текст ввода; ответ — сохранённый текст. */
+  saveBrief(id: string, text: string): Promise<Brief>;
+  /** POST /api/councils/<id>/slicing — нарезать текст ввода; ответ — совет после запуска нарезки. */
+  startSlicing(id: string): Promise<CouncilSummary>;
   /** GET /api/models */
   listModels(): Promise<Model[]>;
   /** GET /api/projects */

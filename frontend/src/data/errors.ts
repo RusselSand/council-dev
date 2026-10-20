@@ -11,6 +11,9 @@ export const ERROR_CODES = [
   'name_required',
   'too_many_repos',
   'unknown_repo',
+  'unknown_project',
+  'unknown_model',
+  'model_offline',
   'network',
   'unknown',
 ] as const;

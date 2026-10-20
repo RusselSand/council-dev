@@ -24,6 +24,24 @@ export const ru = {
   'council.newButton': '+ Новый совет',
   'council.meta': '{project} · судья {judge} · {models} · {updated}',
   'council.models': { one: 'модель {names}', other: 'модели {names}' },
+  'council.stageTab': '{stage}: {state}',
+
+  'brief.title': 'Мысли в свободной форме',
+  'brief.intro':
+    'Проблема, идея, вопросы, готовые решения — в любом порядке и вперемешку. Совет сам разберёт, что здесь что.',
+  'brief.placeholder': 'Что болит, что придумали, что уже решено…',
+  'brief.words': { one: '{count} слово', few: '{count} слова', many: '{count} слов', other: '{count} слова' },
+  'brief.saved': '· сохранено',
+  'brief.slice': 'Нарезать →',
+  'brief.name': 'Название',
+  'brief.project': 'Проект',
+  'brief.projects': 'Проекты →',
+  'brief.projectHint.none': 'Без проекта: нет скана кода и выгрузки заметок.',
+  'brief.projectHint.docs': 'Репозитории ({count}) подставятся в шаг «Репозиторий», заметки уйдут в {docs}.',
+  'brief.projectHint.noDocs': 'У проекта нет папки документации: потоки не выгрузить в заметки.',
+  'brief.council': 'Совет',
+  'brief.offline': 'не подключена',
+  'brief.judge': 'Судья',
 
   'project.none': 'Без проекта',
   'project.newButton': '+ Новый проект',
@@ -93,6 +111,10 @@ export const ru = {
   'error.too_many_repos': 'Отметьте не больше 10 репозиториев.',
   'error.unknown_repo':
     'Одного из отмеченных репозиториев уже нет в COUNCIL_REPOS. Список обновлён — проверьте отметки.',
+  'error.unknown_project': 'Этого проекта уже нет. Список проектов обновлён — выберите другой.',
+  'error.unknown_model': 'Этой модели уже нет. Список моделей обновлён.',
+  'error.model_offline':
+    'Модель не подключена: её нельзя добавить в совет или сделать судьёй. Список моделей обновлён.',
   'error.network': 'Нет связи с сервером. Проверьте сеть и попробуйте ещё раз.',
   'error.unknown': 'Что-то пошло не так. Попробуйте ещё раз.',
 

@@ -1,1 +1,1 @@
-export { Segmented, type SegmentedOption } from './Segmented';
+export { Segmented, type SegmentedOption, type SegmentedVariant } from './Segmented';

@@ -1,9 +1,12 @@
 import type { CouncilSummary } from '../../domain/council';
+import type { Model } from '../../domain/model';
 import type { Project } from '../../domain/project';
 
 /** Данные, которые может изменить действие, и их вид: после действия их запросы перезапрашиваются. */
 export interface Topics {
   councils: CouncilSummary[];
+  /** Модели совета: перезапрашиваются, если сервер не принял модель (её нет или она не подключена). */
+  models: Model[];
   projects: Project[];
   /** Рабочие копии git из COUNCIL_REPOS. */
   repos: string[];

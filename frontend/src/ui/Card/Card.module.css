@@ -23,3 +23,9 @@
   padding: var(--space-20);
   border-radius: var(--radius-24);
 }
+
+.xl {
+  gap: var(--space-14);
+  padding: var(--space-22);
+  border-radius: var(--radius-24);
+}

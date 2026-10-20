@@ -3,15 +3,24 @@
   align-items: center;
   gap: var(--space-7);
   min-width: 0;
-  padding: var(--space-7) var(--space-14);
   border: var(--border-thin) solid transparent;
   border-radius: var(--radius-pill);
-  background: var(--color-glass);
   font-size: var(--text-sm);
   font-weight: var(--weight-semibold);
   color: var(--color-ink);
   cursor: pointer;
   overflow-wrap: anywhere;
+}
+
+.glass {
+  padding: var(--space-7) var(--space-14);
+  background: var(--color-glass);
+}
+
+.paper {
+  padding: var(--space-6) var(--space-14);
+  border-color: var(--color-line);
+  background: var(--color-paper);
 }
 
 .selected {
