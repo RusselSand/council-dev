@@ -1,0 +1,174 @@
+/*
+ * Токены — все цвета, шрифты, размеры и отступы интерфейса. Значения взяты из макета
+ * (design/Совет - прототип.html). Компонент пишет var(--…), а не значение. Новое значение в макете — новый токен здесь.
+ */
+:root {
+  /* ── Основные цвета ── */
+  --color-ink: #1d1d1d; /* основной текст и тёмные заливки: главная кнопка, выбранная вкладка */
+  --color-ink-hover: #000; /* ссылка под курсором */
+  --color-paper: #fff; /* белый: текст на тёмном, поля ввода, белые кнопки */
+  --color-surface: #fbfbfb; /* карточки, меню слева, окна */
+  --color-surface-muted: #f3f3f3; /* вложенные блоки на карточке */
+  --color-surface-sunken: #f1f1f1; /* строки списков внутри карточки */
+  --color-surface-active: #ececec; /* выбранная строка */
+  --color-surface-dark: #1f1f1f; /* тёмная плашка «что дальше» */
+  --color-hover: #efefef; /* фон текстовой кнопки под курсором */
+  --hover-dim: brightness(0.97); /* filter: карточка-строка под курсором */
+  --color-glass: rgba(255, 255, 255, 0.6); /* полупрозрачные переключатели на фоне страницы */
+  --color-glass-soft: rgba(255, 255, 255, 0.5); /* колонки канбана */
+  --color-glass-faint: rgba(255, 255, 255, 0.55);
+  --color-selection: #d4d4d4; /* выделение текста */
+
+  /* ── Текст ── */
+  --color-text: #1d1d1d;
+  --color-text-body: #3a3a3a; /* длинный текст: обоснования, истории */
+  --color-text-secondary: #555;
+  --color-text-muted: #6a6a6a; /* подзаголовки, подписи под заголовком */
+  --color-text-subtle: #7a7a7a;
+  --color-text-faint: #8a8a8a; /* подписи, мета, заголовки разделов капсом */
+  --color-text-ghost: #9a9a9a; /* даты, неактивные подписи */
+  --color-text-on-dark: #fff;
+  --color-text-on-dark-muted: #a8a8a8;
+
+  /* ── Линии и неактивное ── */
+  --color-line: #e0e0e0; /* рамка чипа, разделитель */
+  --color-line-soft: #e2e2e2; /* рамка невыбранного чипа, пустой отрезок дорожки этапов */
+  --color-line-softer: #e6e6e6; /* рамка невыбранной карточки варианта */
+  --color-line-faint: #ececec;
+  --color-line-strong: #d6d6d6; /* рамка белой кнопки */
+  --color-line-dashed: #c9c9c9; /* пунктир «+ Новый совет», невыбранная радиокнопка */
+  --color-line-idle: #cfcfcf; /* кружок шага, который ещё не начат; выключенный переключатель */
+  --color-disabled: #bdbdbd; /* недоступная кнопка */
+  --color-disabled-on-dark: #4a4a4a; /* недоступная кнопка на тёмном */
+  --color-dashed-hint: #888; /* пунктирный кружок «+» в меню */
+
+  /* ── Состояния: готово, ИИ работает, ждёт вас, ошибка, черновик ──
+   * --state-X — точка и заливка; --state-X-bg — фон метки; --state-X-ink — текст на этом фоне. */
+  --state-done: #2f9e5b;
+  --state-done-bg: #e3f3e9;
+  --state-done-ink: #1f7a45;
+  --state-running: #2f9e5b;
+  --state-running-bg: #e3f3e9;
+  --state-running-ink: #1f7a45;
+  --state-running-ring: #bfe3cc; /* обводка модели, которая сейчас думает */
+  --state-running-pulse: rgba(47, 158, 91, 0.55); /* пульс точки «думает» */
+  --state-waiting: #e0a100;
+  --state-waiting-bg: #fbf0d2;
+  --state-waiting-ink: #7d5a00;
+  --state-failed: #d1382f;
+  --state-failed-bg: #fbeceb;
+  --state-failed-ink: #b8352d;
+  --state-idle: #bdbdbd;
+  --state-idle-bg: #ececec;
+  --state-idle-ink: #555;
+
+  /* ── Оттенки внутри блоков состояний ── */
+  --color-attention-bg: #fbe7a6; /* жёлтая плашка: «ход за вами», открытые вопросы */
+  --color-attention-ink: #5a4300;
+  --color-pending-bg: #fffaf0; /* находка ждёт решения */
+  --color-pending-ring: #f0d48a;
+  --color-danger-text: #7a2620; /* текст в красной плашке проблемы */
+  --color-danger-text-soft: #8a3b35;
+  --color-danger-text-deep: #5a2b27;
+  --color-danger-line: rgba(184, 53, 45, 0.15); /* разделитель в красной плашке */
+  --color-danger-strike: rgba(184, 53, 45, 0.5); /* зачёркивание заменённого решения */
+  --color-success-text-soft: #4a7a5c;
+
+  /* ── Страница ── */
+  --page-bg: #d6d6d6;
+  --page-background: radial-gradient(1200px 700px at 85% -10%, #f4f4f4 0%, transparent 60%),
+    radial-gradient(900px 600px at -10% 110%, #efefef 0%, transparent 55%), var(--page-bg);
+  --frame-bg: rgba(255, 255, 255, 0.32); /* стеклянная рамка вокруг меню и экрана */
+  --frame-border: rgba(255, 255, 255, 0.7);
+  --frame-blur: 14px;
+  --overlay-bg: rgba(30, 30, 30, 0.35); /* затемнение под окном */
+  --overlay-blur: 6px;
+
+  /* ── Шрифты ── */
+  --font-sans: Manrope, system-ui, sans-serif;
+  --font-mono: 'JetBrains Mono', monospace;
+
+  --text-2xs: 10px;
+  --text-xs: 11px;
+  --text-sm: 12px;
+  --text-md: 13px;
+  --text-base: 14px;
+  --text-lg: 15px;
+  --text-xl: 16px;
+  --text-2xl: 17px;
+  --text-3xl: 18px;
+  --text-4xl: 20px;
+  --text-5xl: 22px; /* логотип */
+  --text-title: 30px; /* заголовок экрана */
+
+  --weight-regular: 400;
+  --weight-medium: 500;
+  --weight-semibold: 600;
+  --weight-bold: 700;
+  --weight-heavy: 800;
+
+  --leading-none: 1;
+  --leading-title: 1.2;
+  --leading-tight: 1.25;
+  --leading-snug: 1.3;
+  --leading-compact: 1.35;
+  --leading-normal: 1.4;
+  --leading-relaxed: 1.45;
+  --leading-loose: 1.5;
+  --leading-text: 1.55; /* длинный текст */
+  --leading-wide: 1.6;
+
+  --tracking-tighter: -0.02em; /* заголовок экрана, логотип */
+  --tracking-tight: -0.01em;
+  --tracking-caps: 0.06em; /* подписи капсом */
+
+  /* ── Отступы: число — пиксели ── */
+  --space-1: 1px;
+  --space-2: 2px;
+  --space-3: 3px;
+  --space-4: 4px;
+  --space-5: 5px;
+  --space-6: 6px;
+  --space-7: 7px;
+  --space-8: 8px;
+  --space-9: 9px;
+  --space-10: 10px;
+  --space-11: 11px;
+  --space-12: 12px;
+  --space-13: 13px;
+  --space-14: 14px;
+  --space-16: 16px;
+  --space-18: 18px;
+  --space-19: 19px;
+  --space-20: 20px;
+  --space-22: 22px;
+  --space-26: 26px;
+  --space-28: 28px;
+  --space-32: 32px;
+
+  /* ── Радиусы: число — пиксели ── */
+  --radius-3: 3px;
+  --radius-4: 4px;
+  --radius-6: 6px;
+  --radius-8: 8px;
+  --radius-10: 10px;
+  --radius-12: 12px;
+  --radius-14: 14px;
+  --radius-16: 16px;
+  --radius-18: 18px; /* карточка */
+  --radius-22: 22px; /* колонка канбана */
+  --radius-24: 24px; /* меню слева, крупный блок */
+  --radius-28: 28px; /* окно */
+  --radius-36: 36px; /* стеклянная рамка */
+  --radius-pill: 999px; /* кнопки, чипы, метки */
+  --radius-round: 50%; /* точки и кружки */
+
+  /* ── Линии ── */
+  --border-thin: 1px;
+  --border-thick: 1.5px; /* выделенная карточка, пунктир «+ Новый совет» */
+
+  /* ── Тени ── */
+  --shadow-card: 0 1px 2px rgba(0, 0, 0, 0.04), 0 8px 24px rgba(0, 0, 0, 0.04);
+  --shadow-modal: 0 30px 80px rgba(0, 0, 0, 0.25);
+  --shadow-knob: 0 1px 2px rgba(0, 0, 0, 0.2); /* кружок переключателя */
+}

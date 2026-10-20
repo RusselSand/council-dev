@@ -1,0 +1,33 @@
+import type { MessageKey } from '../i18n';
+
+/**
+ * Коды ошибок, у которых есть текст в словаре (error.<код>). Серверные — в docs/api-contract.md;
+ * network и unknown ставит сам фронтенд: сервер не ответил / ответ не разобрать.
+ */
+export const ERROR_CODES = ['not_found', 'internal', 'network', 'unknown'] as const;
+export type ErrorCode = (typeof ERROR_CODES)[number];
+
+const isErrorCode = (code: string): code is ErrorCode => (ERROR_CODES as readonly string[]).includes(code);
+
+/** Ошибка запроса. Интерфейс показывает текст по code, а message — только для разработчика. */
+export class ApiError extends Error {
+  readonly code: string;
+  readonly status: number | undefined;
+
+  constructor(code: string, message: string, status?: number) {
+    super(message);
+    this.name = 'ApiError';
+    this.code = code;
+    this.status = status;
+  }
+}
+
+export function toApiError(error: unknown): ApiError {
+  if (error instanceof ApiError) return error;
+  return new ApiError('unknown', error instanceof Error ? error.message : String(error));
+}
+
+/** Ключ словаря для ошибки: t(errorKey(error.code)). Незнакомый код — общий текст. */
+export function errorKey(code: string): MessageKey {
+  return isErrorCode(code) ? `error.${code}` : 'error.unknown';
+}
