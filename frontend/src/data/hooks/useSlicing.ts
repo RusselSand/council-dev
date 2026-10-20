@@ -58,7 +58,7 @@ const without = <T>(record: Readonly<Record<string, T>>, key: string): Record<st
  * Не вышло — фрагмент снова показывает тип с сервера, у фрагмента ошибка. Нарезка успела начаться заново — список
  * советов перезапрашивается: экран увидит, что модели режут текст. Нарезка началась или кончилась (running) —
  * фрагменты другие, хоть id у них те же («F1»): смены и ошибки прежних забываются, а ответы на запросы про прежние
- * не попадают ни в нарезку, ни в ошибки.
+ * не попадают ни в нарезку, ни в ошибки и не снимают смену нового фрагмента с тем же id.
  */
 export function useFragmentLabels(councilId: string, running: boolean): FragmentLabels {
   const [pending, setPending] = useState<Record<string, Label>>({});
@@ -84,8 +84,8 @@ export function useFragmentLabels(councilId: string, running: boolean): Fragment
     setErrors({});
   }, [running]);
 
-  const send = async (fragmentId: string, label: Label): Promise<boolean> => {
-    const sentIn = round.current;
+  /** sentIn — номер набора фрагментов, в котором запрос ушёл. */
+  const send = async (fragmentId: string, label: Label, sentIn: number): Promise<boolean> => {
     try {
       const fragment = await source.setFragmentLabel(councilId, fragmentId, label);
       if (round.current === sentIn) {
@@ -117,8 +117,11 @@ export function useFragmentLabels(councilId: string, running: boolean): Fragment
         if (sent === undefined) return saved;
         // Ошибка прошлого запроса — про прошлый выбор.
         setErrors((current) => without(current, fragmentId));
-        const ok = await send(fragmentId, sent);
-        if (wanted.current[fragmentId] === sent) want(without(wanted.current, fragmentId));
+        const sentIn = round.current;
+        const ok = await send(fragmentId, sent, sentIn);
+        // На выбор ответили — он больше не ждёт. Набор фрагментов с тех пор сменился — выбор уже про новый фрагмент
+        // с тем же id, и его ещё надо отправить.
+        if (round.current === sentIn && wanted.current[fragmentId] === sent) want(without(wanted.current, fragmentId));
         return ok;
       }),
     );
