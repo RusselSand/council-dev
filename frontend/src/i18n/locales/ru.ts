@@ -15,12 +15,15 @@ export const ru = {
   'council.untitled': 'Без названия',
   'council.new': 'Новый совет',
   'council.newButton': '+ Новый совет',
+  'council.meta': '{project} · судья {judge} · {models} · {updated}',
+  'council.models': { one: 'модель {names}', other: 'модели {names}' },
 
   'project.none': 'Без проекта',
   'project.newButton': '+ Новый проект',
 
   'models.title': 'Модели совета',
   'model.member': 'в совете',
+  'model.judge': 'судья',
   'model.offline': 'офлайн',
 
   'stage.brief': 'Ввод',

@@ -7,12 +7,14 @@ interface PageHeaderProps {
   /** Путь над заголовком: «Сводка / проект». Пусто — пути нет. */
   crumbs: Crumb[];
   title: string | undefined;
+  /** Строка под заголовком; нет — без строки. */
+  meta: string | undefined;
   /** Кнопки справа. */
   actions: ReactNode;
 }
 
-/** Шапка страницы: путь, заголовок и кнопки справа. */
-export function PageHeader({ crumbs, title, actions }: PageHeaderProps) {
+/** Шапка страницы: путь, заголовок, строка под ним и кнопки справа. */
+export function PageHeader({ crumbs, title, meta, actions }: PageHeaderProps) {
   return (
     <header className={styles.header}>
       <div className={styles.heading}>
@@ -33,6 +35,7 @@ export function PageHeader({ crumbs, title, actions }: PageHeaderProps) {
           </div>
         )}
         {title !== undefined && <h1 className={styles.title}>{title}</h1>}
+        {meta !== undefined && <p className={styles.meta}>{meta}</p>}
       </div>
       <div className={styles.spacer} />
       <div className={styles.actions}>{actions}</div>

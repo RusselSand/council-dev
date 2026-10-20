@@ -11,6 +11,11 @@
   color: var(--state-done-ink);
 }
 
+.dark {
+  background: var(--color-ink);
+  color: var(--color-paper);
+}
+
 .ghost {
   background: transparent;
   color: var(--color-text-ghost);

@@ -23,9 +23,16 @@ const daysAgoAt = (days: number, hours: number, minutes: number) => {
 };
 
 /**
+ * Модели и судья советов макета: в prototype.js они одни на всё приложение — по умолчанию sol и fable
+ * (state.parts), судья fable (state.judge).
+ */
+const PROTO_PARTICIPANTS = ['sol', 'fable'];
+const PROTO_JUDGE = 'fable';
+
+/**
  * Список советов — в порядке макета. g1 — настоящий совет: название, проект и этапы — как в списке макета,
- * поток и время изменения — из data-1.json (structure.groups, updated_at). Остальные — из prototype.js (C0);
- * потоки c1 и их шаги — из STREAMS, у готовых советов — столько потоков, сколько в C0 (streams), все готовы.
+ * поток, модели, судья и время изменения — из data-1.json (structure.groups, participants, judge, updated_at). Остальные — из prototype.js
+ * (C0); потоки c1 и их шаги — из STREAMS, у готовых советов — столько потоков, сколько в C0 (streams), все готовы.
  */
 export const COUNCILS: CouncilSummary[] = [
   {
@@ -36,6 +43,8 @@ export const COUNCILS: CouncilSummary[] = [
     state: 'done',
     stages: stages('done', 'done', 'done', 'done', 'done', 'done'),
     streams: doneStreams('A'),
+    participants: ['sol', 'opus'],
+    judge: 'opus',
     updatedAt: '2026-10-15T13:41:50.406Z',
   },
   {
@@ -50,6 +59,8 @@ export const COUNCILS: CouncilSummary[] = [
       { id: 'B', step: 'options' },
       { id: 'C', step: 'questions' },
     ],
+    participants: PROTO_PARTICIPANTS,
+    judge: PROTO_JUDGE,
     updatedAt: daysAgoAt(0, 14, 20),
   },
   {
@@ -60,6 +71,8 @@ export const COUNCILS: CouncilSummary[] = [
     state: 'running',
     stages: stages('done', 'running', 'idle', 'idle', 'idle', 'idle'),
     streams: [],
+    participants: PROTO_PARTICIPANTS,
+    judge: PROTO_JUDGE,
     updatedAt: daysAgoAt(0, 14, 2),
   },
   {
@@ -70,6 +83,8 @@ export const COUNCILS: CouncilSummary[] = [
     state: 'waiting',
     stages: stages('done', 'done', 'done', 'waiting', 'idle', 'idle'),
     streams: [],
+    participants: PROTO_PARTICIPANTS,
+    judge: PROTO_JUDGE,
     updatedAt: daysAgoAt(0, 12, 30),
   },
   {
@@ -80,6 +95,8 @@ export const COUNCILS: CouncilSummary[] = [
     state: 'waiting',
     stages: stages('done', 'done', 'done', 'done', 'done', 'waiting'),
     streams: doneStreams('A', 'B'),
+    participants: PROTO_PARTICIPANTS,
+    judge: PROTO_JUDGE,
     updatedAt: daysAgoAt(1, 17, 10),
   },
   {
@@ -90,6 +107,8 @@ export const COUNCILS: CouncilSummary[] = [
     state: 'failed',
     stages: stages('done', 'done', 'failed', 'idle', 'idle', 'idle'),
     streams: [],
+    participants: PROTO_PARTICIPANTS,
+    judge: PROTO_JUDGE,
     updatedAt: daysAgoAt(1, 19, 40),
   },
   {
@@ -100,6 +119,8 @@ export const COUNCILS: CouncilSummary[] = [
     state: 'done',
     stages: stages('done', 'done', 'done', 'done', 'done', 'done'),
     streams: doneStreams('A', 'B', 'C'),
+    participants: PROTO_PARTICIPANTS,
+    judge: PROTO_JUDGE,
     updatedAt: '2026-10-08T09:00:00.000Z',
   },
   {
@@ -110,6 +131,8 @@ export const COUNCILS: CouncilSummary[] = [
     state: 'idle',
     stages: stages('idle', 'idle', 'idle', 'idle', 'idle', 'idle'),
     streams: [],
+    participants: PROTO_PARTICIPANTS,
+    judge: PROTO_JUDGE,
     updatedAt: '2026-10-06T09:00:00.000Z',
   },
 ];

@@ -1,19 +1,23 @@
 import { LoadState } from '../../../components/LoadState';
 import type { ApiError } from '../../../data';
-import type { Model } from '../../../domain/model';
+import type { ModelRole } from '../../../domain/model';
 import { useI18n } from '../../../i18n';
 import { Dot } from '../../../ui/Dot';
-import { Tag } from '../../../ui/Tag';
+import { Tag, type TagTone } from '../../../ui/Tag';
+import type { NavModel } from '../useFrame';
 import styles from './ModelList.module.css';
 
 interface ModelListProps {
-  models: Model[] | undefined;
+  models: NavModel[] | undefined;
   loading: boolean;
   error: ApiError | undefined;
   onRetry: () => void;
 }
 
-/** «Модели совета» внизу меню: имя, провайдер и подключена ли модель. */
+/** Метка модели — как в макете: судья — тёмная, в совете — зелёная, офлайн — без заливки. */
+const ROLE_TONE: Record<ModelRole, TagTone> = { judge: 'dark', member: 'green', offline: 'ghost' };
+
+/** «Модели совета» внизу меню: имя, провайдер и метка — судья, в совете или офлайн. */
 export function ModelList({ models, loading, error, onRetry }: ModelListProps) {
   const { t } = useI18n();
   return (
@@ -21,18 +25,19 @@ export function ModelList({ models, loading, error, onRetry }: ModelListProps) {
       <p className={styles.caption}>{t('models.title')}</p>
       {models ? (
         <ul className={styles.list}>
-          {models.map((model) => (
-            <li key={model.id} className={model.online ? styles.row : `${styles.row} ${styles.offline}`}>
-              <Dot tone={model.online ? 'green' : 'gray'} />
-              <span className={styles.who}>
-                <span className={styles.name}>{model.id}</span>
-                <span className={styles.provider}>{model.provider}</span>
-              </span>
-              <Tag tone={model.online ? 'green' : 'ghost'}>
-                {model.online ? t('model.member') : t('model.offline')}
-              </Tag>
-            </li>
-          ))}
+          {models.map((model) => {
+            const offline = model.role === 'offline';
+            return (
+              <li key={model.id} className={offline ? `${styles.row} ${styles.offline}` : styles.row}>
+                <Dot tone={offline ? 'gray' : 'green'} />
+                <span className={styles.who}>
+                  <span className={styles.name}>{model.id}</span>
+                  <span className={styles.provider}>{model.provider}</span>
+                </span>
+                <Tag tone={ROLE_TONE[model.role]}>{t(`model.${model.role}`)}</Tag>
+              </li>
+            );
+          })}
         </ul>
       ) : (
         <LoadState loading={loading} error={error} onRetry={onRetry} />

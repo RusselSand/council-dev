@@ -9,3 +9,10 @@ export interface Model {
   /** Подключена ли модель; false — «офлайн». */
   online: boolean;
 }
+
+/** Метка модели в «Моделях совета»: не подключена, судья открытого совета, остальные подключённые. */
+export type ModelRole = 'offline' | 'judge' | 'member';
+
+/** Как в макете: не подключена — «офлайн», даже если судья; judge — судья открытого совета, нет совета — undefined. */
+export const modelRole = (model: Model, judge: string | undefined): ModelRole =>
+  !model.online ? 'offline' : model.id === judge ? 'judge' : 'member';

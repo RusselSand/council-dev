@@ -44,6 +44,10 @@ export interface CouncilSummary {
   stages: Record<Stage, State>;
   /** Потоки по порядку; до этапа «Потоки» — пусто. */
   streams: StreamSummary[];
+  /** Модели, которые работают в совете, — id моделей, по порядку. */
+  participants: string[];
+  /** Судья совета — id модели; у каждого совета свой. */
+  judge: string;
   /** Когда совет менялся последний раз, ISO 8601. */
   updatedAt: string;
 }

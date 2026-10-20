@@ -1,7 +1,7 @@
 import { useCouncils, useModels, type ApiError } from '../../data';
 import { groupByProject, type CouncilSummary, type State } from '../../domain/council';
-import type { Model } from '../../domain/model';
-import { useI18n, type Translate } from '../../i18n';
+import { modelRole, type Model, type ModelRole } from '../../domain/model';
+import { useI18n, type I18n, type Translate } from '../../i18n';
 import { councilRoute, routePath, useRoute, type Route } from '../../router';
 
 /** Совет в меню. */
@@ -20,6 +20,13 @@ export interface NavGroup {
   key: string;
   name: string;
   councils: NavCouncil[];
+}
+
+/** Модель в «Моделях совета». */
+export interface NavModel {
+  id: string;
+  provider: string;
+  role: ModelRole;
 }
 
 /** Звено пути над заголовком; без to — просто текст. */
@@ -42,11 +49,14 @@ export interface FrameView {
   homePath: string;
   projectsPath: string;
   councils: Loadable<NavGroup[]>;
-  models: Loadable<Model[]>;
+  /** Метка «судья» — у судьи открытого совета; на Сводке и в Проектах её нет (решение q-001). */
+  models: Loadable<NavModel[]>;
   header: {
     crumbs: Crumb[];
     /** Заголовок страницы; совет ещё не пришёл или его нет — без заголовка. */
     title: string | undefined;
+    /** Строка под заголовком совета: проект · судья · модели · когда менялся. Не совет — без строки. */
+    meta: string | undefined;
     /** «+ Новый проект» — только на «Проектах». */
     newProject: boolean;
   };
@@ -73,28 +83,49 @@ function groupsOf(councils: CouncilSummary[], openId: string | undefined, t: Tra
   }));
 }
 
-function headerOf(route: Route | null, council: CouncilSummary | undefined, t: Translate): FrameView['header'] {
+const modelsOf = (models: Model[], judge: string | undefined): NavModel[] =>
+  models.map((model) => ({ id: model.id, provider: model.provider, role: modelRole(model, judge) }));
+
+/** «gen_sdk_tooling · судья opus · модели sol, opus · 15 окт» — как в макете. */
+function metaOf(council: CouncilSummary, { t, formatDate }: Pick<I18n, 't' | 'formatDate'>): string {
+  return t('council.meta', {
+    project: council.project?.name ?? t('project.none'),
+    judge: council.judge,
+    models: t('council.models', { count: council.participants.length, names: council.participants.join(', ') }),
+    updated: formatDate(council.updatedAt, 'relative'),
+  });
+}
+
+function headerOf(
+  route: Route | null,
+  council: CouncilSummary | undefined,
+  i18n: Pick<I18n, 't' | 'formatDate'>,
+): FrameView['header'] {
+  const { t } = i18n;
+  const none = { crumbs: [], meta: undefined, newProject: false };
   switch (route?.screen) {
     case 'home':
-      return { crumbs: [], title: t('screen.home'), newProject: false };
+      return { ...none, title: t('screen.home') };
     case 'projects':
-      return { crumbs: [], title: t('screen.projects'), newProject: true };
+      return { ...none, title: t('screen.projects'), newProject: true };
     case 'stage':
     case 'step':
-      if (!council) return { crumbs: [], title: undefined, newProject: false };
+      if (!council) return { ...none, title: undefined };
       return {
         crumbs: [{ label: t('screen.home'), to: HOME }, { label: council.project?.name ?? t('project.none') }],
         title: council.name || t('council.untitled'),
+        meta: metaOf(council, i18n),
         newProject: false,
       };
     default:
-      return { crumbs: [], title: undefined, newProject: false };
+      return { ...none, title: undefined };
   }
 }
 
-/** Рамка вокруг экранов: меню слева — разделы, советы по проектам, модели; шапка — путь и заголовок страницы. */
+/** Рамка вокруг экранов: меню слева — разделы, советы по проектам, модели; шапка — путь, заголовок и строка под ним. */
 export function useFrame(): FrameView {
-  const { t } = useI18n();
+  const i18n = useI18n();
+  const { t } = i18n;
   const route = useRoute();
   const councils = useCouncils();
   const models = useModels();
@@ -107,7 +138,7 @@ export function useFrame(): FrameView {
     homePath: HOME,
     projectsPath: PROJECTS,
     councils: { ...councils, data: councils.data && groupsOf(councils.data, openId, t) },
-    models,
-    header: headerOf(route, council, t),
+    models: { ...models, data: models.data && modelsOf(models.data, council?.judge) },
+    header: headerOf(route, council, i18n),
   };
 }

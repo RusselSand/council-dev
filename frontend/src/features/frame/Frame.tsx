@@ -41,7 +41,7 @@ export function Frame({ children }: { children: ReactNode }) {
 
   return (
     <Shell nav={nav}>
-      <PageHeader crumbs={header.crumbs} title={header.title} actions={actions} />
+      <PageHeader crumbs={header.crumbs} title={header.title} meta={header.meta} actions={actions} />
       {children}
     </Shell>
   );

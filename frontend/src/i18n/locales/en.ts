@@ -12,12 +12,15 @@ export const en = translation({
   'council.untitled': 'Untitled',
   'council.new': 'New council',
   'council.newButton': '+ New council',
+  'council.meta': '{project} · judge {judge} · {models} · {updated}',
+  'council.models': { one: 'model {names}', other: 'models {names}' },
 
   'project.none': 'No project',
   'project.newButton': '+ New project',
 
   'models.title': 'Council models',
   'model.member': 'in council',
+  'model.judge': 'judge',
   'model.offline': 'offline',
 
   'stage.brief': 'Brief',
