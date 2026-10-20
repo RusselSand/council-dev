@@ -46,9 +46,14 @@
   overflow-wrap: anywhere;
 }
 
-/* Середина шапки растягивается и прижимает кнопки к правому краю. */
-.spacer {
+/* Середина шапки — переключатели экрана; растягивается и прижимает кнопки к правому краю. */
+.tools {
   flex: 1 1 0;
+  min-width: min-content;
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-8);
+  padding-top: var(--space-8);
 }
 
 .actions {

@@ -1,0 +1,16 @@
+.legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-14);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  font-size: var(--text-sm);
+  color: var(--color-text-muted);
+}
+
+.item {
+  display: flex;
+  align-items: center;
+  gap: var(--space-6);
+}

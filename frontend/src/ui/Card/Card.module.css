@@ -1,0 +1,19 @@
+.card {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  background: var(--color-surface);
+  box-shadow: var(--shadow-card);
+}
+
+.sm {
+  gap: var(--space-8);
+  padding: var(--space-12);
+  border-radius: var(--radius-18);
+}
+
+.md {
+  gap: var(--space-12);
+  padding: var(--space-18);
+  border-radius: var(--radius-24);
+}

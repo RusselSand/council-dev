@@ -1,4 +1,13 @@
-import type { CouncilSummary, Stage, State, StreamSummary } from '../../domain/council';
+import type {
+  Activity,
+  ActivityState,
+  CouncilSummary,
+  ProjectRef,
+  Stage,
+  State,
+  Step,
+  StreamSummary,
+} from '../../domain/council';
 import { PROJECTS } from './projects';
 
 /** Состояния этапов по порядку: Ввод, Нарезка, Группы, Исследование, Потоки, Задачи. */
@@ -13,6 +22,24 @@ const stages = (...s: [State, State, State, State, State, State]): Record<Stage,
 
 /** Потоки, все шаги которых готовы: поток стоит на последнем шаге. */
 const doneStreams = (...ids: string[]): StreamSummary[] => ids.map((id) => ({ id, step: 'notes' }));
+
+/** Пункт активности на этапе, кроме «Потоков». */
+const atStage = (stage: Exclude<Stage, 'streams'>, state: ActivityState, text: string): Activity => ({
+  stage,
+  stream: null,
+  step: null,
+  state,
+  text,
+});
+
+/** Пункт активности на шаге потока. */
+const atStep = (stream: string, step: Step, state: ActivityState, text: string): Activity => ({
+  stage: 'streams',
+  stream,
+  step,
+  state,
+  text,
+});
 
 /** В макете время застыло на «сегодня, 14:20»; в моках «сегодня» и «вчера» считаются от текущего дня. */
 const daysAgoAt = (days: number, hours: number, minutes: number) => {
@@ -29,10 +56,15 @@ const daysAgoAt = (days: number, hours: number, minutes: number) => {
 const PROTO_PARTICIPANTS = ['sol', 'fable'];
 const PROTO_JUDGE = 'fable';
 
+/** Черновик на Сводке — как совет c5 макета: ждёт текста на «Вводе». */
+const DRAFT_ACTIVITY = atStage('brief', 'waiting', 'Допишите текст и нарежьте');
+const DRAFT_SUMMARY = 'Черновик — текст не нарезан';
+
 /**
- * Список советов — в порядке макета. g1 — настоящий совет: название, проект и этапы — как в списке макета,
+ * Список советов — в порядке макета. g1 — настоящий совет: название, проект, этапы и итог — как в списке макета,
  * поток, модели, судья и время изменения — из data-1.json (structure.groups, participants, judge, updated_at). Остальные — из prototype.js
  * (C0); потоки c1 и их шаги — из STREAMS, у готовых советов — столько потоков, сколько в C0 (streams), все готовы.
+ * Активность — строки советов на Сводке макета (HS: kind, label, need), итог — status из C0.
  */
 export const COUNCILS: CouncilSummary[] = [
   {
@@ -46,6 +78,8 @@ export const COUNCILS: CouncilSummary[] = [
     participants: ['sol', 'opus'],
     judge: 'opus',
     updatedAt: '2026-10-15T13:41:50.406Z',
+    activity: [],
+    summary: '7 задач и 57 заметок записаны',
   },
   {
     id: 'c1',
@@ -62,6 +96,12 @@ export const COUNCILS: CouncilSummary[] = [
     participants: PROTO_PARTICIPANTS,
     judge: PROTO_JUDGE,
     updatedAt: daysAgoAt(0, 14, 20),
+    activity: [
+      atStep('C', 'questions', 'failed', 'Сбор вопросов остановился'),
+      atStep('B', 'options', 'waiting', 'Выберите вариант на 2 вопроса из 3'),
+      atStep('A', 'notes', 'waiting', 'Черновик заметок ждёт вас: ADR-0005 станет superseded'),
+    ],
+    summary: 'Поток B ждёт выбора вариантов',
   },
   {
     id: 'c2',
@@ -74,6 +114,8 @@ export const COUNCILS: CouncilSummary[] = [
     participants: PROTO_PARTICIPANTS,
     judge: PROTO_JUDGE,
     updatedAt: daysAgoAt(0, 14, 2),
+    activity: [atStage('slices', 'running', 'sol и fable режут текст')],
+    summary: 'Нарезка — модели режут текст',
   },
   {
     id: 'c6',
@@ -86,6 +128,8 @@ export const COUNCILS: CouncilSummary[] = [
     participants: PROTO_PARTICIPANTS,
     judge: PROTO_JUDGE,
     updatedAt: daysAgoAt(0, 12, 30),
+    activity: [atStage('research', 'waiting', 'Подтвердите карту кода')],
+    summary: 'Карта кода ждёт подтверждения',
   },
   {
     id: 'c7',
@@ -98,6 +142,8 @@ export const COUNCILS: CouncilSummary[] = [
     participants: PROTO_PARTICIPANTS,
     judge: PROTO_JUDGE,
     updatedAt: daysAgoAt(1, 17, 10),
+    activity: [atStage('tasks', 'waiting', 'Запишите 6 задач в каталог')],
+    summary: '6 задач ждут записи',
   },
   {
     id: 'c3',
@@ -110,6 +156,8 @@ export const COUNCILS: CouncilSummary[] = [
     participants: PROTO_PARTICIPANTS,
     judge: PROTO_JUDGE,
     updatedAt: daysAgoAt(1, 19, 40),
+    activity: [atStage('structure', 'failed', 'Раскладка по группам остановилась')],
+    summary: 'Раскладка по группам остановилась',
   },
   {
     id: 'c4',
@@ -122,6 +170,8 @@ export const COUNCILS: CouncilSummary[] = [
     participants: PROTO_PARTICIPANTS,
     judge: PROTO_JUDGE,
     updatedAt: '2026-10-08T09:00:00.000Z',
+    activity: [],
+    summary: '11 задач и заметки записаны в каталог',
   },
   {
     id: 'c5',
@@ -134,5 +184,26 @@ export const COUNCILS: CouncilSummary[] = [
     participants: PROTO_PARTICIPANTS,
     judge: PROTO_JUDGE,
     updatedAt: '2026-10-06T09:00:00.000Z',
+    activity: [DRAFT_ACTIVITY],
+    summary: DRAFT_SUMMARY,
   },
 ];
+
+/**
+ * Новый совет — как в макете (prototype.js, newCouncil): черновик без названия на «Вводе», все этапы не начаты,
+ * модели и судья — как у советов макета. На Сводке черновик — как c5.
+ */
+export const newDraft = (id: string, project: ProjectRef | null): CouncilSummary => ({
+  id,
+  name: '',
+  project,
+  stage: 'brief',
+  state: 'idle',
+  stages: stages('idle', 'idle', 'idle', 'idle', 'idle', 'idle'),
+  streams: [],
+  participants: PROTO_PARTICIPANTS,
+  judge: PROTO_JUDGE,
+  updatedAt: new Date().toISOString(),
+  activity: [DRAFT_ACTIVITY],
+  summary: DRAFT_SUMMARY,
+});

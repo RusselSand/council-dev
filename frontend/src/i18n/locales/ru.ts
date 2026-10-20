@@ -12,6 +12,13 @@ export const ru = {
 
   'nav.councils': 'Советы',
 
+  'home.view.kanban': 'Канбан',
+  'home.view.list': 'Список',
+  'home.filter.all': 'Все',
+  'home.legend.progress': 'ИИ работает / готово',
+  'home.place.stream': 'Поток {stream} · {step}',
+  'home.done': 'Готово',
+
   'council.untitled': 'Без названия',
   'council.new': 'Новый совет',
   'council.newButton': '+ Новый совет',

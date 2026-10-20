@@ -1,0 +1,55 @@
+/* Шесть колонок — по этапу совета. */
+.track {
+  display: grid;
+  grid-template-columns: repeat(6, minmax(0, 1fr));
+  gap: var(--space-4);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.stage {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-5);
+  min-width: 0;
+}
+
+.bar {
+  height: var(--track-height);
+  border-radius: var(--radius-3);
+}
+
+.done {
+  background: var(--state-done);
+}
+
+.running {
+  background: var(--state-running);
+}
+
+.waiting {
+  background: var(--state-waiting);
+}
+
+.failed {
+  background: var(--state-failed);
+}
+
+.idle {
+  background: var(--color-line-soft);
+}
+
+.label {
+  overflow: hidden;
+  font-size: var(--text-2xs);
+  font-weight: var(--weight-medium);
+  color: var(--color-text-faint);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.current .label {
+  font-weight: var(--weight-bold);
+  color: var(--color-ink);
+}

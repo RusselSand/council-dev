@@ -1,0 +1,11 @@
+/* Фильтр слева, легенда цветов — у правого края; не влезают в строку — переносятся. */
+.toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-6);
+}
+
+.legend {
+  margin-left: auto;
+}

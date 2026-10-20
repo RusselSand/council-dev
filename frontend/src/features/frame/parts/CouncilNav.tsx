@@ -11,12 +11,14 @@ interface CouncilNavProps {
   loading: boolean;
   error: ApiError | undefined;
   onRetry: () => void;
-  /** «Новый совет». Пока создания совета нет, кнопка ничего не делает. */
-  onNewCouncil?: () => void;
+  /** «Новый совет». */
+  onNewCouncil: () => void;
+  /** Совет уже создаётся — кнопка недоступна. */
+  newCouncilPending: boolean;
 }
 
 /** Советы по проектам: точка — состояние совета, открытый совет — тёмная заливка. Внизу — «Новый совет». */
-export function CouncilNav({ groups, loading, error, onRetry, onNewCouncil }: CouncilNavProps) {
+export function CouncilNav({ groups, loading, error, onRetry, onNewCouncil, newCouncilPending }: CouncilNavProps) {
   const { t } = useI18n();
   return (
     <div className={styles.councils}>
@@ -38,7 +40,7 @@ export function CouncilNav({ groups, loading, error, onRetry, onNewCouncil }: Co
           <LoadState loading={loading} error={error} onRetry={onRetry} />
         </div>
       )}
-      <button type="button" className={styles.new} onClick={onNewCouncil}>
+      <button type="button" className={styles.new} onClick={onNewCouncil} disabled={newCouncilPending}>
         <span className={styles.plus} aria-hidden>
           +
         </span>

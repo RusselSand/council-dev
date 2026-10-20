@@ -9,6 +9,10 @@ export const httpSource: DataSource = {
     const { councils } = await request<{ councils: CouncilSummary[] }>('GET', '/councils');
     return councils;
   },
+  async createCouncil(key) {
+    const { council } = await request<{ council: CouncilSummary }>('POST', '/councils', {}, { 'Idempotency-Key': key });
+    return council;
+  },
   async listModels() {
     const { models } = await request<{ models: Model[] }>('GET', '/models');
     return models;

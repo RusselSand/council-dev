@@ -1,4 +1,4 @@
-import { isStage, isStep, type CouncilSummary, type Stage, type Step } from '../domain/council';
+import { isStage, isStep, type CouncilSummary, type Place, type Stage, type Step } from '../domain/council';
 
 /** Этап совета со своим адресом; у потоков адрес — по потоку и шагу. */
 export type StagePage = Exclude<Stage, 'streams'>;
@@ -42,6 +42,16 @@ export function councilRoute({ id, stage, streams }: Pick<CouncilSummary, 'id' |
   const [stream] = streams;
   if (!stream) return { screen: 'stage', council: id, stage: 'research' };
   return { screen: 'step', council: id, stream: stream.id, step: stream.step };
+}
+
+/**
+ * Куда ведёт место в совете — как в макете: на этап; на «Потоках» — на шаг потока. Место на «Потоках» без потока —
+ * туда же, куда совет на «Потоках».
+ */
+export function placeRoute(council: Pick<CouncilSummary, 'id' | 'streams'>, { stage, stream, step }: Place): Route {
+  if (stage !== 'streams') return { screen: 'stage', council: council.id, stage };
+  if (stream && step) return { screen: 'step', council: council.id, stream, step };
+  return councilRoute({ ...council, stage });
 }
 
 /** Путь для адреса. */
