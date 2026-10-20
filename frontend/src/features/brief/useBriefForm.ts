@@ -1,5 +1,6 @@
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import {
+  holdBrief,
   useAutosave,
   useModels,
   useProjects,
@@ -9,7 +10,7 @@ import {
   type ApiError,
 } from '../../data';
 import { countWords } from '../../domain/brief';
-import { toggleParticipant, type CouncilSummary } from '../../domain/council';
+import { cleanName, toggleParticipant, type CouncilSummary } from '../../domain/council';
 import { modelPath } from '../../domain/model';
 import type { Project } from '../../domain/project';
 import { useI18n, type Translate } from '../../i18n';
@@ -103,11 +104,16 @@ function hintOf(projectId: string | null, project: Project | undefined, t: Trans
 /** Сохранено ли: run отвечает объектом или undefined, если не вышло. */
 const ok = (result: Promise<unknown>) => result.then((value) => value !== undefined);
 
+/** Одно ли название для сервера: пробелы по краям он убирает. */
+const sameName = (a: string, b: string) => cleanName(a) === cleanName(b);
+
 /**
  * «Ввод»: текст, название, проект, модели и судья совета, «Нарезать →». Всё сохраняется само: текст и название —
  * после паузы в наборе, проект, модели и судья — сразу по щелчку. Текст и название живут на экране и не меняются от
  * нового списка советов; проект, модели и судья — из списка советов, а пока правка идёт — как их выбрал человек;
  * правка не прошла — снова как в списке. Пока нарезка запускается, «Ввод» не правится: нарезается то, что на экране.
+ * Название на экране — как его набрали: ответ сервера без пробелов по краям в поле не ставится, иначе пробел, набранный
+ * перед следующим словом, пропал бы на паузе.
  */
 export function useBriefForm(council: CouncilSummary, initialText: string): BriefForm {
   const { t } = useI18n();
@@ -126,7 +132,21 @@ export function useBriefForm(council: CouncilSummary, initialText: string): Brie
   const textSave = useAutosave(text, (value) => ok(saveBrief.run(council.id, value)), { delay: TYPING_PAUSE });
   const nameSave = useAutosave(name, (value) => ok(saveName.run(council.id, { name: value })), {
     delay: TYPING_PAUSE,
+    equal: sameName,
   });
+
+  // «Ввод» закрыли: пока текст сохраняется, его не запрашивают — открытый снова «Ввод» получит сохранённый текст.
+  const flushText = textSave.flush;
+  useEffect(() => () => holdBrief(council.id, flushText()), [council.id, flushText]);
+
+  /** «Ввод» на экране: ушли с него, пока нарезка запускалась, — «Нарезку» не открываем. */
+  const open = useRef(false);
+  useEffect(() => {
+    open.current = true;
+    return () => {
+      open.current = false;
+    };
+  }, []);
 
   const projectId =
     projectEdit.pending.projectId !== undefined ? projectEdit.pending.projectId : (council.project?.id ?? null);
@@ -156,7 +176,7 @@ export function useBriefForm(council: CouncilSummary, initialText: string): Brie
         ]);
         const started = saved.every(Boolean) && (await slicing.run(council.id));
         setStarting(false);
-        if (started) navigate(routePath({ screen: 'stage', council: council.id, stage: 'slices' }));
+        if (started && open.current) navigate(routePath({ screen: 'stage', council: council.id, stage: 'slices' }));
       })();
     },
     slicing: starting,

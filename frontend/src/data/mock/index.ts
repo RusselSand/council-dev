@@ -1,4 +1,4 @@
-import type { CouncilFields, CouncilSummary } from '../../domain/council';
+import { cleanName, type CouncilFields, type CouncilSummary } from '../../domain/council';
 import { cleanFields, MAX_PROJECT_REPOS, type Project, type ProjectFields } from '../../domain/project';
 import { ApiError } from '../errors';
 import type { DataSource } from '../source';
@@ -35,7 +35,7 @@ function councilAt(id: string): number {
  */
 function applyFields(council: CouncilSummary, fields: CouncilFields): CouncilSummary {
   const next = { ...council };
-  if (fields.name !== undefined) next.name = fields.name.trim();
+  if (fields.name !== undefined) next.name = cleanName(fields.name);
   if (fields.projectId !== undefined) {
     const project = fields.projectId === null ? null : projects.find((p) => p.id === fields.projectId);
     if (project === undefined) throw new ApiError('unknown_project', `Проекта ${fields.projectId} нет`, 422);

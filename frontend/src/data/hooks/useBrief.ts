@@ -4,9 +4,27 @@ import { markStale } from './stale';
 import { useMutation, type Mutation } from './useMutation';
 import { useQuery, type Query } from './useQuery';
 
-/** Текст ввода совета — GET /api/councils/<id>/brief. */
+/** Сохранения текста ввода, которые ещё идут, когда «Ввод» закрыли, — по совету. */
+const leaving = new Map<string, Promise<unknown>>();
+
+/**
+ * «Ввод» совета id закрыли, а его текст ещё сохраняется — saving. Пока сохранение не кончится, текст ввода этого
+ * совета не запрашивается: иначе «Ввод», открытый снова, может получить текст до правки и счесть его сохранённым.
+ */
+export function holdBrief(id: string, saving: Promise<unknown>) {
+  const all = Promise.allSettled([leaving.get(id), saving]);
+  leaving.set(id, all);
+  void all.then(() => {
+    if (leaving.get(id) === all) leaving.delete(id);
+  });
+}
+
+/** Текст ввода совета — GET /api/councils/<id>/brief; сначала сохраняется то, что держит holdBrief. */
 export function useCouncilBrief(id: string): Query<Brief> {
-  return useQuery(() => source.getBrief(id), [id]);
+  return useQuery(async () => {
+    await leaving.get(id);
+    return source.getBrief(id);
+  }, [id]);
 }
 
 /**

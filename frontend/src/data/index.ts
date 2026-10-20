@@ -1,6 +1,6 @@
 export { ApiError, errorKey, type ErrorCode } from './errors';
 export { useAutosave, type Autosave } from './hooks/useAutosave';
-export { useCouncilBrief, useSaveBrief } from './hooks/useBrief';
+export { holdBrief, useCouncilBrief, useSaveBrief } from './hooks/useBrief';
 export { useCouncils, useCreateCouncil, useStartSlicing, useUpdateCouncil } from './hooks/useCouncils';
 export { useModels } from './hooks/useModels';
 export { useCreateProject, useDeleteProject, useProjects, useRepos, useUpdateProject } from './hooks/useProjects';
