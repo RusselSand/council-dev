@@ -48,7 +48,14 @@ src/
 
 Стили компонента — CSS-модуль рядом с ним (`X.module.css`), значения — только из токенов (см. «Токены»).
 
-Пока экранов нет, на каждом адресе — заглушка `features/stub`: название экрана и части адреса.
+Каждый экран стоит в рамке `features/frame`: меню слева (разделы, советы по проектам, «Модели совета» с меткой
+«судья» у судьи открытого совета) и шапка страницы (путь, заголовок, у совета — строка «проект · судья · модели ·
+когда менялся», кнопки справа). Рамку ставит `app/App.tsx`, экран под шапкой выбирает `app/Screen.tsx`.
+Экрана ещё нет — под шапкой заглушка `features/stub`: название экрана и части адреса.
+
+Готовое в `ui/`: `Shell` — стеклянная рамка страницы с местом под меню, `Button` (`primary`, `outline`), `Dot` —
+цветная точка, `Tag` — метка-«таблетка» (`green`, `dark`, `ghost`). В `components/`: `StateDot` — точка состояния совета, этапа или шага;
+`LoadState` — загрузка и ошибка.
 
 ## Адреса
 
@@ -63,7 +70,8 @@ src/
 
 `/` и незнакомый адрес ведут на `/home` — как в макете. Текущий адрес — `useRoute()`, путь для адреса —
 `routePath({ screen: 'step', council: 'g1', stream: 'A', step: 'options' })`, переход — `navigate(path)` или
-`<Link to={path}>`.
+`<Link to={path}>`. Куда ведёт совет из списка (этап, где он сейчас; на «Потоках» — первый поток на его текущем
+шаге) — `councilRoute(council)`.
 
 ## Слой данных
 
@@ -74,13 +82,14 @@ src/
   Моки отдают копию данных: экран не может их испортить.
 - `data/http/` — настоящий сервер: `request()` разбирает ответ и ошибку по контракту.
 - `data/config.ts` — какой источник взять, по `VITE_DATA_SOURCE`.
-- `data/hooks/` — хуки запросов: `useCouncils()` → `{ data, error, loading, reload }`.
+- `data/hooks/` — хуки запросов: `useCouncils()`, `useModels()` → `{ data, error, loading, reload }`.
 - `data/errors.ts` — `ApiError` с `code`; текст ошибки — `t(errorKey(error.code))`, а не `message`.
 
 Новая ручка: описать в `docs/api-contract.md` → тип в `domain/` → метод в `DataSource` → мок → http → хук.
 
-Загрузка и ошибка там, где макет их не показывает, должны выглядеть одинаково на всех экранах: первый экран, которому они
-понадобятся, заводит для них общий компонент.
+Загрузка и ошибка там, где макет их не показывает, выглядят одинаково на всех экранах — `components/LoadState`:
+строка «Загружаем…» или текст ошибки по коду и «Повторить» (`reload` запроса). Данных ещё нет — на их месте
+`<LoadState loading={q.loading} error={q.error} onRetry={q.reload} />`.
 
 ## Тексты интерфейса
 
@@ -159,6 +168,15 @@ src/
 | ошибка          | error             |
 | черновик        | draft             |
 | адрес           | address           |
+| Без названия    | Untitled          |
+| Без проекта     | No project        |
+| Новый совет     | New council       |
+| Новый проект    | New project       |
+| модель          | model             |
+| Модели совета   | Council models    |
+| в совете        | in council        |
+| судья           | judge             |
+| офлайн          | offline           |
 
 ## Токены
 
@@ -171,6 +189,7 @@ src/
 - текст — `--font-sans` (Manrope), `--font-mono` (JetBrains Mono), `--text-xs`…`--text-title`, `--weight-*`,
   `--leading-*`, `--tracking-*`;
 - отступы и радиусы — числом пикселей: `--space-14`, `--radius-18`; плюс `--radius-pill`, `--radius-round`;
+- размеры — по назначению: `--sidebar-width`, `--logo-size`, `--dot-sm`, `--dot-md`, `--icon-sm`;
 - тени — `--shadow-card`, `--shadow-modal`, `--shadow-knob`; фон страницы — `--page-background`.
 
 Шрифты Manrope и JetBrains Mono подключены пакетами `@fontsource` (`styles/fonts.css`), без запросов к Google Fonts.

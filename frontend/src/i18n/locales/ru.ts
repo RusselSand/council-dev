@@ -10,6 +10,22 @@ export const ru = {
   'screen.home': 'Сводка',
   'screen.projects': 'Проекты',
 
+  'nav.councils': 'Советы',
+
+  'council.untitled': 'Без названия',
+  'council.new': 'Новый совет',
+  'council.newButton': '+ Новый совет',
+  'council.meta': '{project} · судья {judge} · {models} · {updated}',
+  'council.models': { one: 'модель {names}', other: 'модели {names}' },
+
+  'project.none': 'Без проекта',
+  'project.newButton': '+ Новый проект',
+
+  'models.title': 'Модели совета',
+  'model.member': 'в совете',
+  'model.judge': 'судья',
+  'model.offline': 'офлайн',
+
   'stage.brief': 'Ввод',
   'stage.slices': 'Нарезка',
   'stage.structure': 'Группы',
@@ -38,8 +54,12 @@ export const ru = {
   'error.network': 'Нет связи с сервером. Проверьте сеть и попробуйте ещё раз.',
   'error.unknown': 'Что-то пошло не так. Попробуйте ещё раз.',
 
+  'load.loading': 'Загружаем…',
+  'load.retry': 'Повторить',
+
   'stub.address': 'Адрес',
   'stub.council': 'Совет',
   'stub.stage': 'Этап',
   'stub.stream': 'Поток',
-  'stub.step': 'Шаг',} as const satisfies Messages;
+  'stub.step': 'Шаг',
+} as const satisfies Messages;

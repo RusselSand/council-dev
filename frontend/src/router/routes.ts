@@ -1,4 +1,4 @@
-import { isStage, isStep, type Stage, type Step } from '../domain/council';
+import { isStage, isStep, type CouncilSummary, type Stage, type Step } from '../domain/council';
 
 /** Этап совета со своим адресом; у потоков адрес — по потоку и шагу. */
 export type StagePage = Exclude<Stage, 'streams'>;
@@ -31,6 +31,17 @@ export function parseRoute(pathname: string): Route | null {
     return { screen: 'step', council, stream, step };
   }
   return null;
+}
+
+/**
+ * Куда ведёт совет из списка — как в макете: на этап, где совет сейчас; на «Потоках» — первый поток на его текущем
+ * шаге. По контракту на «Потоках» у совета есть поток; если нет — на «Исследование», этап перед потоками.
+ */
+export function councilRoute({ id, stage, streams }: Pick<CouncilSummary, 'id' | 'stage' | 'streams'>): Route {
+  if (stage !== 'streams') return { screen: 'stage', council: id, stage };
+  const [stream] = streams;
+  if (!stream) return { screen: 'stage', council: id, stage: 'research' };
+  return { screen: 'step', council: id, stream: stream.id, step: stream.step };
 }
 
 /** Путь для адреса. */

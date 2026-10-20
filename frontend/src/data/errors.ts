@@ -28,6 +28,6 @@ export function toApiError(error: unknown): ApiError {
 }
 
 /** Ключ словаря для ошибки: t(errorKey(error.code)). Незнакомый код — общий текст. */
-export function errorKey(code: string): MessageKey {
+export function errorKey(code: string): `error.${ErrorCode}` & MessageKey {
   return isErrorCode(code) ? `error.${code}` : 'error.unknown';
 }

@@ -1,0 +1,11 @@
+.sidebar {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-26);
+  /* Окно минус поля страницы и рамки. */
+  min-height: calc(100vh - 2 * var(--space-28) - 2 * var(--space-22));
+  padding: var(--space-26) var(--space-18);
+  border-radius: var(--radius-24);
+  background: var(--color-surface);
+  box-shadow: var(--shadow-card);
+}

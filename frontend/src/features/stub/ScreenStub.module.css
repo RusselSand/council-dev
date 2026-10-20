@@ -1,12 +1,8 @@
-.page {
-  padding: var(--space-28);
-}
-
 .card {
   display: flex;
   flex-direction: column;
   gap: var(--space-18);
-  padding: var(--space-26);
+  padding: var(--space-22);
   border-radius: var(--radius-24);
   background: var(--color-surface);
   box-shadow: var(--shadow-card);
@@ -14,10 +10,8 @@
 
 .title {
   margin: 0;
-  font-size: var(--text-title);
-  font-weight: var(--weight-heavy);
-  letter-spacing: var(--tracking-tighter);
-  line-height: var(--leading-title);
+  font-size: var(--text-3xl);
+  font-weight: var(--weight-bold);
 }
 
 .parts {

@@ -1,4 +1,5 @@
 import { useEffect, useMemo } from 'react';
+import { Frame } from '../features/frame';
 import { detectLocale, I18nProvider, useI18n } from '../i18n';
 import { Screen } from './Screen';
 
@@ -15,7 +16,9 @@ export function App() {
   return (
     <I18nProvider locale={locale}>
       <DocumentTitle />
-      <Screen />
+      <Frame>
+        <Screen />
+      </Frame>
     </I18nProvider>
   );
 }

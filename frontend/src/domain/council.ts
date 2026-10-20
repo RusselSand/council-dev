@@ -21,6 +21,14 @@ export interface ProjectRef {
   name: string;
 }
 
+/** Поток в списке советов. */
+export interface StreamSummary {
+  /** id потока; он же в адресе шага: /c/<совет>/streams/<поток>/<шаг>. */
+  id: string;
+  /** Шаг, на котором поток сейчас: первый неготовый; все готовы — последний. */
+  step: Step;
+}
+
 /** Совет в списке советов. */
 export interface CouncilSummary {
   id: string;
@@ -34,6 +42,30 @@ export interface CouncilSummary {
   state: State;
   /** Состояние каждого этапа. */
   stages: Record<Stage, State>;
+  /** Потоки по порядку; до этапа «Потоки» — пусто. */
+  streams: StreamSummary[];
+  /** Модели, которые работают в совете, — id моделей, по порядку. */
+  participants: string[];
+  /** Судья совета — id модели; у каждого совета свой. */
+  judge: string;
   /** Когда совет менялся последний раз, ISO 8601. */
   updatedAt: string;
+}
+
+/** Советы одного проекта; project null — советы без проекта. */
+export interface ProjectGroup {
+  project: ProjectRef | null;
+  councils: CouncilSummary[];
+}
+
+/** Советы по проектам: проекты — в порядке их первого совета в списке, советы внутри — в порядке списка. */
+export function groupByProject(councils: readonly CouncilSummary[]): ProjectGroup[] {
+  const groups = new Map<string | null, ProjectGroup>();
+  for (const council of councils) {
+    const key = council.project?.id ?? null;
+    const group = groups.get(key);
+    if (group) group.councils.push(council);
+    else groups.set(key, { project: council.project, councils: [council] });
+  }
+  return [...groups.values()];
 }
