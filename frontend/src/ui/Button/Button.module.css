@@ -1,20 +1,70 @@
 .button {
   border-radius: var(--radius-pill);
-  font-size: var(--text-md);
   font-weight: var(--weight-semibold);
   cursor: pointer;
 }
 
+.button:disabled {
+  cursor: default;
+}
+
+.md {
+  font-size: var(--text-md);
+}
+
+.sm {
+  font-size: var(--text-sm);
+}
+
 .primary {
-  padding: var(--space-10) var(--space-20);
   border: 0;
   background: var(--color-ink);
   color: var(--color-paper);
 }
 
+.primary.md {
+  padding: var(--space-10) var(--space-20);
+}
+
+.primary.sm {
+  padding: var(--space-7) var(--space-14);
+}
+
 .outline {
-  padding: var(--space-9) var(--space-19);
   border: var(--border-thin) solid var(--color-ink);
   background: transparent;
   color: var(--color-ink);
+}
+
+.outline.md {
+  padding: var(--space-9) var(--space-19);
+}
+
+.outline.sm {
+  padding: var(--space-7) var(--space-14);
+}
+
+.text {
+  padding: var(--space-7) var(--space-10);
+  border: 0;
+  background: transparent;
+  color: var(--color-text-secondary);
+}
+
+.danger.primary {
+  background: var(--state-failed);
+}
+
+.danger.outline {
+  border-color: var(--state-failed);
+  color: var(--state-failed-ink);
+}
+
+.danger.text {
+  color: var(--state-failed);
+}
+
+/* Недоступная текстовая кнопка — бледная, как «Удалить» у проекта в советах. */
+.text:disabled {
+  color: var(--color-text-ghost);
 }

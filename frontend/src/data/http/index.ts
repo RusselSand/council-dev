@@ -1,5 +1,6 @@
 import type { CouncilSummary } from '../../domain/council';
 import type { Model } from '../../domain/model';
+import type { Project } from '../../domain/project';
 import type { DataSource } from '../source';
 import { request } from './request';
 
@@ -16,5 +17,12 @@ export const httpSource: DataSource = {
   async listModels() {
     const { models } = await request<{ models: Model[] }>('GET', '/models');
     return models;
+  },
+  async listProjects() {
+    const { projects } = await request<{ projects: Project[] }>('GET', '/projects');
+    return projects;
+  },
+  async deleteProject(id) {
+    await request<void>('DELETE', `/projects/${encodeURIComponent(id)}`);
   },
 };

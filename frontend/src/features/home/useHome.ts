@@ -7,10 +7,10 @@ import {
   STAGES,
   type CouncilSummary,
   type Place,
-  type ProjectRef,
   type Stage,
   type State,
 } from '../../domain/council';
+import type { ProjectRef } from '../../domain/project';
 import { useI18n, type I18n, type Translate } from '../../i18n';
 import { councilRoute, placeRoute, routePath } from '../../router';
 import type { SegmentedOption } from '../../ui/Segmented';

@@ -1,0 +1,18 @@
+.list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-6);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.repo {
+  min-width: 0;
+  padding: var(--space-4) var(--space-10);
+  border-radius: var(--radius-8);
+  background: var(--color-surface-sunken);
+  font-family: var(--font-mono);
+  font-size: var(--text-sm);
+  overflow-wrap: anywhere;
+}

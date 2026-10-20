@@ -1,8 +1,10 @@
 import type { CouncilSummary } from '../../domain/council';
+import type { Project } from '../../domain/project';
 
 /** Данные, которые может изменить действие, и их вид: после действия их запросы перезапрашиваются. */
 export interface Topics {
   councils: CouncilSummary[];
+  projects: Project[];
 }
 export type Topic = keyof Topics;
 

@@ -1,0 +1,46 @@
+.head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-8);
+  min-width: 0;
+}
+
+.name {
+  flex: 1;
+  min-width: 0;
+  margin: 0;
+  font-size: var(--text-2xl);
+  font-weight: var(--weight-bold);
+  overflow-wrap: anywhere;
+}
+
+.usage {
+  font-size: var(--text-sm);
+  color: var(--color-text-subtle);
+  white-space: nowrap;
+}
+
+.docs {
+  font-family: var(--font-mono);
+  font-size: var(--text-sm);
+  color: var(--color-ink);
+  overflow-wrap: anywhere;
+}
+
+.noDocs {
+  color: var(--state-failed-ink);
+}
+
+/* Кнопки — внизу карточки: карточки в строке сетки одной высоты. */
+.actions {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-6);
+  margin-top: auto;
+}
+
+.buttons {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-6);
+}

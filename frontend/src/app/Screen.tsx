@@ -1,5 +1,6 @@
 import { useEffect } from 'react';
 import { Home } from '../features/home';
+import { Projects } from '../features/projects';
 import { ScreenStub } from '../features/stub';
 import { navigate, routePath, useRoute } from '../router';
 
@@ -14,6 +15,7 @@ export function Screen() {
 
   if (!route) return null;
   if (route.screen === 'home') return <Home />;
+  if (route.screen === 'projects') return <Projects />;
   // Остальные экраны пока не сделаны — на их адресах заглушка. Экран появится — его ветка встанет здесь.
   return <ScreenStub route={route} />;
 }

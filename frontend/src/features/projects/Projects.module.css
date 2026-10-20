@@ -1,0 +1,8 @@
+.intro {
+  margin: 0;
+  max-width: var(--intro-width);
+  font-size: var(--text-md);
+  line-height: var(--leading-loose);
+  color: var(--color-text-muted);
+  text-wrap: pretty;
+}

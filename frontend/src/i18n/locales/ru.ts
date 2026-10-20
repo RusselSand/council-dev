@@ -28,6 +28,22 @@ export const ru = {
   'project.none': 'Без проекта',
   'project.newButton': '+ Новый проект',
 
+  'projects.intro':
+    'Репозитории и папка документации, которые совет берёт по проекту, а не вводит в каждом потоке. Проект выбирают на «Вводе» совета.',
+  'projects.usage': {
+    one: 'в {count} совете',
+    few: 'в {count} советах',
+    many: 'в {count} советах',
+    other: 'в {count} совета',
+  },
+  'projects.unused': 'не используется',
+  'projects.repos': 'Репозитории',
+  'projects.docs': 'Папка документации',
+  'projects.noDocs': 'Без папки: потоки не выгрузить в заметки',
+  'projects.edit': 'Править',
+  'projects.delete': 'Удалить',
+  'projects.deleteConfirm': 'Да, удалить',
+
   'models.title': 'Модели совета',
   'model.member': 'в совете',
   'model.judge': 'судья',
@@ -58,6 +74,7 @@ export const ru = {
 
   'error.not_found': 'Не нашли — возможно, это уже удалили.',
   'error.internal': 'Сервер не справился с запросом. Попробуйте ещё раз.',
+  'error.project_in_use': 'Проект уже выбран в совете — удалить его нельзя.',
   'error.network': 'Нет связи с сервером. Проверьте сеть и попробуйте ещё раз.',
   'error.unknown': 'Что-то пошло не так. Попробуйте ещё раз.',
 

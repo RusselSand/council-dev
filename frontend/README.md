@@ -55,18 +55,20 @@ src/
 держит для них место между заголовком и кнопками.
 Экрана ещё нет — под шапкой заглушка `features/stub`: название экрана и части адреса.
 
-Экраны: `features/home` — Сводка.
+Экраны: `features/home` — Сводка, `features/projects` — Проекты.
 
 «Новый совет» — одно действие на все его кнопки (шапка, меню, колонка «Ввод» на Сводке): `useNewCouncil()` из
 `components/NewCouncil` создаёт совет и открывает его «Ввод». `NewCouncilProvider` ставит `app/App.tsx`; ошибку
 создания рамка показывает под шапкой.
 
-Готовое в `ui/`: `Shell` — стеклянная рамка страницы с местом под меню, `Button` (`primary`, `outline`), `Dot` —
-цветная точка, `Tag` — метка-«таблетка» (`green`, `yellow`, `red`, `gray`, `dark`, `ghost`; размер `sm`, `md`),
-`Chip` — чип-фильтр с числом, `Segmented` — переключатель из нескольких кнопок, `Card` — белая карточка (`sm` — в
-колонке канбана, `md` — в сетке), `PageTools` — переключатели экрана в шапке. В `components/`: `StateDot` — точка
-состояния совета, этапа или шага; `StateTag` — метка состояния; `LoadState` — загрузка и ошибка; `NewCouncil` —
-действие «Новый совет».
+Готовое в `ui/`: `Shell` — стеклянная рамка страницы с местом под меню, `Button` (`primary`, `outline`, `text` —
+только текст; размер `md`, `sm` — на карточке; `tone="danger"` — красная), `Dot` — цветная точка, `Tag` —
+метка-«таблетка» (`green`, `yellow`, `red`, `gray`, `dark`, `ghost`; размер `sm`, `md`), `Chip` — чип-фильтр с числом,
+`Segmented` — переключатель из нескольких кнопок, `Card` — белая карточка (`sm` — в колонке канбана, `md` — в сетке,
+`lg` — карточка проекта), `CardGrid` — сетка карточек (`md` — советы, `lg` — проекты), `Caption` — подпись раздела
+капсом, `PageTools` — переключатели экрана в шапке. В `components/`: `StateDot` — точка состояния совета, этапа или
+шага; `StateTag` — метка состояния; `LoadState` — загрузка и ошибка (без `onRetry` — только текст ошибки);
+`NewCouncil` — действие «Новый совет».
 
 ## Адреса
 
@@ -93,9 +95,9 @@ src/
   Моки отдают копию данных: экран не может их испортить.
 - `data/http/` — настоящий сервер: `request()` разбирает ответ и ошибку по контракту.
 - `data/config.ts` — какой источник взять, по `VITE_DATA_SOURCE`.
-- `data/hooks/` — хуки запросов: `useCouncils()`, `useModels()` → `{ data, error, loading, reload }`; хуки действий:
-  `useCreateCouncil()` → `{ run, pending, error }`. `run()` отвечает изменённым объектом или `undefined`, если не
-  вышло (причина — в `error`).
+- `data/hooks/` — хуки запросов: `useCouncils()`, `useModels()`, `useProjects()` → `{ data, error, loading, reload }`;
+  хуки действий: `useCreateCouncil()`, `useDeleteProject()` → `{ run, pending, error }`. `run()` отвечает изменённым
+  объектом (удаление — id удалённого) или `undefined`, если не вышло (причина — в `error`).
 - После действия данные, которые оно меняет, перезапрашиваются сами: действие после успеха помечает их устаревшими
   (`useMutation(action, (result) => markStale('councils', patch))`), запрос на них подписан
   (`useQuery(…, deps, 'councils')`). Правка `patch` вносит ответ действия в данные сразу, до перезапроса, и остаётся,
@@ -196,6 +198,12 @@ src/
 | Без проекта     | No project        |
 | Новый совет     | New council       |
 | Новый проект    | New project       |
+| Проекты         | Projects          |
+| репозиторий     | repository        |
+| папка документации | documentation folder |
+| заметки         | notes             |
+| Править         | Edit              |
+| Удалить         | Delete            |
 | модель          | model             |
 | Модели совета   | Council models    |
 | в совете        | in council        |
@@ -213,7 +221,8 @@ src/
 - текст — `--font-sans` (Manrope), `--font-mono` (JetBrains Mono), `--text-xs`…`--text-title`, `--weight-*`,
   `--leading-*`, `--tracking-*`;
 - отступы и радиусы — числом пикселей: `--space-14`, `--radius-18`; плюс `--radius-pill`, `--radius-round`;
-- размеры — по назначению: `--sidebar-width`, `--logo-size`, `--dot-sm`, `--dot-md`, `--icon-sm`;
+- размеры — по назначению: `--sidebar-width`, `--logo-size`, `--dot-sm`, `--dot-md`, `--icon-sm`, `--card-min`
+  и `--card-min-lg` (самая узкая карточка в сетке), `--intro-width` (абзац-пояснение под шапкой);
 - прозрачность — `--opacity-count` (число на чипе);
 - тени — `--shadow-card`, `--shadow-modal`, `--shadow-knob`; фон страницы — `--page-background`.
 
