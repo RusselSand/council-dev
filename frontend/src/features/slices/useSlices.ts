@@ -91,7 +91,7 @@ export function useSlices(council: CouncilSummary): SlicesScreen {
   const { t } = useI18n();
   const running = council.stages.slices === 'running';
   const slicing = useCouncilSlicing(council.id, running);
-  const labels = useFragmentLabels(council.id);
+  const labels = useFragmentLabels(council.id, running);
   const structure = useStartStructure();
   const [starting, setStarting] = useState(false);
 
