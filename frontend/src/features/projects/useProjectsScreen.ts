@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useDeleteProject, useProjects, type ApiError } from '../../data';
 import type { Project } from '../../domain/project';
 import { useI18n, type Translate } from '../../i18n';
@@ -49,6 +49,19 @@ export function useProjectsScreen(): ProjectsScreen {
   const [confirming, setConfirming] = useState<string>();
   /** Проект, который удаляли последним: его ошибку показывает карточка. */
   const [target, setTarget] = useState<string>();
+  /**
+   * Проекты, про которые сервер ответил «выбран в совете», — с объектом проекта из списка на тот момент. Метка
+   * держится, пока в списке тот же объект: новый список с сервера приносит новый объект с числом советов, а удаление
+   * другого проекта только убирает его из списка и объекты остальных не меняет.
+   */
+  const [inUse, setInUse] = useState<ReadonlyMap<string, Project>>(new Map());
+
+  useEffect(() => {
+    if (!target || deletion.error?.code !== 'project_in_use') return;
+    const project = projects.data?.find((p) => p.id === target);
+    if (project) setInUse((marks) => new Map(marks).set(target, project));
+    // Метка ставится по новой ошибке; target и список — те, при которых она пришла.
+  }, [deletion.error]);
 
   const run = (id: string) => {
     setTarget(id);
@@ -59,8 +72,10 @@ export function useProjectsScreen(): ProjectsScreen {
 
   const cards = projects.data?.map((project): ProjectCardView => {
     const error = target === project.id ? deletion.error : undefined;
-    // Сервер ответил, что проект в советах, — удалять нельзя сразу, не дожидаясь нового списка с числом советов.
-    const used = project.councilCount > 0 || error?.code === 'project_in_use';
+    // Сервер ответил, что проект в советах, — удалять нельзя сразу и до нового списка с числом советов, даже если
+    // потом удаляли другой проект или новый список не загрузился.
+    const used =
+      project.councilCount > 0 || error?.code === 'project_in_use' || inUse.get(project.id) === project;
     return {
       id: project.id,
       name: project.name,
