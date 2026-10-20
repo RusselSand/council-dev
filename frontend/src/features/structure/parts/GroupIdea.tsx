@@ -1,8 +1,7 @@
 import { useI18n } from '../../../i18n';
-import { Caption } from '../../../ui/Caption';
+import { Highlight } from '../../../ui/Highlight';
 import { Tag } from '../../../ui/Tag';
 import { TextArea } from '../../../ui/TextArea';
-import styles from './GroupIdea.module.css';
 
 interface GroupIdeaProps {
   /** id группы — для подписи поля. */
@@ -19,13 +18,14 @@ interface GroupIdeaProps {
 export function GroupIdea({ group, idea, ideaBy, readOnly, onChange }: GroupIdeaProps) {
   const { t } = useI18n();
   return (
-    <div className={styles.idea}>
-      <div className={styles.head}>
-        <Caption tone="onAttention">{t('structure.idea')}</Caption>
+    <Highlight
+      caption={t('structure.idea')}
+      meta={
         <Tag tone="glass" size="xs">
           {ideaBy}
         </Tag>
-      </div>
+      }
+    >
       <TextArea
         variant="bare"
         rows={3}
@@ -35,6 +35,6 @@ export function GroupIdea({ group, idea, ideaBy, readOnly, onChange }: GroupIdea
         placeholder={t('structure.idea.placeholder')}
         aria-label={t('structure.ideaInput', { id: group })}
       />
-    </div>
+    </Highlight>
   );
 }

@@ -1,0 +1,16 @@
+.summary {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-10);
+  padding: var(--space-14) var(--space-16);
+  border-radius: var(--radius-16);
+  background: var(--color-surface-muted);
+}
+
+.text {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-size: var(--text-base);
+  overflow-wrap: anywhere;
+}

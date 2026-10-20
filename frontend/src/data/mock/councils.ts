@@ -10,7 +10,9 @@ import {
 } from '../../domain/council';
 import type { ProjectRef } from '../../domain/project';
 import { isPending, researchStatus, type Research, type ResearchStatus } from '../../domain/research';
+import { currentStep, type Stream } from '../../domain/stream';
 import { PROJECTS } from './projects';
+import { modelsText, workText } from './streams';
 
 /** Состояния этапов по порядку: Ввод, Нарезка, Группы, Исследование, Потоки, Задачи. */
 const stages = (...s: [State, State, State, State, State, State]): Record<Stage, State> => ({
@@ -191,9 +193,6 @@ export const COUNCILS: CouncilSummary[] = [
   },
 ];
 
-/** «sol и fable», «sol, fable и opus» — модели в строке активности; строку пишет сервер. */
-const modelsText = (names: string[]) =>
-  names.length > 1 ? `${names.slice(0, -1).join(', ')} и ${names[names.length - 1]}` : (names[0] ?? 'Модели');
 
 /**
  * Совет после «Нарезать →» — как в макете (prototype.js, runSlice): «Ввод» готов, «Нарезка» — ИИ работает, совет —
@@ -377,6 +376,72 @@ export const researchApproved = (council: CouncilSummary, groups: string[], upda
       ...(starting ? streams.map((s) => atStep(s.id, 'project', 'waiting', 'Отметьте прошлые решения проекта')) : []),
     ],
     summary: starting ? 'Потоки ждут вас' : council.summary,
+    updatedAt,
+  };
+};
+
+/** Строка шага на Сводке, пока он ждёт человека; текст пишет сервер. */
+const STEP_WAITING: Record<Step, string> = {
+  project: 'Отметьте прошлые решения проекта',
+  questions: 'Отберите вопросы',
+  options: 'Выберите варианты',
+  decisions: 'Зафиксируйте решения',
+  outcomes: 'Утвердите итоги',
+  notes: 'Черновик заметок ждёт вас',
+};
+
+/** Порядок строк активности, как в макете: ошибки, потом «ждёт вас», потом «ИИ работает». */
+const ACTIVITY_ORDER: ActivityState[] = ['failed', 'waiting', 'running'];
+
+/**
+ * Состояние этапа «Потоки» по шагам потоков: все шаги всех потоков готовы — готово; иначе есть шаг, который ждёт
+ * человека, — ждёт вас (так у c1 в макете: поток C с ошибкой, A и B ждут вас); иначе работают модели — ИИ работает;
+ * иначе — ошибка.
+ */
+function streamsState(streams: Stream[]): State {
+  const states = streams.flatMap((stream) => stream.steps.map((step) => step.state));
+  if (states.every((s) => s === 'done')) return 'done';
+  return (['waiting', 'running', 'failed'] as const).find((s) => states.includes(s)) ?? 'waiting';
+}
+
+/**
+ * Совет после действия с потоком (changed): у потоков — текущие шаги, этап «Потоки» — по шагам потоков, совет встаёт
+ * на первый неготовый этап. Строки потока на Сводке — по его шагам с ошибкой, ждущим вас и где работает ИИ: строка
+ * того же шага в том же состоянии остаётся, новая — что нужно от человека или что делают модели.
+ */
+export const streamsChanged = (
+  council: CouncilSummary,
+  streams: Stream[],
+  changed: string,
+  updatedAt: string,
+): CouncilSummary => {
+  const stream = streams.find((s) => s.id === changed);
+  const stages: Record<Stage, State> = { ...council.stages, streams: streamsState(streams) };
+  const stage = firstOpen(stages, 'brief');
+  const own = (stream?.steps ?? []).flatMap((step): Activity[] => {
+    if (step.state !== 'failed' && step.state !== 'waiting' && step.state !== 'running') return [];
+    const kept = council.activity.find(
+      (a) => a.stream === changed && a.step === step.step && a.state === step.state,
+    );
+    if (kept) return [kept];
+    const working = step.progress[0]?.runs.filter((run) => run.state === 'running').map((run) => run.model) ?? [];
+    const text =
+      step.state === 'running'
+        ? workText(step.step, working)
+        : step.state === 'waiting'
+          ? STEP_WAITING[step.step]
+          : (step.text ?? '');
+    return [atStep(changed, step.step, step.state, text)];
+  });
+  // Внутри состояния — сначала то, что изменилось позже: строки этого потока.
+  const activity = [...own, ...council.activity.filter((a) => a.stage !== 'streams' || a.stream !== changed)];
+  return {
+    ...council,
+    stage,
+    state: stages[stage],
+    stages,
+    streams: streams.map((s) => ({ id: s.id, step: currentStep(s).step })),
+    activity: ACTIVITY_ORDER.flatMap((state) => activity.filter((a) => a.state === state)),
     updatedAt,
   };
 };

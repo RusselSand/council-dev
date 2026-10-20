@@ -1,0 +1,39 @@
+.banner {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-8);
+  padding: var(--space-14) var(--space-16);
+  border-radius: var(--radius-22);
+}
+
+.waiting {
+  background: var(--state-waiting-bg);
+  color: var(--state-waiting-ink);
+}
+
+.failed {
+  background: var(--state-failed-bg);
+  color: var(--state-failed-ink);
+}
+
+.running {
+  background: var(--state-running-bg);
+  color: var(--state-running-ink);
+}
+
+.title {
+  display: flex;
+  align-items: center;
+  gap: var(--space-8);
+  margin: 0;
+  font-size: var(--text-md);
+  font-weight: var(--weight-bold);
+  overflow-wrap: anywhere;
+}
+
+.text {
+  margin: 0;
+  font-size: var(--text-sm);
+  line-height: var(--leading-loose);
+  overflow-wrap: anywhere;
+}

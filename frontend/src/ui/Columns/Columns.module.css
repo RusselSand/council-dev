@@ -23,3 +23,8 @@
   position: sticky;
   top: var(--space-22);
 }
+
+/* Слева от главной — цепочка шагов потока: не шире, чем в макете. */
+.first {
+  max-width: var(--stage-side-max);
+}

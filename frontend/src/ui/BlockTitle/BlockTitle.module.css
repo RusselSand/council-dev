@@ -33,3 +33,15 @@
   color: var(--color-text-muted);
   text-wrap: pretty;
 }
+
+/* Заголовок шага потока: крупнее и жирнее, пояснение — не во всю ширину карточки. */
+.lg .title {
+  font-size: var(--text-4xl);
+  font-weight: var(--weight-heavy);
+  letter-spacing: var(--tracking-tight);
+}
+
+.lg .intro {
+  max-width: var(--hint-width);
+  line-height: var(--leading-loose);
+}

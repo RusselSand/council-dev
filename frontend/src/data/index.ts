@@ -21,6 +21,12 @@ export {
   type ResearchAction,
 } from './hooks/useResearch';
 export { useCouncilSlicing, useFragmentLabels, type FragmentLabels } from './hooks/useSlicing';
+export {
+  useApproveProjectDecisions,
+  useCouncilStreams,
+  useProjectDecisions,
+  useRetryStream,
+} from './hooks/useStreams';
 export { useCouncilStructure, useGroupEdits, type GroupEdits } from './hooks/useStructure';
 export type { Mutation } from './hooks/useMutation';
 export type { Query } from './hooks/useQuery';

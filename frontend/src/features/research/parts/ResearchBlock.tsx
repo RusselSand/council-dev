@@ -5,12 +5,13 @@ import { BlockTitle } from '../../../ui/BlockTitle';
 import { Button } from '../../../ui/Button';
 import { Caption } from '../../../ui/Caption';
 import { Card } from '../../../ui/Card';
+import { CardFooter } from '../../../ui/CardFooter';
+import { DashedNote } from '../../../ui/DashedNote';
 import { Tag } from '../../../ui/Tag';
 import type { BlockView } from '../useResearch';
 import { ResultLine } from './ResultLine';
 import styles from './ResearchBlock.module.css';
 import { RunList } from './RunList';
-import { SkippedNote } from './SkippedNote';
 
 interface ResearchBlockProps {
   block: BlockView;
@@ -64,7 +65,7 @@ export function ResearchBlock({ block, kicker, title, intro, skipped, setup }: R
           reset(t('research.reset')),
         ];
       case 'skipped':
-        return [<SkippedNote text={skipped} />, null, reset(t('research.restore'))];
+        return [<DashedNote text={skipped} />, null, reset(t('research.restore'))];
     }
   })();
 
@@ -80,10 +81,7 @@ export function ResearchBlock({ block, kicker, title, intro, skipped, setup }: R
         <BlockTitle title={title} intro={intro} />
       </div>
       {content}
-      <div className={styles.footer}>
-        {lead}
-        <div className={styles.action}>{action}</div>
-      </div>
+      <CardFooter lead={lead}>{action}</CardFooter>
       <LoadState loading={false} error={block.error} onRetry={block.retry} />
     </Card>
   );

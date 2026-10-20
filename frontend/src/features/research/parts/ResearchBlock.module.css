@@ -14,23 +14,10 @@
   min-width: 0;
 }
 
-/* Пояснение или «Пропустить» слева, главная кнопка — справа; не влезают — кнопка уходит на следующую строку. */
-.footer {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: var(--space-8);
-  padding-top: var(--space-14);
-  border-top: var(--border-thin) solid var(--color-line);
-}
-
+/* Пояснение внизу блока, слева от кнопки: «Результаты — ниже». */
 .note {
   min-width: 0;
   font-size: var(--text-sm);
   color: var(--color-text-subtle);
   overflow-wrap: anywhere;
-}
-
-.action {
-  margin-left: auto;
 }

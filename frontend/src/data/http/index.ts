@@ -4,6 +4,7 @@ import type { Model } from '../../domain/model';
 import type { Project } from '../../domain/project';
 import type { Finding, Research } from '../../domain/research';
 import type { Fragment, Slicing } from '../../domain/slicing';
+import type { ProjectDecisions, Stream } from '../../domain/stream';
 import type { Group, Structure } from '../../domain/structure';
 import type { DataSource } from '../source';
 import { request } from './request';
@@ -16,6 +17,9 @@ const groupPath = (id: string, groupId: string) => `${councilPath(id)}/groups/${
 
 /** Путь исследования совета: /councils/<id>/research. */
 const researchPath = (id: string) => `${councilPath(id)}/research`;
+
+/** Путь потока совета: /councils/<id>/streams/<streamId>. */
+const streamPath = (id: string, streamId: string) => `${councilPath(id)}/streams/${encodeURIComponent(streamId)}`;
 
 /** Настоящий сервер. */
 export const httpSource: DataSource = {
@@ -113,6 +117,24 @@ export const httpSource: DataSource = {
   async approveResearch(id) {
     const { council } = await request<{ council: CouncilSummary }>('POST', `${researchPath(id)}/approve`, {});
     return council;
+  },
+  async listStreams(id) {
+    const { streams } = await request<{ streams: Stream[] }>('GET', `${councilPath(id)}/streams`);
+    return streams;
+  },
+  async retryStream(id, streamId) {
+    const { stream } = await request<{ stream: Stream }>('POST', `${streamPath(id, streamId)}/retry`, {});
+    return stream;
+  },
+  async getProjectDecisions(id, streamId) {
+    const path = `${streamPath(id, streamId)}/project-decisions`;
+    const { projectDecisions } = await request<{ projectDecisions: ProjectDecisions }>('GET', path);
+    return projectDecisions;
+  },
+  async approveProjectDecisions(id, streamId, selected) {
+    const path = `${streamPath(id, streamId)}/project-decisions/approve`;
+    const { stream } = await request<{ stream: Stream }>('POST', path, { selected });
+    return stream;
   },
   async listModels() {
     const { models } = await request<{ models: Model[] }>('GET', '/models');

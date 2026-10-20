@@ -23,6 +23,7 @@ export const ERROR_CODES = [
   'bad_link',
   'bad_decision',
   'research_not_ready',
+  'unknown_decision',
   'network',
   'unknown',
 ] as const;
