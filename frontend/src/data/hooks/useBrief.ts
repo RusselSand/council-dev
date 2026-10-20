@@ -4,22 +4,24 @@ import { markStale } from './stale';
 import { useMutation, type Mutation } from './useMutation';
 import { useQuery, type Query } from './useQuery';
 
-/** Сохранения текста ввода, которые ещё идут, когда «Ввод» закрыли, — по совету. */
+/** Запросы закрытого «Ввода», которые ещё идут, — по совету. */
 const leaving = new Map<string, Promise<unknown>>();
 
 /**
- * «Ввод» совета id закрыли, а его текст ещё сохраняется — saving. Пока сохранение не кончится, текст ввода этого
- * совета не запрашивается: иначе «Ввод», открытый снова, может получить текст до правки и счесть его сохранённым.
+ * «Ввод» совета id закрыли, а его запросы ещё идут — closing: сохранения, запуск нарезки. Пока они не кончатся, текст
+ * ввода этого совета не запрашивается: иначе «Ввод», открытый снова, может получить текст и название до правки
+ * и счесть их сохранёнными или дать править, пока нарезка запускается. Что из набранного не сохранилось, closing
+ * запоминает сам.
  */
-export function holdBrief(id: string, saving: Promise<unknown>) {
-  const all = Promise.allSettled([leaving.get(id), saving]);
+export function holdBrief(id: string, closing: Promise<unknown>) {
+  const all = Promise.allSettled([leaving.get(id), closing]);
   leaving.set(id, all);
   void all.then(() => {
     if (leaving.get(id) === all) leaving.delete(id);
   });
 }
 
-/** Текст ввода совета — GET /api/councils/<id>/brief; сначала сохраняется то, что держит holdBrief. */
+/** Текст ввода совета — GET /api/councils/<id>/brief; сначала кончаются запросы, которые держит holdBrief. */
 export function useCouncilBrief(id: string): Query<Brief> {
   return useQuery(async () => {
     await leaving.get(id);

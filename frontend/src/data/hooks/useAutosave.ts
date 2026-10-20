@@ -12,18 +12,22 @@ interface AutosaveOptions<T> {
   delay: number;
   /** Одинаковы ли два значения; по умолчанию — Object.is. */
   equal?: (a: T, b: T) => boolean;
+  /**
+   * Что уже сохранено, если value в начале — не оно (набранное в прошлый раз, которое не сохранилось): тогда value
+   * уходит после паузы. По умолчанию — value.
+   */
+  stored?: T;
 }
 
 /**
  * Автосохранение того, что человек набирает на экране. Правка уходит после паузы delay; запросы идут по одному,
  * и каждый шлёт последнее значение. save отвечает, сохранилось ли (ошибку держит само действие). Не вышло — снова
- * пробуют следующая правка или flush(). Экран закрыли — несохранённое уходит сразу. value в начале — то, что уже
- * сохранено.
+ * пробуют следующая правка или flush(). Экран закрыли — несохранённое уходит сразу.
  */
 export function useAutosave<T>(
   value: T,
   save: (value: T) => Promise<boolean>,
-  { delay, equal = Object.is }: AutosaveOptions<T>,
+  { delay, equal = Object.is, stored: storedAtStart = value }: AutosaveOptions<T>,
 ): Autosave {
   const latest = useRef(value);
   latest.current = value;
@@ -32,7 +36,7 @@ export function useAutosave<T>(
   const equalRef = useRef(equal);
   equalRef.current = equal;
   /** Последнее значение, которое сохранил сервер. */
-  const stored = useRef(value);
+  const stored = useRef(storedAtStart);
   /**
    * Растёт, когда сервер сохранил новое значение. Правку, сделанную, пока шёл запрос, с ним надо сравнить заново:
    * человек мог вернуть прежнее значение, а сохранилось то, что ушло в запросе.

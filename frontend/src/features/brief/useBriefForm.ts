@@ -16,6 +16,7 @@ import type { Project } from '../../domain/project';
 import { useI18n, type Translate } from '../../i18n';
 import { navigate, routePath } from '../../router';
 import type { SegmentedOption } from '../../ui/Segmented';
+import { draftOf, keepDraft } from './drafts';
 import { useCouncilEdit } from './useCouncilEdit';
 
 /** Сколько ждать после последней набранной буквы, прежде чем сохранить текст или название, мс. */
@@ -111,9 +112,11 @@ const sameName = (a: string, b: string) => cleanName(a) === cleanName(b);
  * «Ввод»: текст, название, проект, модели и судья совета, «Нарезать →». Всё сохраняется само: текст и название —
  * после паузы в наборе, проект, модели и судья — сразу по щелчку. Текст и название живут на экране и не меняются от
  * нового списка советов; проект, модели и судья — из списка советов, а пока правка идёт — как их выбрал человек;
- * правка не прошла — снова как в списке. Пока нарезка запускается, «Ввод» не правится: нарезается то, что на экране.
- * Название на экране — как его набрали: ответ сервера без пробелов по краям в поле не ставится, иначе пробел, набранный
- * перед следующим словом, пропал бы на паузе.
+ * правка не прошла — снова как в списке. У каждого поля — своя очередь правок и своя ошибка. Пока нарезка
+ * запускается, «Ввод» не правится: нарезается то, что на экране. Название на экране — как его набрали: ответ сервера
+ * без пробелов по краям в поле не ставится, иначе пробел, набранный перед следующим словом, пропал бы на паузе.
+ * Закрытый «Ввод» не откроется снова, пока не ответили все его запросы; текст и название, которые так и не
+ * сохранились, открытый снова «Ввод» покажет и сохранит снова.
  */
 export function useBriefForm(council: CouncilSummary, initialText: string): BriefForm {
   const { t } = useI18n();
@@ -122,22 +125,48 @@ export function useBriefForm(council: CouncilSummary, initialText: string): Brie
   const saveBrief = useSaveBrief();
   const saveName = useUpdateCouncil();
   const projectEdit = useCouncilEdit(council.id);
-  const membersEdit = useCouncilEdit(council.id);
+  const participantsEdit = useCouncilEdit(council.id);
+  const judgeEdit = useCouncilEdit(council.id);
   const slicing = useStartSlicing();
 
-  const [text, setText] = useState(initialText);
-  const [name, setName] = useState(council.name);
+  // Не сохранилось в прошлый раз — на экране набранное, а сохранено то, что на сервере: набранное уйдёт после паузы.
+  const [draft] = useState(() => draftOf(council.id));
+  const [text, setText] = useState(draft.text ?? initialText);
+  const [name, setName] = useState(draft.name ?? council.name);
   const [starting, setStarting] = useState(false);
+  /** Запуск нарезки: сохранения перед ней и сам запрос. */
+  const start = useRef<Promise<void>>();
 
-  const textSave = useAutosave(text, (value) => ok(saveBrief.run(council.id, value)), { delay: TYPING_PAUSE });
+  const textSave = useAutosave(text, (value) => ok(saveBrief.run(council.id, value)), {
+    delay: TYPING_PAUSE,
+    stored: initialText,
+  });
   const nameSave = useAutosave(name, (value) => ok(saveName.run(council.id, { name: value })), {
     delay: TYPING_PAUSE,
     equal: sameName,
+    stored: council.name,
   });
 
-  // «Ввод» закрыли: пока текст сохраняется, его не запрашивают — открытый снова «Ввод» получит сохранённый текст.
-  const flushText = textSave.flush;
-  useEffect(() => () => holdBrief(council.id, flushText()), [council.id, flushText]);
+  /** Отправить несохранённое и дождаться ответа на правки, которые ещё идут; ответ — сохранилось ли каждое. */
+  const saveAll = () =>
+    Promise.all([
+      textSave.flush(),
+      nameSave.flush(),
+      projectEdit.settle(),
+      participantsEdit.settle(),
+      judgeEdit.settle(),
+    ]);
+
+  // «Ввод» закрыли: пока не ответили все его запросы — сохранения и запуск нарезки, — текст ввода этого совета
+  // не запрашивают. Что из набранного так и не сохранилось — запоминаем для «Ввода», открытого снова.
+  const leave = useRef(() => {});
+  leave.current = () => {
+    const closing = Promise.all([saveAll(), start.current]).then(([[textSaved, nameSaved]]) =>
+      keepDraft(council.id, { text: textSaved ? undefined : text, name: nameSaved ? undefined : name }),
+    );
+    holdBrief(council.id, closing);
+  };
+  useEffect(() => () => leave.current(), []);
 
   /** «Ввод» на экране: ушли с него, пока нарезка запускалась, — «Нарезку» не открываем. */
   const open = useRef(false);
@@ -150,8 +179,8 @@ export function useBriefForm(council: CouncilSummary, initialText: string): Brie
 
   const projectId =
     projectEdit.pending.projectId !== undefined ? projectEdit.pending.projectId : (council.project?.id ?? null);
-  const participants = membersEdit.pending.participants ?? council.participants;
-  const judge = membersEdit.pending.judge ?? council.judge;
+  const participants = participantsEdit.pending.participants ?? council.participants;
+  const judge = judgeEdit.pending.judge ?? council.judge;
 
   return {
     text,
@@ -165,15 +194,10 @@ export function useBriefForm(council: CouncilSummary, initialText: string): Brie
     slice: () => {
       if (starting) return;
       setStarting(true);
-      void (async () => {
+      start.current = (async () => {
         // Нарезается то, что на экране: сначала уходит несохранённое и приходят ответы на правки, которые ещё идут.
         // Что-то не сохранилось — не нарезаем: ошибка — в блоке, где меняли.
-        const saved = await Promise.all([
-          textSave.flush(),
-          nameSave.flush(),
-          projectEdit.settle(),
-          membersEdit.settle(),
-        ]);
+        const saved = await saveAll();
         const started = saved.every(Boolean) && (await slicing.run(council.id));
         setStarting(false);
         if (started && open.current) navigate(routePath({ screen: 'stage', council: council.id, stage: 'slices' }));
@@ -209,13 +233,13 @@ export function useBriefForm(council: CouncilSummary, initialText: string): Brie
       // Как в макете: не подключённую модель не включить и не выключить.
       if (starting || !model?.online || !models.data) return;
       const order = models.data.map((m) => m.id);
-      membersEdit.change({ participants: toggleParticipant(participants, id, order) });
+      participantsEdit.change({ participants: toggleParticipant(participants, id, order) });
     },
     judges: (models.data ?? []).filter((m) => m.online).map((m) => ({ value: m.id, label: m.id })),
     judge,
     pickJudge: (id) => {
-      if (!starting && id !== judge) membersEdit.change({ judge: id });
+      if (!starting && id !== judge) judgeEdit.change({ judge: id });
     },
-    membersError: membersEdit.error,
+    membersError: participantsEdit.error ?? judgeEdit.error,
   };
 }
