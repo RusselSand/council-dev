@@ -275,6 +275,24 @@ export const ru = {
   'projectDecisions.skip': 'Без прошлых решений → к вопросам',
   'projectDecisions.approve': 'Учитывать отмеченные → к вопросам',
 
+  'questions.source.text': 'из текста',
+  'questions.source.ai': 'ИИ',
+  'questions.source.user': 'вы',
+  'questions.why': 'почему: {reason}',
+  'questions.remove': 'Убрать',
+  'questions.restore': 'Вернуть',
+  'questions.revisits': 'Пересматривает решение проекта',
+  'questions.revisits.note':
+    'Пока вопрос открыт, {id} — under_review: другие потоки на него не опираются. Когда вопрос решат, новый ADR заменит его — {id} станет superseded.',
+  'questions.answers.single': 'В тексте уже есть ответ · предложение',
+  'questions.answers.several': 'В тексте уже есть ответы · предложения: {count}',
+  'questions.answers.quote': '«{text}»',
+  'questions.answers.note':
+    'Станет вариантом «из группы» на следующем шаге — вопрос можно оставить, чтобы сравнить с другими.',
+  'questions.own': 'Свой вопрос…',
+  'questions.add': 'Добавить',
+  'questions.approve': 'Утвердить вопросы → к вариантам',
+
   'progress.title': 'Ход работы',
   'progress.note': 'Участники работают по отдельности, судья решает там, где они разошлись.',
 
@@ -373,6 +391,9 @@ export const ru = {
   'error.research_not_ready':
     'Исследование ещё нельзя утвердить: дождитесь его окончания, решите находки и подтвердите группы. Исследование обновлено.',
   'error.unknown_decision': 'Одного из отмеченных решений уже нет в каталоге. Список обновлён — проверьте отметки.',
+  'error.questions_not_ready':
+    'Вопросы сейчас не изменить: шаг ещё не начат или модели собирают вопросы заново. Поток обновлён.',
+  'error.text_required': 'Впишите вопрос.',
   'error.network': 'Нет связи с сервером. Проверьте сеть и попробуйте ещё раз.',
   'error.unknown': 'Что-то пошло не так. Попробуйте ещё раз.',
 

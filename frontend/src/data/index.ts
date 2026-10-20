@@ -20,6 +20,13 @@ export {
   type FindingDecisions,
   type ResearchAction,
 } from './hooks/useResearch';
+export {
+  useAddQuestion,
+  useApproveQuestions,
+  useQuestionRemovals,
+  useStreamQuestions,
+  type QuestionRemovals,
+} from './hooks/useQuestions';
 export { useCouncilSlicing, useFragmentLabels, type FragmentLabels } from './hooks/useSlicing';
 export {
   useApproveProjectDecisions,

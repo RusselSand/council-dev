@@ -1,6 +1,7 @@
-import type { CouncilSummary } from '../../domain/council';
+import type { CouncilSummary, State } from '../../domain/council';
 import type { Model } from '../../domain/model';
 import type { Project } from '../../domain/project';
+import type { Question } from '../../domain/questions';
 import type { Research } from '../../domain/research';
 import type { Slicing } from '../../domain/slicing';
 import type { ProjectDecisions, Stream } from '../../domain/stream';
@@ -41,6 +42,17 @@ export interface StreamProjectDecisions extends ProjectDecisions {
   stream: string;
 }
 
+/**
+ * Вопросы потока и чьи они — совет и поток, а ещё в каком состоянии был шаг «Вопросы», когда их запросили:
+ * запрошенные до того, как модели закончили или шаг запустили снова, — другие вопросы, экран их не показывает.
+ */
+export interface StreamQuestions {
+  council: string;
+  stream: string;
+  state: State;
+  questions: Question[];
+}
+
 /** Данные, которые может изменить действие, и их вид: после действия их запросы перезапрашиваются. */
 export interface Topics {
   councils: CouncilSummary[];
@@ -59,6 +71,8 @@ export interface Topics {
   streams: CouncilStreams;
   /** Прошлые решения открытого потока. */
   projectDecisions: StreamProjectDecisions;
+  /** Вопросы открытого потока. */
+  questions: StreamQuestions;
 }
 export type Topic = keyof Topics;
 

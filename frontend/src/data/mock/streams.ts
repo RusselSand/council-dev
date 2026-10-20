@@ -1,14 +1,15 @@
 import { STEPS, type State, type Step } from '../../domain/council';
 import type { Run, RunState } from '../../domain/run';
 import type { Group } from '../../domain/structure';
-import type {
-  DecisionCatalog,
-  PastDecision,
-  ProjectDecisions,
-  StepPhase,
-  StepProgress,
-  Stream,
-  StreamStep,
+import {
+  stepOf,
+  type DecisionCatalog,
+  type PastDecision,
+  type ProjectDecisions,
+  type StepPhase,
+  type StepProgress,
+  type Stream,
+  type StreamStep,
 } from '../../domain/stream';
 
 /** Части шагов, где работают модели: у каждого такого шага — модели совета и судья. */
@@ -229,8 +230,8 @@ const protoDecisions = (path: string, streamId: string): ProjectDecisions => ({
   decisions: PROTO_DECISIONS.map((d) => ({ ...d, selected: (PROTO_CHOSEN[streamId] ?? []).includes(d.id) })),
 });
 
-/** Ключ прошлых решений потока в моках: совет и поток. */
-export const decisionsKey = (council: string, stream: string) => `${council}/${stream}`;
+/** Ключ потока в моках — совет и поток: по нему лежат прошлые решения и вопросы потока. */
+export const streamKey =(council: string, stream: string) => `${council}/${stream}`;
 
 /**
  * Прошлые решения по совету и потоку. g1 — каталог /repos/claude_notes, прошлых решений, относящихся к идее, нет
@@ -238,15 +239,15 @@ export const decisionsKey = (council: string, stream: string) => `${council}/${s
  * документации проекта (Кромка — kromka-api/docs/reasoning, Сайт — site/docs/adr).
  */
 export const PROJECT_DECISIONS: Record<string, ProjectDecisions> = {
-  [decisionsKey('g1', 'A')]: { catalog: { path: '/repos/claude_notes', total: 0, traced: 0 }, decisions: [] },
+  [streamKey('g1', 'A')]: { catalog: { path: '/repos/claude_notes', total: 0, traced: 0 }, decisions: [] },
   ...Object.fromEntries(
     (['A', 'B', 'C'] as const).flatMap((id) => [
-      [decisionsKey('c1', id), protoDecisions('kromka-api/docs/reasoning', id)],
-      [decisionsKey('c4', id), protoDecisions('kromka-api/docs/reasoning', id)],
+      [streamKey('c1', id), protoDecisions('kromka-api/docs/reasoning', id)],
+      [streamKey('c4', id), protoDecisions('kromka-api/docs/reasoning', id)],
     ]),
   ),
   ...Object.fromEntries(
-    (['A', 'B'] as const).map((id) => [decisionsKey('c7', id), protoDecisions('site/docs/adr', id)]),
+    (['A', 'B'] as const).map((id) => [streamKey('c7', id), protoDecisions('site/docs/adr', id)]),
   ),
 };
 
@@ -332,35 +333,67 @@ const projectDoneNote = (selected: string[]) =>
     : `${selected.length > 1 ? 'учтены' : 'учтено'} ${selected.join(', ')}`;
 
 /**
- * Поток после «… → к вопросам»: «Решения проекта» готовы, со строкой о том, что учтено. Шаг готов впервые — модели
- * начинают собирать вопросы (в макете «Вопросы» сразу ждут вас, будто модели уже поработали); уже был готов — меняется
- * только отбор, остальные шаги не трогаются, как в макете. В моках сбор вопросов не кончается.
+ * Поток, где человек утвердил шаг: шаг готов, со строкой note. Шаг готов впервые — на следующем начинают работать
+ * модели (в макете он сразу ждёт вас, будто модели уже поработали); уже был готов — меняется только строка шага,
+ * остальные шаги не трогаются, как в макете. В моках модели на следующем шаге не заканчивают.
  */
-export function decisionsApproved(
+function stepApproved(
   stream: Stream,
-  selected: string[],
+  approved: Step,
+  note: string,
   participants: string[],
   judge: string,
   now: string,
 ): Stream {
-  const first = stream.steps.find((s) => s.step === 'project')?.state !== 'done';
+  const first = stepOf(stream, approved).state !== 'done';
+  const next = STEPS[STEPS.indexOf(approved) + 1];
   return {
     ...stream,
     steps: stream.steps.map((step): StreamStep => {
-      if (step.step === 'project') return { ...step, state: 'done', note: projectDoneNote(selected) };
-      if (step.step === 'questions' && first) {
+      if (step.step === approved) return { ...step, state: 'done', note, text: null };
+      if (step.step === next && first) {
         return {
           ...step,
           state: 'running',
-          note: RUNNING_NOTE.questions ?? '',
-          text: workText('questions', participants),
-          progress: started('questions', participants, judge, now),
+          note: RUNNING_NOTE[next] ?? '',
+          text: workText(next, participants),
+          progress: started(next, participants, judge, now),
         };
       }
       return step;
     }),
   };
 }
+
+/** Поток после «… → к вопросам»: «Решения проекта» готовы, со строкой о том, что учтено; модели собирают вопросы. */
+export const decisionsApproved = (
+  stream: Stream,
+  selected: string[],
+  participants: string[],
+  judge: string,
+  now: string,
+): Stream => stepApproved(stream, 'project', projectDoneNote(selected), participants, judge, now);
+
+/** «отобрано 4 вопроса» — строка готовых «Вопросов» в цепочке; пишет сервер. */
+const QUESTIONS_DONE_NOTE: Record<string, (count: number) => string> = {
+  one: (count) => `отобран ${count} вопрос`,
+  few: (count) => `отобрано ${count} вопроса`,
+  many: (count) => `отобрано ${count} вопросов`,
+};
+const questionsDoneNote = (count: number) =>
+  (QUESTIONS_DONE_NOTE[new Intl.PluralRules('ru').select(count)] ?? QUESTIONS_DONE_NOTE.few)(count);
+
+/**
+ * Поток после «Утвердить вопросы → к вариантам»: «Вопросы» готовы — отобраны неубранные (kept), модели ищут варианты.
+ * Шаг остановился — идут вопросы моделей, которые успели ответить; ход последнего запуска остаётся как был.
+ */
+export const questionsApproved = (
+  stream: Stream,
+  kept: number,
+  participants: string[],
+  judge: string,
+  now: string,
+): Stream => stepApproved(stream, 'questions', questionsDoneNote(kept), participants, judge, now);
 
 /**
  * «Запустить снова» — шаг, который остановился, запускается снова: модели, которые уже ответили, заново не работают —
