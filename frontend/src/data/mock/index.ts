@@ -272,7 +272,12 @@ export const mockSource: DataSource = {
   async confirmStructure(id) {
     const index = councilAt(id);
     checkNotStructuring(councils[index]);
+    const { stages } = councils[index];
     councils[index] = structureConfirmed(councils[index], new Date().toISOString());
+    // Исследование уже начато и не утверждено — его строка на Сводке пишется заново: группы подтверждены.
+    if (stages.structure !== 'done' && (stages.research === 'running' || stages.research === 'waiting')) {
+      researchDone(index, researchOf(id));
+    }
     return copy(councils[index]);
   },
   async retryStructure(id) {
@@ -359,8 +364,10 @@ export const mockSource: DataSource = {
     const index = councilAt(id);
     const { code, design, findings } = researchOf(id);
     const pending = findings.filter((f) => isPending(f.kind, f.decision)).length;
-    if (councils[index].stages.research !== 'done' && researchStatus(code.state, design.state, pending) !== 'ready') {
-      throw new ApiError('research_not_ready', `Исследование совета ${id} не готово`, 409);
+    const { stages } = councils[index];
+    const status = researchStatus(code.state, design.state, pending, stages.structure === 'done');
+    if (stages.research !== 'done' && status !== 'ready') {
+      throw new ApiError('research_not_ready', `Исследование совета ${id} не готово или группы не подтверждены`, 409);
     }
     const groups = structureOf(id).groups.map((g) => g.id);
     councils[index] = researchApproved(councils[index], groups, new Date().toISOString());

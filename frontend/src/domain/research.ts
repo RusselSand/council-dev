@@ -194,12 +194,18 @@ export function findingOutcome(kind: FindingKind, decision: Decision | null): Fi
 
 /**
  * Что сказать на плашке «Утвердить исследование» — как в макете: можно утверждать (ready); оба исследования кончились,
- * но находки ждут решения (pending); хоть одно идёт (running); иначе — начать или пропустить оба (start).
+ * но находки ждут решения (pending); хоть одно идёт (running); иначе — начать или пропустить оба (start). Исследование
+ * готово, но группы не подтверждены, — сначала подтвердить группы (groups): утвердить до этого нельзя (решение q-002).
  */
-export type ResearchStatus = 'ready' | 'pending' | 'running' | 'start';
+export type ResearchStatus = 'ready' | 'groups' | 'pending' | 'running' | 'start';
 
-export function researchStatus(code: ResearchState, design: ResearchState, pending: number): ResearchStatus {
-  if (isSettled(code) && isSettled(design)) return pending > 0 ? 'pending' : 'ready';
+export function researchStatus(
+  code: ResearchState,
+  design: ResearchState,
+  pending: number,
+  groupsConfirmed: boolean,
+): ResearchStatus {
+  if (isSettled(code) && isSettled(design)) return pending > 0 ? 'pending' : groupsConfirmed ? 'ready' : 'groups';
   if (code === 'running' || design === 'running') return 'running';
   return 'start';
 }

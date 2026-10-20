@@ -244,7 +244,8 @@ function choiceLabel(finding: Finding, decision: Decision, t: Translate): string
  * «Пропустить», «Начать исследование»), идёт («Остановить»), готово («Изменить и перезапустить»), пропущено («Вернуть
  * исследование»). Отметки репозиториев и ссылку человек меняет на экране; на сервер они уходят с «Начать исследование».
  * Находки — по группам, с фильтром; решение по находке сохраняется сразу. «К потокам →» доступна, когда оба
- * исследования кончились и находок, которые ждут решения, нет; сначала дожидается решений, которые ещё идут, потом
+ * исследования кончились, находок, которые ждут решения, нет и группы подтверждены (решение q-002); сначала
+ * дожидается решений, которые ещё идут, потом
  * утверждает исследование и открывает «Потоки». Ушли с экрана, пока исследование утверждалось, — «Потоки»
  * не открываются. Уже утверждено — кнопка просто открывает «Потоки».
  */
@@ -289,7 +290,7 @@ export function useResearch(council: CouncilSummary): ResearchScreen {
 
   const decisionOf = (finding: Finding) => decisions.pending[finding.id] ?? finding.decision;
   const pendingCount = findings.filter((f) => isPending(f.kind, decisionOf(f))).length;
-  const status = researchStatus(code.state, design.state, pendingCount);
+  const status = researchStatus(code.state, design.state, pendingCount, council.stages.structure === 'done');
   const approved = council.stages.research === 'done';
   const busy = codeAction.pending || designAction.pending;
 

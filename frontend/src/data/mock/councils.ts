@@ -314,6 +314,7 @@ const researchedText = (research: Research) => {
 /** Строка «Исследования» на Сводке, пока оно ждёт человека, — как пояснение на плашке «Утвердить исследование». */
 const RESEARCH_WAITING: Record<ResearchStatus, string> = {
   ready: 'Утвердите исследование — потом группы станут потоками.',
+  groups: 'Подтвердите группы — потом они станут потоками.',
   pending: 'Находки ждут вашего решения — выводы и противоречия.',
   running: 'Дождитесь окончания исследования.',
   start: 'Начните или пропустите оба исследования — потом группы станут потоками.',
@@ -333,7 +334,9 @@ export const researchChanged = (council: CouncilSummary, research: Research, upd
   const pending = research.findings.filter((f) => isPending(f.kind, f.decision)).length;
   const text = running
     ? `${modelsText([...new Set(runs.map((run) => run.model))])} исследуют ${researchedText(research)}`
-    : RESEARCH_WAITING[researchStatus(research.code.state, research.design.state, pending)];
+    : RESEARCH_WAITING[
+        researchStatus(research.code.state, research.design.state, pending, council.stages.structure === 'done')
+      ];
   return {
     ...council,
     stage,

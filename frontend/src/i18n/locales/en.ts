@@ -187,6 +187,7 @@ export const en = translation({
     one: '{count} finding is waiting for your decision — inferences and conflicts.',
     other: '{count} findings are waiting for your decision — inferences and conflicts.',
   },
+  'research.note.groups': 'Confirm the groups — then they become streams.',
   'research.note.running': 'Wait for the research to finish.',
   'research.note.start': 'Start or skip both researches — then the groups become streams.',
 
@@ -280,7 +281,7 @@ export const en = translation({
   'error.bad_link': 'A Figma file link is needed — it must contain figma.com.',
   'error.bad_decision': 'This decision doesn’t fit this finding.',
   'error.research_not_ready':
-    'The research isn’t ready yet: wait for it to finish and decide on the findings. The research has been refreshed.',
+    'The research can’t be approved yet: wait for it to finish, decide on the findings and confirm the groups. The research has been refreshed.',
   'error.network': 'No connection to the server. Check your network and try again.',
   'error.unknown': 'Something went wrong. Please try again.',
 
