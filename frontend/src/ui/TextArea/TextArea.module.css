@@ -1,0 +1,13 @@
+.area {
+  width: 100%;
+  min-width: 0;
+  min-height: var(--textarea-tall);
+  padding: var(--space-16);
+  border: 0;
+  border-radius: var(--radius-16);
+  background: var(--color-surface-sunken);
+  font-size: var(--text-base);
+  line-height: var(--leading-wide);
+  color: var(--color-ink);
+  resize: vertical;
+}

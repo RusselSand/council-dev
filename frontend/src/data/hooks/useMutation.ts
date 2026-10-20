@@ -16,12 +16,12 @@ interface MutationState {
 }
 
 /**
- * Действие с данными. После успеха зовёт done с ответом: там действие помечает данные, которые изменило,
- * устаревшими (markStale) и правит их ответом.
+ * Действие с данными. После успеха зовёт done с ответом и тем, с чем действие запускали: там действие помечает данные,
+ * которые изменило, устаревшими (markStale) и правит их ответом.
  */
 export function useMutation<A extends unknown[], T>(
   action: (...args: A) => Promise<T>,
-  done: (result: T) => void,
+  done: (result: T, ...args: A) => void,
 ): Mutation<A, T> {
   const [state, setState] = useState<MutationState>({ pending: false, error: undefined });
   const actionRef = useRef(action);
@@ -42,7 +42,7 @@ export function useMutation<A extends unknown[], T>(
     try {
       const result = await actionRef.current(...args);
       if (mounted.current) setState({ pending: false, error: undefined });
-      doneRef.current(result);
+      doneRef.current(result, ...args);
       return result;
     } catch (error) {
       if (mounted.current) setState({ pending: false, error: toApiError(error) });

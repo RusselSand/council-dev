@@ -1,4 +1,6 @@
 import { useEffect } from 'react';
+import { Brief } from '../features/brief';
+import { Council } from '../features/council';
 import { Home } from '../features/home';
 import { Projects } from '../features/projects';
 import { ScreenStub } from '../features/stub';
@@ -16,6 +18,16 @@ export function Screen() {
   if (!route) return null;
   if (route.screen === 'home') return <Home />;
   if (route.screen === 'projects') return <Projects />;
-  // Остальные экраны пока не сделаны — на их адресах заглушка. Экран появится — его ветка встанет здесь.
-  return <ScreenStub route={route} />;
+  return (
+    <Council route={route}>
+      {(council) =>
+        route.screen === 'stage' && route.stage === 'brief' ? (
+          <Brief key={council.id} council={council} />
+        ) : (
+          // Остальные этапы пока не сделаны — под вкладками заглушка. Этап появится — его ветка встанет здесь.
+          <ScreenStub route={route} />
+        )
+      }
+    </Council>
+  );
 }

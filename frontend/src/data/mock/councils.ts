@@ -181,6 +181,28 @@ export const COUNCILS: CouncilSummary[] = [
   },
 ];
 
+/** «sol и fable», «sol, fable и opus» — модели в строке активности; строку пишет сервер. */
+const modelsText = (names: string[]) =>
+  names.length > 1 ? `${names.slice(0, -1).join(', ')} и ${names[names.length - 1]}` : (names[0] ?? 'Модели');
+
+/**
+ * Совет после «Нарезать →» — как в макете (prototype.js, runSlice): «Ввод» готов, «Нарезка» — ИИ работает, совет —
+ * ИИ работает и стоит на «Нарезке», итог — «Нарезка — модели режут текст». Остальные этапы не меняются. Строка
+ * «Нарезки» на Сводке — как у c2 в макете: «sol и fable режут текст».
+ */
+export const slicingStarted = (council: CouncilSummary, updatedAt: string): CouncilSummary => ({
+  ...council,
+  stage: 'slices',
+  state: 'running',
+  stages: { ...council.stages, brief: 'done', slices: 'running' },
+  activity: [
+    ...council.activity.filter((a) => a.stage !== 'brief' && a.stage !== 'slices'),
+    atStage('slices', 'running', `${modelsText(council.participants)} режут текст`),
+  ],
+  summary: 'Нарезка — модели режут текст',
+  updatedAt,
+});
+
 /**
  * Новый совет — как в макете (prototype.js, newCouncil): черновик без названия на «Вводе», все этапы не начаты,
  * модели и судья — как у советов макета. На Сводке черновик — как c5.

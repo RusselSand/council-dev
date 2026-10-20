@@ -10,6 +10,9 @@ export interface Model {
   online: boolean;
 }
 
+/** Провайдер и модель у него — как в макете: «codex/gpt-5.6-sol». */
+export const modelPath = (model: Pick<Model, 'provider' | 'model'>) => `${model.provider}/${model.model}`;
+
 /** Метка модели в «Моделях совета»: не подключена, судья открытого совета, остальные подключённые. */
 export type ModelRole = 'offline' | 'judge' | 'member';
 

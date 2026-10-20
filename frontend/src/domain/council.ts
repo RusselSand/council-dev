@@ -69,6 +69,35 @@ export interface CouncilSummary {
   summary: string;
 }
 
+/**
+ * Поля совета, которые меняют на «Вводе»: название, проект, модели и судья. Тело правки совета; полей, которых нет,
+ * правка не меняет.
+ */
+export interface CouncilFields {
+  /** Пустая строка — совет без названия. */
+  name?: string;
+  /** id проекта; null — без проекта. */
+  projectId?: string | null;
+  /** Модели совета — id моделей, по порядку. */
+  participants?: string[];
+  /** Судья — id модели. */
+  judge?: string;
+}
+
+/** Название, как его сохраняет сервер, — без пробелов по краям. */
+export const cleanName = (name: string): string => name.trim();
+
+/**
+ * Модели совета после щелчка по переключателю модели: была в совете — уходит, не была — встаёт. Порядок — как в списке
+ * моделей (order); модели, которых в нём нет, остаются в конце.
+ */
+export function toggleParticipant(participants: readonly string[], id: string, order: readonly string[]): string[] {
+  const chosen = new Set(participants);
+  if (chosen.has(id)) chosen.delete(id);
+  else chosen.add(id);
+  return [...order.filter((m) => chosen.has(m)), ...participants.filter((m) => chosen.has(m) && !order.includes(m))];
+}
+
 /** Порядок советов в списке Сводки — как в макете: ошибка, ждёт вас, ИИ работает, черновик, готово. */
 const URGENCY: readonly State[] = ['failed', 'waiting', 'running', 'idle', 'done'];
 

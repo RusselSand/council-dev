@@ -21,6 +21,24 @@ export const en = translation({
   'council.newButton': '+ New council',
   'council.meta': '{project} · judge {judge} · {models} · {updated}',
   'council.models': { one: 'model {names}', other: 'models {names}' },
+  'council.stageTab': '{stage}: {state}',
+
+  'brief.title': 'Free-form thoughts',
+  'brief.intro':
+    'Problem, idea, questions, ready-made solutions — in any order, all mixed together. The council will sort out what is what.',
+  'brief.placeholder': 'What hurts, what you came up with, what is already decided…',
+  'brief.words': { one: '{count} word', other: '{count} words' },
+  'brief.saved': '· saved',
+  'brief.slice': 'Slice →',
+  'brief.name': 'Name',
+  'brief.project': 'Project',
+  'brief.projects': 'Projects →',
+  'brief.projectHint.none': 'No project: no code scan and no export of notes.',
+  'brief.projectHint.docs': 'Repositories ({count}) will be filled into the “Repository” step, notes will go to {docs}.',
+  'brief.projectHint.noDocs': 'The project has no documentation folder: streams can’t be exported to notes.',
+  'brief.council': 'Council',
+  'brief.offline': 'not connected',
+  'brief.judge': 'Judge',
 
   'project.none': 'No project',
   'project.newButton': '+ New project',
@@ -85,6 +103,10 @@ export const en = translation({
   'error.too_many_repos': 'Check no more than 10 repositories.',
   'error.unknown_repo':
     'One of the checked repositories is no longer in COUNCIL_REPOS. The list has been refreshed — check your selection.',
+  'error.unknown_project': 'This project no longer exists. The project list has been refreshed — choose another one.',
+  'error.unknown_model': 'This model no longer exists. The model list has been refreshed.',
+  'error.model_offline':
+    'The model is not connected: it can’t be added to the council or made the judge. The model list has been refreshed.',
   'error.network': 'No connection to the server. Check your network and try again.',
   'error.unknown': 'Something went wrong. Please try again.',
 
