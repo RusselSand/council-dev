@@ -5,7 +5,8 @@ import styles from './LoadState.module.css';
 interface LoadStateProps {
   loading: boolean;
   error: ApiError | undefined;
-  onRetry: () => void;
+  /** «Повторить» после ошибки; нет — повторять нечего, только текст ошибки. */
+  onRetry?: () => void;
 }
 
 /**
@@ -17,10 +18,15 @@ export function LoadState({ loading, error, onRetry }: LoadStateProps) {
   if (error) {
     return (
       <p className={`${styles.line} ${styles.error}`} role="alert">
-        {t(errorKey(error.code))}{' '}
-        <button type="button" className={styles.retry} onClick={onRetry}>
-          {t('load.retry')}
-        </button>
+        {t(errorKey(error.code))}
+        {onRetry && (
+          <>
+            {' '}
+            <button type="button" className={styles.retry} onClick={onRetry}>
+              {t('load.retry')}
+            </button>
+          </>
+        )}
       </p>
     );
   }

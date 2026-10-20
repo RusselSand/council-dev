@@ -25,6 +25,17 @@ export const en = translation({
   'project.none': 'No project',
   'project.newButton': '+ New project',
 
+  'projects.intro':
+    'Repositories and the documentation folder that a council takes from its project instead of entering them in every stream. The project is chosen on the council’s “Brief”.',
+  'projects.usage': { one: 'in {count} council', other: 'in {count} councils' },
+  'projects.unused': 'not used',
+  'projects.repos': 'Repositories',
+  'projects.docs': 'Documentation folder',
+  'projects.noDocs': 'No folder: streams can’t be exported to notes',
+  'projects.edit': 'Edit',
+  'projects.delete': 'Delete',
+  'projects.deleteConfirm': 'Yes, delete',
+
   'models.title': 'Council models',
   'model.member': 'in council',
   'model.judge': 'judge',
@@ -55,6 +66,7 @@ export const en = translation({
 
   'error.not_found': 'Not found — it may have been deleted.',
   'error.internal': 'The server could not handle the request. Please try again.',
+  'error.project_in_use': 'The project is already chosen in a council, so it can’t be deleted.',
   'error.network': 'No connection to the server. Check your network and try again.',
   'error.unknown': 'Something went wrong. Please try again.',
 

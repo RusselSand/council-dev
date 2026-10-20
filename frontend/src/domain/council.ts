@@ -1,3 +1,5 @@
+import type { ProjectRef } from './project';
+
 /** Этапы совета — по порядку, как в макете. */
 export const STAGES = ['brief', 'slices', 'structure', 'research', 'streams', 'tasks'] as const;
 export type Stage = (typeof STAGES)[number];
@@ -14,12 +16,6 @@ export type State = (typeof STATES)[number];
 
 export const isStage = (value: string): value is Stage => (STAGES as readonly string[]).includes(value);
 export const isStep = (value: string): value is Step => (STEPS as readonly string[]).includes(value);
-
-/** Ссылка на проект внутри другого объекта. */
-export interface ProjectRef {
-  id: string;
-  name: string;
-}
 
 /** Поток в списке советов. */
 export interface StreamSummary {

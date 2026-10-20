@@ -1,13 +1,5 @@
-import type {
-  Activity,
-  ActivityState,
-  CouncilSummary,
-  ProjectRef,
-  Stage,
-  State,
-  Step,
-  StreamSummary,
-} from '../../domain/council';
+import type { Activity, ActivityState, CouncilSummary, Stage, State, Step, StreamSummary } from '../../domain/council';
+import type { ProjectRef } from '../../domain/project';
 import { PROJECTS } from './projects';
 
 /** Состояния этапов по порядку: Ввод, Нарезка, Группы, Исследование, Потоки, Задачи. */

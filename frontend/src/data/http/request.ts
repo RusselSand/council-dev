@@ -6,9 +6,9 @@ const API_URL = (import.meta.env.VITE_API_URL || '/api').replace(/\/$/, '');
 type Method = 'GET' | 'POST' | 'PATCH' | 'PUT' | 'DELETE';
 
 /**
- * Запрос к API. Ответ 2xx — JSON; ошибка — { "error": { "code", "message" } } (docs/api-contract.md, «Ошибки»).
- * Сервер не ответил — ApiError network; ответ не разобрать — ApiError unknown. extraHeaders — заголовки ручки
- * сверх общих (Idempotency-Key).
+ * Запрос к API. Ответ 2xx — JSON, у 204 тела нет (так отвечает удаление); ошибка — { "error": { "code", "message" } }
+ * (docs/api-contract.md, «Ошибки»). Сервер не ответил — ApiError network; ответ не разобрать — ApiError unknown.
+ * extraHeaders — заголовки ручки сверх общих (Idempotency-Key).
  */
 export async function request<T>(
   method: Method,
@@ -30,6 +30,7 @@ export async function request<T>(
     throw new ApiError('network', error instanceof Error ? error.message : String(error));
   }
 
+  if (response.status === 204) return undefined as T;
   const payload: unknown = await response.json().catch(() => undefined);
   if (!response.ok) {
     const error = (payload as { error?: { code?: unknown; message?: unknown } } | undefined)?.error;

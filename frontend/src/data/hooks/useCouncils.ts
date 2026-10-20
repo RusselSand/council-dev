@@ -15,7 +15,8 @@ export function useCouncils(): Query<CouncilSummary[]> {
 
 /**
  * Новый совет — POST /api/councils; ответ — созданный совет. Он сразу встаёт первым в списке советов, ещё до
- * перезапроса списка: шапка и меню видят его, даже если перезапрос не вышел.
+ * перезапроса списка: шапка и меню видят его, даже если перезапрос не вышел. Проекты перезапрашиваются: у проекта
+ * нового совета стало на совет больше.
  */
 export function useCreateCouncil(): Mutation<[], CouncilSummary> {
   // Пока совет не создан, каждая попытка шлёт тот же ключ: если ответ не дошёл, а совет создан, повтор вернёт его же.
@@ -25,6 +26,7 @@ export function useCreateCouncil(): Mutation<[], CouncilSummary> {
     (council) => {
       key.current = undefined;
       markStale('councils', (list) => [council, ...list.filter((c) => c.id !== council.id)]);
+      markStale('projects');
     },
   );
 }
