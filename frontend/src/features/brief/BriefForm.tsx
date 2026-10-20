@@ -31,9 +31,16 @@ export function BriefForm({ council, initialText }: BriefFormProps) {
         />
       </div>
       <div className={styles.side}>
-        <NameCard name={form.name} onChange={form.setName} error={form.nameError} onRetry={form.retryName} />
+        <NameCard
+          name={form.name}
+          onChange={form.setName}
+          readOnly={form.slicing}
+          error={form.nameError}
+          onRetry={form.retryName}
+        />
         <ProjectPicker
           choices={form.projects}
+          noProject={form.noProject}
           loading={form.projectsState.loading}
           loadError={form.projectsState.error}
           onReload={form.projectsState.reload}

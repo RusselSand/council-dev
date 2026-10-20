@@ -8,17 +8,25 @@ import { TextInput } from '../../../ui/TextInput';
 interface NameCardProps {
   name: string;
   onChange: (name: string) => void;
+  /** Поле не правится: нарезка запускается. */
+  readOnly: boolean;
   error: ApiError | undefined;
   onRetry: () => void;
 }
 
 /** «Название» совета: поле; пустое — «Без названия». Не вышло сохранить — ошибка и «Повторить». */
-export function NameCard({ name, onChange, error, onRetry }: NameCardProps) {
+export function NameCard({ name, onChange, readOnly, error, onRetry }: NameCardProps) {
   const { t } = useI18n();
   return (
     <Card>
       <Caption>{t('brief.name')}</Caption>
-      <TextInput value={name} onChange={onChange} placeholder={t('council.untitled')} aria-label={t('brief.name')} />
+      <TextInput
+        value={name}
+        onChange={onChange}
+        readOnly={readOnly}
+        placeholder={t('council.untitled')}
+        aria-label={t('brief.name')}
+      />
       <LoadState loading={false} error={error} onRetry={onRetry} />
     </Card>
   );

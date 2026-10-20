@@ -34,9 +34,31 @@ export function useCreateCouncil(): Mutation<[], CouncilSummary> {
 const replaceIn = (councils: CouncilSummary[], council: CouncilSummary) =>
   councils.map((c) => (c.id === council.id ? council : c));
 
+/** Позднее из двух времён ISO 8601. */
+const later = (a: string, b: string) => (Date.parse(b) > Date.parse(a) ? b : a);
+
 /**
- * Правка совета — PATCH /api/councils/<id>: название, проект, модели, судья; ответ — совет после правки. Он сразу
- * встаёт в список советов на место старого: шапка и меню видят правку до перезапроса. Сменился проект —
+ * Правка из ответа — в совет списка советов: только поля, которые правка меняла, и время изменения, если оно позже.
+ * Правки разных полей идут одновременно, и ответ на раннюю, пришедший позже, не должен вернуть старое значение поля,
+ * которое уже поменяла другая.
+ */
+const patchIn = (councils: CouncilSummary[], council: CouncilSummary, fields: CouncilFields) =>
+  councils.map((c) =>
+    c.id === council.id
+      ? {
+          ...c,
+          name: fields.name !== undefined ? council.name : c.name,
+          project: fields.projectId !== undefined ? council.project : c.project,
+          participants: fields.participants !== undefined ? council.participants : c.participants,
+          judge: fields.judge !== undefined ? council.judge : c.judge,
+          updatedAt: later(c.updatedAt, council.updatedAt),
+        }
+      : c,
+  );
+
+/**
+ * Правка совета — PATCH /api/councils/<id>: название, проект, модели, судья; ответ — совет после правки. Поля, которые
+ * правка меняла, сразу встают в совет в списке советов: шапка и меню видят правку до перезапроса. Сменился проект —
  * перезапрашиваются проекты: число советов у проектов поменялось. Сервер не знает проект — тоже: список устарел;
  * не знает модель или она не подключена — перезапрашиваются модели.
  */
@@ -55,7 +77,7 @@ export function useUpdateCouncil(): Mutation<[id: string, fields: CouncilFields]
         throw error;
       }
     },
-    (council) => markStale('councils', (list) => replaceIn(list, council)),
+    (council, _id, fields) => markStale('councils', (list) => patchIn(list, council, fields)),
   );
 }
 

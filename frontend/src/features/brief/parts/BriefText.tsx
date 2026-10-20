@@ -16,7 +16,7 @@ interface BriefTextProps {
   saveError: ApiError | undefined;
   onRetrySave: () => void;
   onSlice: () => void;
-  /** Нарезка запускается: «Нарезать →» недоступна. */
+  /** Нарезка запускается: «Нарезать →» недоступна, текст не правится. */
   slicing: boolean;
   sliceError: ApiError | undefined;
 }
@@ -46,6 +46,7 @@ export function BriefText({
       <TextArea
         value={text}
         onChange={onChange}
+        readOnly={slicing}
         placeholder={t('brief.placeholder')}
         aria-label={t('brief.title')}
       />

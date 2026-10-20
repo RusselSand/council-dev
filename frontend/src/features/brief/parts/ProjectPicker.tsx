@@ -9,12 +9,15 @@ import type { ProjectChoice } from '../useBriefForm';
 import styles from './ProjectPicker.module.css';
 
 interface ProjectPickerProps {
-  /** Чипы проектов и «Без проекта»; нет — список грузится или не загрузился. */
+  /** Чипы проектов; нет — список грузится или не загрузился. */
   choices: ProjectChoice[] | undefined;
+  /** Выбран чип «Без проекта». */
+  noProject: boolean;
   loading: boolean;
   loadError: ApiError | undefined;
   onReload: () => void;
-  onPick: (key: string) => void;
+  /** Выбрали проект; null — «Без проекта». */
+  onPick: (id: string | null) => void;
   /** Что даёт выбранный проект; нет — без подсказки. */
   hint: string | undefined;
   /** Не вышло сменить проект. */
@@ -26,6 +29,7 @@ interface ProjectPickerProps {
 /** «Проект» совета: чипы проектов и «Без проекта», что даёт выбранный проект, «Проекты →». */
 export function ProjectPicker({
   choices,
+  noProject,
   loading,
   loadError,
   onReload,
@@ -46,10 +50,13 @@ export function ProjectPicker({
       {choices ? (
         <div className={styles.chips} role="group" aria-label={t('brief.project')}>
           {choices.map((choice) => (
-            <Chip key={choice.key} tone="paper" selected={choice.selected} onClick={() => onPick(choice.key)}>
+            <Chip key={choice.id} tone="paper" selected={choice.selected} onClick={() => onPick(choice.id)}>
               {choice.label}
             </Chip>
           ))}
+          <Chip tone="paper" selected={noProject} onClick={() => onPick(null)}>
+            {t('project.none')}
+          </Chip>
         </div>
       ) : (
         <LoadState loading={loading} error={loadError} onRetry={onReload} />

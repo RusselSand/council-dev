@@ -9,6 +9,8 @@ export interface CouncilEdit {
   pending: CouncilFields;
   /** Отправить правку. */
   change: (fields: CouncilFields) => void;
+  /** Дождаться ответа на правки, которые ещё идут. Ответ — сохранилась ли последняя; правок нет — true. */
+  settle: () => Promise<boolean>;
   /** Не вышло сохранить правку. */
   error: ApiError | undefined;
 }
@@ -24,8 +26,8 @@ export function useCouncilEdit(councilId: string): CouncilEdit {
   const [pending, setPending] = useState<CouncilFields>({});
   /** То же, что pending, но сразу: очередь читает его, когда приходит её черёд. */
   const wanted = useRef<CouncilFields>({});
-  /** Очередь запросов: следующий уходит, когда ответил предыдущий. */
-  const queue = useRef<Promise<void>>(Promise.resolve());
+  /** Очередь запросов: следующий уходит, когда ответил предыдущий; каждый отвечает, сохранилась ли правка. */
+  const queue = useRef<Promise<boolean>>(Promise.resolve(true));
 
   const want = (next: CouncilFields) => {
     wanted.current = next;
@@ -34,17 +36,22 @@ export function useCouncilEdit(councilId: string): CouncilEdit {
 
   const change = (fields: CouncilFields) => {
     want({ ...wanted.current, ...fields });
-    queue.current = queue.current.then(async () => {
-      // Черёд пришёл: шлём то, что человек выбрал последним; на это уже ответили — слать нечего.
+    queue.current = queue.current.then(async (saved) => {
+      // Черёд пришёл: шлём то, что человек выбрал последним; на это уже ответили — слать нечего, сохранилось ли —
+      // как у предыдущего запроса.
       const keys = (Object.keys(fields) as Field[]).filter((key) => key in wanted.current);
-      if (!keys.length) return;
+      if (!keys.length) return saved;
       const sent: CouncilFields = Object.fromEntries(keys.map((key) => [key, wanted.current[key]]));
-      await update.run(councilId, sent);
+      const council = await update.run(councilId, sent);
       const next = { ...wanted.current };
       for (const key of keys) if (next[key] === sent[key]) delete next[key];
       want(next);
+      return council !== undefined;
     });
   };
 
-  return { pending, change, error: update.error };
+  // Ничего не ждёт ответа — на экране то, что на сервере.
+  const settle = () => (Object.keys(wanted.current).length ? queue.current : Promise.resolve(true));
+
+  return { pending, change, settle, error: update.error };
 }
