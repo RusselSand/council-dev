@@ -179,17 +179,20 @@ export function useOwnOption(
   useSyncExternalStore(onWrites, () => writesVersion);
   /** Набранное ждёт паузы в наборе: сохранение отложено. */
   const [scheduled, setScheduled] = useState(false);
-  /** Очередь сохранений: следующее уходит, когда ответило предыдущее. */
+  /** Очередь сохранений этого набора вариантов: следующее уходит, когда ответило предыдущее. */
   const queue = useRef<Promise<boolean>>(Promise.resolve(true));
   const timer = useRef<ReturnType<typeof setTimeout>>();
   const onSavedRef = useRef(onSaved);
   onSavedRef.current = onSaved;
 
   // Набор вариантов другой — поля прежних вариантов забываются: набранное в них не уходит, а то, что уже уходит, выбором
-  // не становится, в варианты не встаёт и дальше не правится.
+  // не становится, в варианты не встаёт и дальше не правится. Оно уходит в своей очереди: поля нового набора его не ждут
+  // (шаг запустили снова — сервер его не примет), и ни «Утвердить», ни «Запустить снова» оно не держит.
   const generation = useRound(round, () => {
     clearTimeout(timer.current);
     setScheduled(false);
+    queue.current = Promise.resolve(true);
+    setSending(0);
     sessions.current.clear();
     fieldsRef.current = {};
     setFields({});
@@ -304,7 +307,8 @@ export function useOwnOption(
       markCreated(id, recovered);
       outcome = await updateOption.attempt(councilId, streamId, sentRun, question, recovered.id, text, fresh);
     }
-    setSending((n) => n - 1);
+    // Набор сменился, пока уходило, — счёт уже про новый, и это сохранение в нём не считалось.
+    if (fresh()) setSending((n) => n - 1);
     // Поле забыто: его ответ — про прежние варианты или убранный вопрос, ни в поле, ни в выбор он не идёт.
     if (!live()) return true;
     if (outcome.error) {
@@ -408,10 +412,18 @@ export function useOwnOption(
     if (current === undefined) return;
     const field = fieldsRef.current[current];
     // Поле осталось с тех пор, как ушли от вопроса, — снова открытое. В нём текст или созданный из него вариант —
-    // выбором вопроса сразу становится поле: то, что выбрали у него раньше и ещё сохраняется, — уже нет.
+    // выбором вопроса сразу становится поле: то, что выбрали у него раньше и ещё сохраняется, — уже нет. Выбор и так
+    // за полем — номер прежний: второй номер поле не отпустило бы, когда его сотрут, и правка, которая ещё уходит, так и
+    // не стала бы выбором. Выбор с тех пор забрали — прежний номер отпускаем (он не последний, и выбор ни к кому не
+    // переходит) и берём новый.
     if (field) {
       const session = sessions.current.get(field.session);
-      if (session && (canSaveOption(field.text) || session.option !== null)) {
+      if (
+        session &&
+        (canSaveOption(field.text) || session.option !== null) &&
+        (session.claim === null || !holdsChoice(councilId, streamId, current, session.claim))
+      ) {
+        if (session.claim !== null) releaseChoice(councilId, streamId, current, session.claim);
         session.claim = claimChoice(councilId, streamId, current);
       }
       if (field.left) put(current, { ...field, left: false });

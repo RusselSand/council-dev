@@ -45,7 +45,7 @@ export interface OptionEditor {
    */
   created: string | null;
   text: string;
-  /** Правка уходит на сервер. */
+  /** Правка уходит на сервер — в этом наборе вариантов: правка прежнего (шаг запустили снова) его не держит. */
   saving: boolean;
   /**
    * Правка уходит — с этого экрана или с «Вариантов» потока, которые закрыли, пока она уходила: новая не открывается,
@@ -123,8 +123,13 @@ export function useOptionEditor(
   const [waiting, setWaiting] = useState<Record<string, Editing>>({});
   /** То же, что waiting, но сразу. */
   const waitingRef = useRef<Record<string, Editing>>({});
-  /** Ответ на правку, которая уходит; не уходит — null. */
+  /**
+   * Ответ на правку, которая уходит в этом наборе вариантов; не уходит — null. Правка прежнего набора, которая ещё ждёт
+   * ответа, нынешний не держит: она уже закрыта, и её ответ в варианты не встаёт.
+   */
   const inFlight = useRef<Promise<boolean> | null>(null);
+  /** То же, что inFlight, для экрана: правка уходит в этом наборе вариантов. */
+  const [saving, setSaving] = useState(false);
   /** Экран открыт: закрыли, пока правка уходила, а она не сохранилась, — она ждёт «Варианты», открытые снова. */
   const mounted = useRef(false);
   /** Набор вариантов на экране: экран закрыли — правка, которая не сохранилась, ждёт этого набора. */
@@ -142,11 +147,19 @@ export function useOptionEditor(
     setWaiting(next);
   };
 
+  const putInFlight = (next: Promise<boolean> | null) => {
+    inFlight.current = next;
+    setSaving(next !== null);
+  };
+
   // Набор вариантов другой — правка прежних вариантов закрывается (и те, что ждут своего вопроса), а та, что ещё
-  // уходит, выбором не становится.
+  // уходит, выбором не становится и новый набор не держит: ни уход к другому вопросу, ни «Поправить», ни «Утвердить»
+  // её не ждут — шаг запустили снова, и сервер её не примет. В том же запуске шага «Поправить» до её ответа не действует
+  // всё равно (locked).
   const generation = useRound(round, () => {
     put(null);
     putWaiting({});
+    putInFlight(null);
   });
 
   // Вопроса больше нет в вариантах (его убрали на «Вопросах», а шаг тот же) — правка его варианта закрывается: её не
@@ -246,7 +259,8 @@ export function useOptionEditor(
     const sentIn = generation.current;
     const sent = (async () => {
       const outcome = await send(open, sentIn);
-      inFlight.current = null;
+      // Набор сменился, пока правка уходила, — она его уже не держит, а правку, которая ушла в новом, не отпускаем.
+      if (generation.current === sentIn) putInFlight(null);
       if (outcome.error) {
         const { error } = outcome;
         update(option.id, sentIn, (still) => ({ ...still, error }));
@@ -266,7 +280,7 @@ export function useOptionEditor(
       });
       return true;
     })();
-    inFlight.current = sent;
+    putInFlight(sent);
     // «Утвердить» дождётся правки и на экране, открытом снова, а новая правка там не уйдёт раньше ответа на эту. Не
     // сохранилась — скажет сама правка (settle()), и на экране, открытом снова (leftEdits).
     void trackWrite(councilId, streamId, open.run, 'edit', sent.then(() => true));
@@ -277,7 +291,7 @@ export function useOptionEditor(
     option: editing?.option.id ?? null,
     created: editing?.created ?? null,
     text: editing?.text ?? '',
-    saving: addOption.pending || updateOption.pending,
+    saving,
     locked,
     error: editing?.error,
     start: (question, option) => {

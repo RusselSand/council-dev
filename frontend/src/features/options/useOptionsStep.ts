@@ -137,7 +137,10 @@ export interface OptionsStep {
   approvable: boolean;
   /** «Выбрано 2 из 4». */
   chosen: string;
-  /** «Утвердить» не действует: выбор уже утверждается или шаг запускают снова. */
+  /**
+   * «Утвердить» не действует: выбор в этом наборе вариантов уже утверждается или шаг запускают снова. Утверждение,
+   * которое ушло в прежнем наборе, новый не запирает.
+   */
   approveDisabled: boolean;
   approve: () => void;
   /**
@@ -192,9 +195,11 @@ export function useOptionsStep(
   const [approveError, setApproveError] = useState<ApiError>();
   // Набор вариантов другой — открывается его первый вопрос без выбора, как на только что открытом шаге, а не тот, что
   // был открыт в прежнем. Ошибка «Утвердить» — про прежний набор, правки и выбор которого уже забыты: она забывается.
+  // Утверждение прежнего, которое ещё ждёт ответа, новый набор не запирает: шаг запустили снова — сервер его не примет.
   const generation = useRound(round, () => {
     setCurrent(undefined);
     setApproveError(undefined);
+    setApproving(false);
   });
 
   /** Шаг на экране: ушли с него, пока выбор утверждался, — «Решения» не открываем. */
@@ -218,9 +223,10 @@ export function useOptionsStep(
   const index = sets.findIndex((s) => s.question.id === currentId);
   const set = index >= 0 ? sets[index] : undefined;
 
-  // Выбор уходит — «Утвердить» дождётся его и на экране, открытом снова, если с этого ушли раньше ответа.
+  // Выбор уходит — «Утвердить» дождётся его и на экране, открытом снова, если с этого ушли раньше ответа; сохранился ли
+  // выбор вопроса — по последнему из его выборов.
   const change = (question: string, next: Choice) =>
-    trackWrite(councilId, streamId, run, 'choice', choices.change(question, next));
+    trackWrite(councilId, streamId, run, 'choice', choices.change(question, next), question);
   const select = (question: string, option: string) => change(question, { kind: 'option', option });
   // Набор вариантов другой: поле «Свой вариант» и правка прежних забываются, как и выбор. Вопрос убрали, а шаг тот же, —
   // забываются его поле и правка.
@@ -336,8 +342,12 @@ export function useOptionsStep(
       const { value: stream, error } = saved
         ? await approveAction.attempt(councilId, streamId, approvedRun)
         : { value: undefined, error: NOT_SAVED };
-      setApproving(false);
-      if (generation.current === startedIn) setApproveError(error);
+      // Набор сменился, пока утверждался, — кнопка и ошибка под ней уже про новый: ответ про прежний их не трогает и не
+      // отпускает утверждение, которое ушло в новом.
+      if (generation.current === startedIn) {
+        setApproving(false);
+        setApproveError(error);
+      }
       if (stream && open.current) {
         navigate(routePath({ screen: 'step', council: councilId, stream: streamId, step: 'decisions' }));
       }
