@@ -213,7 +213,7 @@ export function useOptionsStep(
   // Набор вариантов другой: поле «Свой вариант» и правка прежних забываются, как и выбор. Вопрос убрали, а шаг тот же, —
   // забываются его поле и правка.
   const own = useOwnOption(councilId, streamId, currentId, run, round, query.data?.optionSets, select);
-  const editor = useOptionEditor(councilId, streamId, run, round, query.data?.optionSets, select);
+  const editor = useOptionEditor(councilId, streamId, currentId, run, round, query.data?.optionSets, select);
 
   // Пока ответа ждут утверждение, выбор, свой вариант (и пока он ждёт паузы в наборе) или правка, «Запустить снова» не
   // действует; ответили или ушли с шага — снова действует.

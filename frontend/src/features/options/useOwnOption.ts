@@ -1,7 +1,8 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from 'react';
 import { ApiError, useAddOption, useRound, useUpdateOption } from '../../data';
 import { canSaveOption, sameText, type Option, type OptionSet } from '../../domain/options';
-import { claimChoice, holdsChoice } from './choiceClaims';
+import { claimChoice, holdsChoice, releaseChoice } from './choiceClaims';
+import { leftovers } from './leftovers';
 
 /** Через сколько после последней правки поле «Свой вариант» сохраняется, мс. */
 const DELAY = 600;
@@ -33,7 +34,8 @@ interface Session {
   /**
    * Номер выбора поля (claimChoice()): у вопроса с тех пор выбрали другое — здесь или на экране, открытом снова, —
    * сохранённое из поля больше не выбирается: выбор за последним щелчком. null — поле открыли, но ничего в нём не
-   * набрали: пустое поле выбор не меняет, и правка, которая ещё уходит, становится выбором.
+   * набрали (или набранное стёрли, а из поля ничего не создано и не уходит): пустое поле выбор не меняет, и правка,
+   * которая ещё уходит, становится выбором.
    */
   claim: number | null;
 }
@@ -56,27 +58,38 @@ interface LeftField {
   error: ApiError;
 }
 
-/** Поля, которые ждут «Варианты» потока, открытые снова, — по совету и потоку. */
-const leftFields = new Map<string, LeftField[]>();
-/** Открытые «Варианты»: им отдают поля, которые не сохранились уже при них. */
-const leftListeners = new Set<() => void>();
+/** Поля, которые ждут «Варианты» потока, открытые снова. */
+const leftFields = leftovers<LeftField>();
+
+/** Сохранение из поля, которое ждёт очереди или ответа: из какого поля, в каком потоке и наборе вариантов. */
+interface Write {
+  stream: string;
+  round: unknown;
+  session: Session;
+}
+
+/**
+ * Сохранения из полей, которые ждут очереди или ответа, — общие для всех экранов «Варианты»: экран закрыли, пока поле
+ * сохранялось, и открыли снова — вариант, созданный из поля, не правят и там, пока набранное в поле не ушло (saves()).
+ */
+const writes = new Set<Write>();
+const writeListeners = new Set<() => void>();
+/** Растёт, когда сохранение из поля ушло в очередь, ответило или из поля создан вариант: экраны рисуются заново. */
+let writesVersion = 0;
+
+function writesChanged() {
+  writesVersion += 1;
+  writeListeners.forEach((listener) => listener());
+}
+
+function onWrites(listener: () => void) {
+  writeListeners.add(listener);
+  return () => {
+    writeListeners.delete(listener);
+  };
+}
 
 const streamOf = (councilId: string, streamId: string) => JSON.stringify([councilId, streamId]);
-
-/** Поле не сохранилось, когда экран закрыли: пусть ждёт «Варианты» потока, открытые снова. */
-function leaveField(councilId: string, streamId: string, left: LeftField) {
-  const key = streamOf(councilId, streamId);
-  leftFields.set(key, [...(leftFields.get(key) ?? []), left]);
-  leftListeners.forEach((listener) => listener());
-}
-
-/** Забрать поля, которые ждут «Варианты» потока. */
-function takeLeftFields(councilId: string, streamId: string): LeftField[] {
-  const key = streamOf(councilId, streamId);
-  const left = leftFields.get(key) ?? [];
-  leftFields.delete(key);
-  return left;
-}
 
 export interface OwnOption {
   /** Поле открыто у вопроса на экране. */
@@ -91,8 +104,9 @@ export interface OwnOption {
   /** Набранное ждёт паузы в наборе или уходит на сервер. */
   saving: boolean;
   /**
-   * Вариант, созданный из поля, ещё сохраняется из него — и когда поле уже закрыто, а вариант стоит карточкой: пока не
-   * сохранился, его не правят, иначе набранное в поле ушло бы после правки и затёрло её.
+   * Вариант, созданный из поля, ещё сохраняется из него — и когда поле уже закрыто, а вариант стоит карточкой, и когда
+   * поле — с экрана, который закрыли, а это экран, открытый снова: пока не сохранился, его не правят, иначе набранное в
+   * поле ушло бы после правки и затёрло её.
    */
   saves: (option: string) => boolean;
   /**
@@ -119,9 +133,10 @@ export interface OwnOption {
  * выбрали другое — и на экране, открытом снова, когда с него ушли, пока поле сохранялось (holdsChoice()); поле только
  * открыли — правка, которая ещё уходит, всё равно станет выбором. Ушли от вопроса или закрыли экран —
  * набранное уходит сразу; поле закрывается, когда сохранилось, а не вышло — остаётся у своего вопроса с набранным и
- * ошибкой; экран закрыли, а набранное не сохранилось, — поле ждёт «Варианты» этого потока, открытые снова (leaveField()),
+ * ошибкой; экран закрыли, а набранное не сохранилось, — поле ждёт «Варианты» этого потока, открытые снова (leftFields),
  * и там оно у своего вопроса с набранным и ошибкой, как у вопроса, от которого ушли. Пустое поле не сохраняется и выбор
- * не меняет; стёрли поле, из которого вариант уже создан, — на сервере он
+ * не меняет — и когда в нём начали писать и всё стёрли, пока из него ничего не создано и ничего не уходит: номер выбора
+ * поля отпускается (releaseChoice()); стёрли поле, из которого вариант уже создан, — на сервере он
  * с прежним текстом: под полем ошибка, и flush() — не всё сохранилось. current — вопрос на экране. run — номер запуска
  * шага, варианты которого на экране: набранное уходит с ним. round — набор
  * вариантов: шаг сменил состояние или пришли варианты другого его запуска — варианты другие, хоть id вопросов те же:
@@ -158,8 +173,8 @@ export function useOwnOption(
   const roundRef = useRef(round);
   roundRef.current = round;
   const [sending, setSending] = useState(0);
-  /** Сколько сохранений поля ждут очереди или ответа — по номеру поля. */
-  const [queued, setQueued] = useState<Record<number, number>>({});
+  // Сохранения из полей общие для всех экранов: ушло или ответило сохранение и с экрана, который закрыли, — рисуем заново.
+  useSyncExternalStore(onWrites, () => writesVersion);
   /** Набранное ждёт паузы в наборе: сохранение отложено. */
   const [scheduled, setScheduled] = useState(false);
   /** Очередь сохранений: следующее уходит, когда ответило предыдущее. */
@@ -216,9 +231,14 @@ export function useOwnOption(
     setFailed(next);
   };
 
-  /** Вариант, созданный из поля: пока поле открыто, он — в поле, а не карточкой. */
-  const markCreated = (id: number, option: Created) =>
+  /**
+   * Вариант, созданный из поля: пока поле открыто, он — в поле, а не карточкой; пока из поля что-то уходит, его не
+   * правят и на других экранах (saves()).
+   */
+  const markCreated = (id: number, option: Created) => {
     setCreated((known) => (known[id] === option ? known : { ...known, [id]: option }));
+    writesChanged();
+  };
 
   /** Поле, которое не сохранилось, когда экран закрыли, — снова у своего вопроса. */
   const restore = ({ field, session, error }: LeftField) => {
@@ -243,16 +263,9 @@ export function useOwnOption(
   useEffect(() => {
     if (round === undefined || !sets) return undefined;
     const present = new Set(sets.map((set) => set.question.id));
-    const adopt = () => {
-      for (const left of takeLeftFields(councilId, streamId)) {
-        if (Object.is(left.round, round) && present.has(left.field.question)) restoreRef.current(left);
-      }
-    };
-    adopt();
-    leftListeners.add(adopt);
-    return () => {
-      leftListeners.delete(adopt);
-    };
+    return leftFields.adopt(councilId, streamId, (left) => {
+      if (Object.is(left.round, round) && present.has(left.field.question)) restoreRef.current(left);
+    });
   }, [councilId, streamId, round, sets]);
 
   /** Сохранить то, что было в поле в момент snapshot. */
@@ -312,34 +325,46 @@ export function useOwnOption(
   const sendRef = useRef(send);
   sendRef.current = send;
 
-  /** Сохранений поля id в очереди и в пути стало больше (1) или меньше (-1). */
-  const count = useCallback(
-    (id: number, delta: number) =>
-      setQueued((known) => {
-        const next = { ...known };
-        const left = (known[id] ?? 0) + delta;
-        if (left > 0) next[id] = left;
-        else delete next[id];
-        return next;
-      }),
-    [],
-  );
+  /**
+   * Поле пустое, из него ничего не создано и ничего не уходит — выбор оно не меняет: его номер выбора отпускается, и
+   * выбор снова за тем, кто выбирал до него (правка, которая ещё уходит, станет выбором).
+   */
+  const releaseEmpty = (field: Field) => {
+    const session = sessions.current.get(field.session);
+    if (!session || session.claim === null || session.option !== null || canSaveOption(field.text)) return;
+    if ([...writes].some((write) => write.session === session)) return;
+    releaseChoice(councilId, streamId, field.question, session.claim);
+    session.claim = null;
+  };
+  const releaseEmptyRef = useRef(releaseEmpty);
+  releaseEmptyRef.current = releaseEmpty;
 
   /** Отправить то, что было в поле в момент snapshot, — за тем, что уже уходит. */
   const enqueue = useCallback(
     (snapshot: Field): Promise<boolean> => {
-      count(snapshot.session, 1);
+      const session = sessions.current.get(snapshot.session);
+      const write = session && { stream: streamOf(councilId, streamId), round: roundRef.current, session };
+      if (write) {
+        writes.add(write);
+        writesChanged();
+      }
       const sent = queue.current.then(async () => {
         try {
           return await sendRef.current(snapshot);
         } finally {
-          count(snapshot.session, -1);
+          if (write) {
+            writes.delete(write);
+            writesChanged();
+            // Пока уходило, поле стёрли, а вариант из него так и не создан, — выбор оно больше не меняет.
+            const field = fieldsRef.current[snapshot.question];
+            if (field?.session === snapshot.session) releaseEmptyRef.current(field);
+          }
         }
       });
       queue.current = sent;
       return sent;
     },
-    [count],
+    [councilId, streamId],
   );
 
   /**
@@ -396,11 +421,14 @@ export function useOwnOption(
     if (!field) return;
     const { question } = field;
     // В поле начали писать — выбором вопроса станет оно: то, что выбрали у него раньше и ещё сохраняется, — уже нет.
+    // Всё стёрли, а из поля ничего не создано, — выбор снова за прежним (releaseEmpty()).
     const session = sessions.current.get(field.session);
     if (session && session.claim === null && canSaveOption(text)) {
       session.claim = claimChoice(councilId, streamId, question);
     }
-    put(question, { ...field, text, left: false });
+    const next = { ...field, text, left: false };
+    put(question, next);
+    releaseEmpty(next);
     clearTimeout(timer.current);
     timer.current = setTimeout(() => {
       setScheduled(false);
@@ -441,7 +469,7 @@ export function useOwnOption(
         void enqueue(field).then((saved) => {
           const session = sessions.current.get(field.session);
           const error = failedRef.current[field.session];
-          if (!saved && session && error) leaveField(councilId, streamId, { round: leftIn, field, session, error });
+          if (!saved && session && error) leftFields.leave(councilId, streamId, { round: leftIn, field, session, error });
         });
       }
     },
@@ -457,7 +485,13 @@ export function useOwnOption(
     unsaved: field !== undefined && canSaveOption(field.text) && !sameText(field.text, stored?.text ?? ''),
     error: field ? failed[field.session] : undefined,
     saving: scheduled || sending > 0,
-    saves: (option) => Object.keys(queued).some((id) => created[Number(id)]?.id === option),
+    saves: (option) =>
+      [...writes].some(
+        (write) =>
+          write.stream === streamOf(councilId, streamId) &&
+          Object.is(write.round, round) &&
+          write.session.option === option,
+      ),
     open,
     edit,
     close,

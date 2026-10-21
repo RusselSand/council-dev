@@ -28,16 +28,24 @@ export function useStreamOptions(id: string, streamId: string, state: State): Qu
   return { ...query, data: fresh ? data : undefined, loading: loading || (!fresh && error === undefined) };
 }
 
-/** Варианты вопроса из ответа — на место прежних в вариантах того же потока. */
-const putSet = (councilId: string, streamId: string, set: OptionSet) => (current: StreamOptions) =>
-  current.council === councilId && current.stream === streamId
+/**
+ * Ответ — про варианты того же потока и того же запуска шага (run — с ним запрос ушёл): ответ про прежний запуск в
+ * варианты нового не встаёт, хоть id у них те же, — и когда экран, с которого запрос ушёл, уже закрыт.
+ */
+const sameRound = (current: StreamOptions, councilId: string, streamId: string, run: number) =>
+  current.council === councilId && current.stream === streamId && current.run === run;
+
+/** Варианты вопроса из ответа — на место прежних в вариантах того же потока и запуска шага. */
+const putSet = (councilId: string, streamId: string, run: number, set: OptionSet) => (current: StreamOptions) =>
+  sameRound(current, councilId, streamId, run)
     ? { ...current, optionSets: current.optionSets.map((s) => (s.question.id === set.question.id ? set : s)) }
     : current;
 
 /** Вариант из ответа — на место прежнего у своего вопроса; его там нет — в конец вариантов вопроса. */
 const putOption =
-  (councilId: string, streamId: string, questionId: string, option: Option) => (current: StreamOptions) => {
-    if (current.council !== councilId || current.stream !== streamId) return current;
+  (councilId: string, streamId: string, run: number, questionId: string, option: Option) =>
+  (current: StreamOptions) => {
+    if (!sameRound(current, councilId, streamId, run)) return current;
     return {
       ...current,
       optionSets: current.optionSets.map((set) => {
@@ -99,7 +107,7 @@ function writeChoice(
 /**
  * Выбор по вопросу — PUT /api/councils/<id>/streams/<streamId>/options/<questionId>/choice, сразу по щелчку; у каждого
  * вопроса своя очередь, на сервере остаётся последний выбор (см. useQueuedSaves()), — и между экранами: выбор уходит
- * после тех, что ещё идут по вопросу с экрана, с которого ушли (writeChoice()). Ответ встаёт в варианты сразу;
+ * после тех, что ещё идут по вопросу с экрана, с которого ушли (writeChoice()). Ответ встаёт в варианты сразу, если у них тот же run;
  * варианты, потоки (строка шага в цепочке) и список советов перезапрашиваются. round — набор вариантов: шаг сменил
  * состояние или пришли варианты другого его запуска — варианты другие, хоть id вопросов те же, и выборы прежних
  * забываются. run — номер запуска шага, варианты которого на экране: выбор уходит с ним, и сервер не примет его, если шаг
@@ -109,7 +117,7 @@ export function useOptionChoices(councilId: string, streamId: string, run: numbe
   return useQueuedSaves<Choice>(async (questionId, choice, fresh) => {
     try {
       const set = await writeChoice(councilId, streamId, run, questionId, choice);
-      markStale('options', fresh() ? putSet(councilId, streamId, set) : undefined);
+      markStale('options', fresh() ? putSet(councilId, streamId, run, set) : undefined);
       markStale('streams');
       markStale('councils');
     } catch (error) {
@@ -136,7 +144,8 @@ const fieldOf = (councilId: string, streamId: string, run: number, field: string
  * второй; создан — следующий с новым ключом. Ключ у каждого поля свой и держится, пока из поля не создан вариант, хоть
  * между попытками сохраняли другие поля, — и между экранами (fieldKeys); у другого запуска шага — другой. Ответ встаёт
  * в конец вариантов вопроса сразу, если fresh() — набор вариантов
- * тот же, что когда запрос ушёл (шаг сменил состояние — варианты другие, и ответ про прежние в них не встаёт); варианты
+ * тот же, что когда запрос ушёл (шаг сменил состояние — варианты другие, и ответ про прежние в них не встаёт), и у
+ * вариантов тот же run — и когда экран, с которого запрос ушёл, уже закрыт; варианты
  * и список советов перезапрашиваются. Выбор вариант не меняет — выбирают его отдельно (useOptionChoices()). run — номер
  * запуска шага, варианты которого были на экране, когда вариант начали писать: шаг с тех пор запустили снова — сервер
  * его не примет.
@@ -180,7 +189,7 @@ export function useAddOption(): Mutation<
     },
     (option, id, streamId, run, questionId, _text, _basedOn, field, fresh) => {
       fieldKeys.delete(fieldOf(id, streamId, run, field));
-      markStale('options', fresh() ? putOption(id, streamId, questionId, option) : undefined);
+      markStale('options', fresh() ? putOption(id, streamId, run, questionId, option) : undefined);
       markStale('councils');
     },
   );
@@ -220,8 +229,8 @@ export function useUpdateOption(): Mutation<
         throw error;
       }
     },
-    (option, id, streamId, _run, questionId, _optionId, _text, fresh) => {
-      markStale('options', fresh() ? putOption(id, streamId, questionId, option) : undefined);
+    (option, id, streamId, run, questionId, _optionId, _text, fresh) => {
+      markStale('options', fresh() ? putOption(id, streamId, run, questionId, option) : undefined);
       markStale('councils');
     },
   );
