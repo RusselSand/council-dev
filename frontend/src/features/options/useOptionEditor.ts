@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { ApiError, useAddOption, useRound, useUpdateOption, type Outcome } from '../../data';
 import { canSaveOption, sameText, type Option, type OptionSet } from '../../domain/options';
-import { applyChoice, claimChoice } from './choiceClaims';
+import { applyChoice, claimChoice, holdsChoice, releaseChoice } from './choiceClaims';
 import { leftovers } from './leftovers';
 import { trackWrite, useWriting } from './pendingWrites';
 
@@ -24,6 +24,11 @@ interface Editing {
   created: string | null;
   /** Не вышло сохранить: набранного на сервере нет, пока «Сохранить» не выйдет или правку не закроют. */
   error: ApiError | undefined;
+  /**
+   * Номер выбора «Сохранить», которое не вышло (claimChoice()): выбор у вопроса за правкой, пока её не сохранят снова или
+   * не закроют без сохранения (drop()) — тогда номер отпускается (releaseChoice()). Не сохраняли или правка уходит — null.
+   */
+  claim: number | null;
 }
 
 /** Правка, которую не вышло сохранить, когда «Варианты» закрыли. */
@@ -65,7 +70,7 @@ export interface OptionEditor {
    * под правкой ошибка: пустым вариант не сохранить.
    */
   save: () => boolean;
-  /** «Отмена»: закрыть без сохранения. */
+  /** «Отмена»: закрыть без сохранения; правка, которую не вышло сохранить, выбором уже не станет. */
   cancel: () => void;
   /**
    * Дождаться ответа на правку, которая уходит. Ответ — нет ли несохранённой: открыта правка, которую не вышло
@@ -91,8 +96,10 @@ const unsaved = ({ text, option, created }: Editing) => created !== null || !sam
  * закрывается без запроса; стёрли — не сохраняется, под полем ошибка. Набрали и не нажали «Сохранить» (или стёрли) —
  * settle() отвечает false: «Утвердить» не выбросит набранное молча. Не вышло — поле остаётся открытым с ошибкой; вариант,
  * который правка нашла по своему ключу, а поправить не вышло (created), — в ней, пока её не сохранят или не закроют.
- * Экран закрыли, пока правка уходила, а она не сохранилась (или закрыли с правкой, которую не вышло сохранить), —
- * правка ждёт «Варианты» этого потока, открытые снова (leftEdits): там она открывается с набранным и ошибкой, когда её
+ * Правку, которую не вышло сохранить, закрыли без сохранения («Отмена», ушли к другому вопросу, открыли другую) —
+ * выбором она не станет: её номер выбора отпускается, и выбор снова за тем, кто выбирал до неё (releaseChoice()), —
+ * свой вариант, который ещё сохраняется или уже сохранился, пока правка уходила, становится выбором. Экран закрыли,
+ * пока правка уходила, а она не сохранилась (или закрыли с правкой, которую не вышло сохранить), — правка ждёт «Варианты» этого потока, открытые снова (leftEdits): там она открывается с набранным и ошибкой, когда её
  * вопрос на экране (current) и другой правки нет. Пока правка уходит — и с экрана, который закрыли, — новая не
  * открывается (locked, pendingWrites.ts): правки не уходят разом и не затирают одна другую. run — номер запуска шага,
  * варианты которого на экране: правка уходит с ним. round — набор вариантов: шаг сменил состояние или пришли варианты
@@ -142,6 +149,18 @@ export function useOptionEditor(
     setEditing(next);
   };
 
+  /** Номер выбора правки, которая выбором уже не станет: выбор снова за тем, кто выбирал до неё. */
+  const release = ({ question, claim }: Editing) => {
+    if (claim !== null) releaseChoice(councilId, streamId, question, claim);
+  };
+
+  /** Закрыть открытую правку без сохранения и поставить на её место next. */
+  const drop = (next: Editing | null = null) => {
+    const open = editingRef.current;
+    if (open) release(open);
+    put(next);
+  };
+
   const putWaiting = (next: Record<string, Editing>) => {
     waitingRef.current = next;
     setWaiting(next);
@@ -168,7 +187,7 @@ export function useOptionEditor(
     if (!sets) return;
     const present = new Set(sets.map((set) => set.question.id));
     const open = editingRef.current;
-    if (open && !present.has(open.question)) put(null);
+    if (open && !present.has(open.question)) drop();
     const known = Object.keys(waitingRef.current);
     if (known.every((question) => present.has(question))) return;
     const next = { ...waitingRef.current };
@@ -207,8 +226,10 @@ export function useOptionEditor(
       mounted.current = false;
       const left = Object.values(waitingRef.current);
       const open = editingRef.current;
-      // Стёртая правка — не та, которую не вышло сохранить: её не сохраняли.
+      // Стёртая правка — не та, которую не вышло сохранить: её не сохраняли. Она закрывается, и выбором не станет и
+      // прежняя её попытка, которая не сохранилась.
       if (open?.error && open.error !== EMPTY && !inFlight.current) left.push(open);
+      else if (open) release(open);
       for (const editing of left) leftEdits.leave(councilId, streamId, { round: roundRef.current, editing });
     };
   }, [councilId, streamId]);
@@ -251,11 +272,16 @@ export function useOptionEditor(
       return false;
     }
     if (!created && sameText(text, option.text)) {
-      put(null);
+      drop();
       return false;
     }
-    // Выбором вопроса станет правка: то, что выбрали у него раньше и ещё сохраняется, — уже нет.
-    const claim = claimChoice(councilId, streamId, question);
+    // Выбором вопроса станет правка: то, что выбрали у него раньше и ещё сохраняется, — уже нет. Прежнее «Сохранить» не
+    // вышло, а выбор и так за правкой, — номер прежний; с тех пор выбрали другое — прежний отпускаем (он не последний, и
+    // выбор ни к кому не переходит) и берём новый. Пока правка уходит, номер — у неё, а не у открытой правки.
+    const kept = open.claim !== null && holdsChoice(councilId, streamId, question, open.claim) ? open.claim : null;
+    if (kept === null) release(open);
+    const claim = kept ?? claimChoice(councilId, streamId, question);
+    if (open.claim !== null) put({ ...open, claim: null });
     const sentIn = generation.current;
     const sent = (async () => {
       const outcome = await send(open, sentIn);
@@ -263,7 +289,9 @@ export function useOptionEditor(
       if (generation.current === sentIn) putInFlight(null);
       if (outcome.error) {
         const { error } = outcome;
-        update(option.id, sentIn, (still) => ({ ...still, error }));
+        // Правка открыта — выбор за ней, пока её не сохранят или не закроют; уже закрыта — выбором она не станет.
+        update(option.id, sentIn, (still) => ({ ...still, error, claim }));
+        if (editingRef.current?.claim !== claim) releaseChoice(councilId, streamId, question, claim);
         // Экран закрыли, пока правка уходила, — она ждёт «Варианты» потока, открытые снова, с набранным и ошибкой.
         const left = editingRef.current;
         if (!mounted.current && left?.error === error) {
@@ -296,7 +324,7 @@ export function useOptionEditor(
     error: editing?.error,
     start: (question, option) => {
       if (inFlight.current || locked) return;
-      put({
+      drop({
         question,
         run,
         option,
@@ -304,6 +332,7 @@ export function useOptionEditor(
         field: `edit:${generation.current}:${question}/${option.id}`,
         created: null,
         error: undefined,
+        claim: null,
       });
     },
     edit: (text) => {
@@ -312,7 +341,7 @@ export function useOptionEditor(
       if (open) put({ ...open, text, error: open.error === EMPTY && canSaveOption(text) ? undefined : open.error });
     },
     save,
-    cancel: () => put(null),
+    cancel: () => drop(),
     settle: async () => {
       await inFlight.current;
       // Правка, которую не вышло сохранить, на экране с ошибкой: её текста на сервере нет — утверждать без него нельзя.

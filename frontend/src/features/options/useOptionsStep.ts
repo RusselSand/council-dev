@@ -16,7 +16,7 @@ import { stepApprovable, stepEditable } from '../../domain/stream';
 import { useI18n } from '../../i18n';
 import { navigate, routePath } from '../../router';
 import { claimChoice } from './choiceClaims';
-import { settleWrites, trackWrite } from './pendingWrites';
+import { failedChoicesOf, settleWrites, trackChoice, useFailedChoices } from './pendingWrites';
 import { useOptionEditor } from './useOptionEditor';
 import { useOwnOption } from './useOwnOption';
 
@@ -118,7 +118,10 @@ export interface OptionsStep {
   /** «Пока не решаю — передать как unresolved» выбрано. */
   unresolved: boolean;
   pickUnresolved: () => void;
-  /** Не вышло выбрать у открытого вопроса. */
+  /**
+   * Не вышло выбрать у открытого вопроса — и с экрана, который закрыли раньше ответа: ошибка держится, пока у вопроса
+   * не выберут снова.
+   */
   choiceError: ApiError | undefined;
 
   /** Правка варианта: что набрано, уходит ли, ошибка. */
@@ -163,6 +166,8 @@ const NOT_SAVED = new ApiError('not_saved', 'Не всё сохранилось 
  * решениям» сначала дожидается выбора, своего варианта и правки — и тех, что уходят с экрана, который закрыли, пока они
  * уходили (settleWrites()), — потом утверждает и открывает «Решения» потока; что-то не
  * сохранилось — не утверждает, под кнопкой — «Не всё сохранилось»; ушли с экрана, пока утверждался, — не открывает.
+ * Выбор, который не сохранился, — и с экрана, который закрыли раньше ответа, — держит ошибку у своего вопроса, и
+ * «Утвердить» не утверждает, пока у вопроса не выберут снова (failedChoicesOf()): на сервере не тот выбор, что сделали.
  * Правки и «Утвердить» не уходят вместе с «Запустить снова» шага: retrying — шаг запускают снова, и они не действуют;
  * пока выбор утверждается или что-то из правок ждёт паузы в наборе или ответа, onBusy(true) — не действует «Запустить
  * снова». Пока выбор утверждается или шаг запускают снова, к другому вопросу не уйти: уход отправил бы набранное в поле
@@ -224,9 +229,12 @@ export function useOptionsStep(
   const set = index >= 0 ? sets[index] : undefined;
 
   // Выбор уходит — «Утвердить» дождётся его и на экране, открытом снова, если с этого ушли раньше ответа; сохранился ли
-  // выбор вопроса — по последнему из его выборов.
+  // выбор вопроса — по последнему из его выборов. Не сохранился — его ошибка у вопроса и там (failed).
   const change = (question: string, next: Choice) =>
-    trackWrite(councilId, streamId, run, 'choice', choices.change(question, next), question);
+    trackChoice(councilId, streamId, run, round, question, choices.change(question, next), () =>
+      choices.errorOf(question),
+    );
+  const failed = useFailedChoices(councilId, streamId, run, round);
   const select = (question: string, option: string) => change(question, { kind: 'option', option });
   // Набор вариантов другой: поле «Свой вариант» и правка прежних забываются, как и выбор. Вопрос убрали, а шаг тот же, —
   // забываются его поле и правка.
@@ -323,6 +331,7 @@ export function useOptionsStep(
     // Утверждается выбор в вариантах, которые на экране: шаг, пока правки дожидались ответа, запустили снова — сервер не
     // утвердит варианты, которых человек не видел.
     const approvedRun = query.data.run;
+    const approvedRound = round;
     // Набор вариантов, в котором утверждают: сменился, пока утверждался, — ошибка про прежний, под кнопкой её нет.
     const startedIn = generation.current;
     setApproving(true);
@@ -337,7 +346,11 @@ export function useOptionsStep(
       const ownSaved = await own.flush();
       const edited = await editor.settle();
       const chosen = await choices.settle();
-      const saved = elsewhere && ownSaved && edited && chosen;
+      // Выбор вопроса не сохранился (и с экрана, который закрыли раньше ответа), а с тех пор у вопроса не выбирали: на
+      // сервере не тот выбор, что сделал человек, — утвердить значило бы молча заменить его прежним.
+      const notChosen = failedChoicesOf(councilId, streamId, approvedRun, approvedRound);
+      const choicesSaved = chosen && !sets.some((s) => notChosen[s.question.id]);
+      const saved = elsewhere && ownSaved && edited && choicesSaved;
       // Не сохранилось — не утверждаем и говорим под кнопкой: ошибка может быть у вопроса, которого нет на экране.
       const { value: stream, error } = saved
         ? await approveAction.attempt(councilId, streamId, approvedRun)
@@ -413,7 +426,7 @@ export function useOptionsStep(
     editOwn: own.edit,
     unresolved: !ownSelected && choice?.kind === 'unresolved',
     pickUnresolved: () => choose({ kind: 'unresolved' }),
-    choiceError: set ? choices.errors[set.question.id] : undefined,
+    choiceError: set ? failed[set.question.id] : undefined,
 
     editText: editor.text,
     editSaving: editor.saving,
