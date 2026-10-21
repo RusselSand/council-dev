@@ -183,6 +183,7 @@ from .repository import (
 )
 from .repository import as_prompt as map_prompt
 from .slicing import (
+    WORD,
     BadAnswer,
     BoundaryNote,
     JudgeRejected,
@@ -627,9 +628,20 @@ class SlicingRun(CouncilRun[Slicing]):
         self.brief = brief
 
     def work(self) -> dict[str, Any]:
+        if not WORD.search(self.brief):
+            self._nothing_to_slice()
         bounds, notes = self._slice()
         fragments = cut(self.brief, bounds)
         return {"fragments": self._label(fragments, note_places(fragments, notes))}
+
+    def _nothing_to_slice(self) -> None:
+        """В тексте нет ни слова — фрагмента без слова не бывает, и любой ответ модели был бы
+        негодным. Нарезка останавливается сразу, моделей не зовя: платить за отказ незачем."""
+        reason = "нарезать нечего: в тексте нет ни слова"
+        for model in self.participants:
+            self._set_run(StepName.slice, model, "failed", reason)
+        self._set_step(StepName.slice, "failed")
+        raise StageFailed(reason)
 
     def _slice(self) -> tuple[tuple[int, ...], list[BoundaryNote]]:
         prompt = render("slice", input=self.brief)

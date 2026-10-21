@@ -1,5 +1,6 @@
-"""Старые ручки запуска нарезки и раскладки (api/councils.py): уходят с этапами «Нарезка» и
-«Группы». Совет для них — прямо в хранилище: старых ручек создания и правки совета больше нет."""
+"""Старая ручка запуска раскладки (api/councils.py) и общий запуск старых ходов (start_run):
+уходят с этапом «Группы». Совет для них — прямо в хранилище: старых ручек создания и правки
+совета больше нет, а нарезка — в новом API (test_slices.py)."""
 
 import json
 
@@ -11,7 +12,7 @@ from spec_council.app import app
 from spec_council.config import AppConfig, config_of
 from spec_council.deps import get_agents, get_config, get_launcher, get_store
 from spec_council.models import Model
-from spec_council.pipeline import start, start_structure
+from spec_council.pipeline import SlicingRun, start, start_structure
 
 client = TestClient(app)
 
@@ -86,64 +87,27 @@ class FakeAgents:
 def agents():
     fake = FakeAgents("Хочу воркер для Codex CLI.")
     app.dependency_overrides[get_agents] = lambda: fake
-    # Нарезка идёт тут же, а не в пуле: к возврату из post итог уже есть.
+    # Ход идёт тут же, а не в пуле: к возврату из post итог уже есть.
     app.dependency_overrides[get_launcher] = lambda: lambda job: job()
     yield fake
     app.dependency_overrides.pop(get_agents)
     app.dependency_overrides.pop(get_launcher)
 
 
-def test_slicing_runs_in_the_background_and_ends_with_labeled_fragments(agents):
-    council_id = new_council(agents.text)
-    res = client.post(f"/api/councils/{council_id}/slicing")
-    assert res.status_code == 202
-    assert res.json()["slicing"]["state"] == "running"
-    assert res.json()["status"] == "slices"
-
-    slicing = client_council(council_id).slicing.model_dump(mode="json")
-    assert slicing["state"] == "done"
-    assert slicing["text"] == agents.text
-    assert slicing["fragments"] == [{
-        "id": 1, "text": agents.text, "label": "idea", "reason": "цель",
-        "council_label": "idea",
-        "decided_by": "agreed", "slice_note": None,
-        "votes": [{"model": "sol", "labels": ["idea"]}, {"model": "fable", "labels": ["idea"]}],
-    }]
-    assert [s["state"] for s in slicing["steps"]] == ["done", "skipped", "done", "skipped"]
-
-
-def test_empty_text_is_not_sliced(agents):
-    res = client.post(f"/api/councils/{new_council()}/slicing")
-    assert res.status_code == 422
-    assert agents.asked == []
-
-
-def test_models_without_a_connection_are_named(agents):
-    council_id = new_council("текст")
-    get_store().update_council(council_id, {"judge": "astra"})
-    res = client.post(f"/api/councils/{council_id}/slicing")
-    assert res.status_code == 422
-    assert res.json()["detail"] == "Нет подключения к моделям: Gemini Astra 3"
-
-
-def test_running_slicing_is_not_started_twice(agents):
-    council_id = new_council("текст")
-    get_store().update_council(council_id, {"slicing": start(["sol", "fable"], "fable")})
-    assert client.post(f"/api/councils/{council_id}/slicing").status_code == 409
-
-
-def test_slicing_of_unknown_council_is_404(agents):
-    assert client.post("/api/councils/missing/slicing").status_code == 404
-
-
 def sliced_council(agents):
+    """Совет с готовой нарезкой — её ход прошёл тут же, мимо ручек."""
     council_id = new_council(agents.text)
-    client.post(f"/api/councils/{council_id}/slicing")
+    run = SlicingRun(council_id, agents.text, ["sol", "fable"], "fable", agents, lambda state: None)
+    get_store().update_council(council_id, {"slicing": run.run()})
     return council_id
 
 
+def asked_to_group(agents):
+    return [key for key in agents.asked if "-structure-" in key]
+
+
 def test_login_check_before_a_start_runs_outside_the_lock(agents):
-    sliced_council(agents)
+    client.post(f"/api/councils/{sliced_council(agents)}/structure")
     assert agents.fresh_under_lock == [False]
 
 
@@ -152,12 +116,13 @@ def test_start_that_lost_the_race_during_the_login_check_is_refused(agents):
 
     def other_tab_starts_and_finishes():
         agents.on_probe = None
-        finished = start(["sol", "fable"], "fable").model_copy(update={"state": "done"})
-        get_store().update_council(council_id, {"slicing": finished})
+        finished = start_structure(["sol", "fable"], "fable", client_council(council_id).slicing)
+        get_store().update_council(council_id,
+                                   {"structure": finished.model_copy(update={"state": "done"})})
 
     agents.on_probe = other_tab_starts_and_finishes
-    assert client.post(f"/api/councils/{council_id}/slicing").status_code == 409
-    assert len([k for k in agents.asked if "-slice-" in k]) == 2   # только первый запуск
+    assert client.post(f"/api/councils/{council_id}/structure").status_code == 409
+    assert asked_to_group(agents) == []
 
 
 def test_regrouping_does_not_overwrite_groups_edited_during_the_login_check(agents):
@@ -178,26 +143,26 @@ def test_regrouping_does_not_overwrite_groups_edited_during_the_login_check(agen
     assert client_council(council_id).structure.groups[0].title == "Своё"
 
 
-def test_start_while_the_server_stops_leaves_a_failed_slicing_not_a_stuck_one(agents):
-    council_id = new_council(agents.text)
+def test_start_while_the_server_stops_leaves_a_failed_run_not_a_stuck_one(agents):
+    council_id = sliced_council(agents)
 
     def closed_pool(job):
         raise RuntimeError("cannot schedule new futures after shutdown")
 
     app.dependency_overrides[get_launcher] = lambda: closed_pool
-    assert client.post(f"/api/councils/{council_id}/slicing").status_code == 503
-    assert client_council(council_id).slicing.state == "failed"
+    assert client.post(f"/api/councils/{council_id}/structure").status_code == 503
+    assert client_council(council_id).structure.state == "failed"
 
 
 def test_lineup_changed_during_the_login_check_is_checked_again_outside_the_lock(agents):
-    council_id = new_council(agents.text)
+    council_id = sliced_council(agents)
 
     def judge_changes():
         agents.on_probe = None
         get_store().update_council(council_id, {"judge": "astra"})
 
     agents.on_probe = judge_changes
-    res = client.post(f"/api/councils/{council_id}/slicing")
+    res = client.post(f"/api/councils/{council_id}/structure")
     assert res.status_code == 422
     assert res.json()["detail"] == "Нет подключения к моделям: Gemini Astra 3"
     assert agents.probed == [(frozenset({"sol", "fable"}), True),
@@ -206,14 +171,14 @@ def test_lineup_changed_during_the_login_check_is_checked_again_outside_the_lock
 
 
 def test_lineup_that_keeps_changing_gives_up_with_503(agents):
-    council_id = new_council(agents.text)
+    council_id = sliced_council(agents)
     agents.online.add("astra")
     judges = iter(["astra", "fable", "astra", "fable"])
     agents.on_probe = lambda: get_store().update_council(council_id, {"judge": next(judges)})
-    res = client.post(f"/api/councils/{council_id}/slicing")
-    assert res.status_code == 503   # не 409: нарезку никто не запускал
+    res = client.post(f"/api/councils/{council_id}/structure")
+    assert res.status_code == 503   # не 409: раскладку никто не запускал
     assert agents.fresh_under_lock == [False] * councils_api.PROBE_ATTEMPTS
-    assert agents.asked == []
+    assert asked_to_group(agents) == []
 
 
 def test_groups_are_built_from_a_finished_slicing(agents):
@@ -235,17 +200,3 @@ def test_groups_need_a_finished_slicing(agents):
     assert client.post(f"/api/councils/{council_id}/structure").status_code == 422
     get_store().update_council(council_id, {"slicing": start(["sol", "fable"], "fable")})
     assert client.post(f"/api/councils/{council_id}/structure").status_code == 423
-
-
-def test_slicing_again_drops_the_old_groups_and_waits_for_a_running_grouping(agents):
-    council_id = sliced_council(agents)
-    client.post(f"/api/councils/{council_id}/structure")
-    running = start_structure(["sol", "fable"], "fable",
-                              client_council(council_id).slicing)
-    get_store().update_council(council_id, {"structure": running})
-    assert client.post(f"/api/councils/{council_id}/slicing").status_code == 423
-
-    finished = running.model_copy(update={"state": "done"})
-    get_store().update_council(council_id, {"structure": finished})
-    assert client.post(f"/api/councils/{council_id}/slicing").status_code == 202
-    assert client_council(council_id).structure is None

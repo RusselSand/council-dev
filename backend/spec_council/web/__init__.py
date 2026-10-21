@@ -7,11 +7,11 @@ MODULES; чужие модули он не трогает. Старые ручк
 
 from fastapi import APIRouter, FastAPI
 
-from . import brief, councils, errors, models, projects, repos
+from . import brief, councils, errors, models, projects, repos, slicing
 
 API_PREFIX = "/api"
 
-MODULES = (councils, brief, models, projects, repos)
+MODULES = (councils, brief, slicing, models, projects, repos)
 
 router = APIRouter(prefix=API_PREFIX)
 for module in MODULES:
