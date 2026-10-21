@@ -1,5 +1,6 @@
 import type { State } from './council';
 import type { Fragment } from './slicing';
+import { stepApprovable, stepEditable } from './stream';
 
 /** Откуда вопрос: из текста ввода, его нашли модели или добавил человек. */
 export const QUESTION_SOURCES = ['text', 'ai', 'user'] as const;
@@ -33,11 +34,10 @@ export interface Question {
  * Вопросы правят — убирают, возвращают, добавляют свои, — пока шаг ждёт вас, остановился или уже готов, как в макете.
  * Не начат или на нём работают модели — нет.
  */
-export const questionsEditable = (state: State): boolean =>
-  state === 'waiting' || state === 'failed' || state === 'done';
+export const questionsEditable = (state: State): boolean => stepEditable(state);
 
 /** «Утвердить вопросы → к вариантам» — когда шаг ждёт вас или остановился, как в макете. */
-export const questionsApprovable = (state: State): boolean => state === 'waiting' || state === 'failed';
+export const questionsApprovable = (state: State): boolean => stepApprovable(state);
 
 /** Убран ли вопрос: выбор человека, на который сервер ещё не ответил, иначе — как на сервере. */
 export const isRemoved = (question: Question, pending: Readonly<Record<string, boolean>>): boolean =>

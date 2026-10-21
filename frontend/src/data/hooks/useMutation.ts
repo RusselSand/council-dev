@@ -1,9 +1,17 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { toApiError, type ApiError } from '../errors';
 
+/** Чем кончился один запуск действия: ответ или, если не вышло, ошибка. */
+export type Outcome<T> = { value: T; error?: undefined } | { value?: undefined; error: ApiError };
+
 export interface Mutation<A extends unknown[], T> {
   /** Выполнить действие. Ответ — изменённый объект; не вышло — undefined, причина — в error. */
   run: (...args: A) => Promise<T | undefined>;
+  /**
+   * То же, что run, но ответ — с ошибкой этого запуска: когда действие запускают для разных объектов, error — только про
+   * последний.
+   */
+  attempt: (...args: A) => Promise<Outcome<T>>;
   /** Действие выполняется. */
   pending: boolean;
   /** Ошибка последнего запуска; новый запуск её сбрасывает. */
@@ -37,18 +45,21 @@ export function useMutation<A extends unknown[], T>(
     };
   }, []);
 
-  const run = useCallback(async (...args: A) => {
+  const attempt = useCallback(async (...args: A): Promise<Outcome<T>> => {
     setState({ pending: true, error: undefined });
     try {
       const result = await actionRef.current(...args);
       if (mounted.current) setState({ pending: false, error: undefined });
       doneRef.current(result, ...args);
-      return result;
+      return { value: result };
     } catch (error) {
-      if (mounted.current) setState({ pending: false, error: toApiError(error) });
-      return undefined;
+      const apiError = toApiError(error);
+      if (mounted.current) setState({ pending: false, error: apiError });
+      return { error: apiError };
     }
   }, []);
 
-  return { ...state, run };
+  const run = useCallback(async (...args: A) => (await attempt(...args)).value, [attempt]);
+
+  return { ...state, run, attempt };
 }

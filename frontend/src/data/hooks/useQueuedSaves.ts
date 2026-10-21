@@ -1,5 +1,6 @@
-import { useEffect, useRef, useState } from 'react';
+import { useRef, useState } from 'react';
 import { toApiError, type ApiError } from '../errors';
+import { useRound } from './useRound';
 import { without } from './without';
 
 export interface QueuedSaves<V> {
@@ -7,8 +8,13 @@ export interface QueuedSaves<V> {
   pending: Readonly<Record<string, V>>;
   /** Не вышло сохранить — по ключу; ошибка держится, пока у этого ключа не выберут снова. */
   errors: Readonly<Record<string, ApiError>>;
-  /** Выбрать: сохраняется сразу. */
-  change: (key: string, value: V) => void;
+  /** То же, что errors[key], но сразу — и когда экран, с которого выбор ушёл, уже закрыт. */
+  errorOf: (key: string) => ApiError | undefined;
+  /**
+   * Выбрать: сохраняется сразу. Ответ — когда очередь дошла до этого выбора: сохранился ли он (или тот, что выбрали после
+   * него и отправили вместо него).
+   */
+  change: (key: string, value: V) => Promise<boolean>;
   /** Дождаться ответа на выборы, которые ещё идут. Ответ — сохранились ли последние; выборов нет — true. */
   settle: () => Promise<boolean>;
 }
@@ -19,36 +25,51 @@ export interface QueuedSaves<V> {
  * выбор. save отправляет выбор и бросает ошибку, если не вышло; fresh() — набор тот же, что когда запрос ушёл: ответ
  * можно ставить в данные. Набор сменился (round стал другим) — ключи те же, но это другие объекты («F1», «R1»):
  * выборы и ошибки прежних забываются, а ответы на запросы про прежние не попадают в ошибки и не снимают выбор нового
- * объекта с тем же ключом.
+ * объекта с тем же ключом. lane — чья очередь: у другой lane очереди свои, и выбор в ней не ждёт ответа на запросы
+ * прежней, а то, что ждало в прежней своего черёда, уже не уходит, — для того, где сервер сам не примет запрос про прежнюю
+ * (у вариантов — номер запуска шага). Не задана — очередь у ключа одна на все наборы.
  */
 export function useQueuedSaves<V>(
   save: (key: string, value: V, fresh: () => boolean) => Promise<void>,
   round: unknown,
+  lane?: unknown,
 ): QueuedSaves<V> {
   const [pending, setPending] = useState<Record<string, V>>({});
   const [errors, setErrors] = useState<Record<string, ApiError>>({});
+  /** То же, что errors, но сразу: ответ на выбор, ушедший с закрытого экрана, читают по нему (errorOf()). */
+  const failed = useRef<Record<string, ApiError>>({});
   /** То же, что pending, но сразу: очередь читает его, когда приходит её черёд. */
   const wanted = useRef<Record<string, V>>({});
-  /** Очереди запросов по ключу; каждый запрос отвечает, сохранился ли выбор. */
-  const queues = useRef(new Map<string, Promise<boolean>>());
-  /** Номер набора: растёт, когда round становится другим. */
-  const generation = useRef(0);
+  /** Очереди запросов по ключу — у lane, в которой их начали; каждый запрос отвечает, сохранился ли выбор. */
+  const queues = useRef({ lane, byKey: new Map<string, Promise<boolean>>() });
+  const laneRef = useRef(lane);
+  laneRef.current = lane;
   const saveRef = useRef(save);
   saveRef.current = save;
+
+  /** Очереди нынешней lane: lane другая — очереди новые, и запросы прежней их не держат. */
+  const lanes = () => {
+    if (!Object.is(queues.current.lane, laneRef.current)) {
+      queues.current = { lane: laneRef.current, byKey: new Map() };
+    }
+    return queues.current.byKey;
+  };
 
   const want = (next: Record<string, V>) => {
     wanted.current = next;
     setPending(next);
   };
 
-  const lastRound = useRef(round);
-  useEffect(() => {
-    if (Object.is(lastRound.current, round)) return;
-    lastRound.current = round;
-    generation.current += 1;
+  const fail = (next: Record<string, ApiError>) => {
+    failed.current = next;
+    setErrors(next);
+  };
+
+  /** Номер набора: растёт, когда round становится другим. */
+  const generation = useRound(round, () => {
     want({});
-    setErrors({});
-  }, [round]);
+    fail({});
+  });
 
   /** sentIn — номер набора, в котором запрос ушёл. */
   const send = async (key: string, value: V, sentIn: number): Promise<boolean> => {
@@ -56,37 +77,40 @@ export function useQueuedSaves<V>(
       await saveRef.current(key, value, () => generation.current === sentIn);
       return true;
     } catch (error) {
-      if (generation.current === sentIn) setErrors((current) => ({ ...current, [key]: toApiError(error) }));
+      if (generation.current === sentIn) fail({ ...failed.current, [key]: toApiError(error) });
       return false;
     }
   };
 
   const change = (key: string, value: V) => {
     want({ ...wanted.current, [key]: value });
-    setErrors((current) => without(current, key));
-    const previous = queues.current.get(key) ?? Promise.resolve(true);
-    queues.current.set(
-      key,
-      previous.then(async (saved) => {
-        // Черёд пришёл: шлём то, что человек выбрал последним; на это уже ответили — слать нечего.
-        const sent = wanted.current[key];
-        if (sent === undefined) return saved;
-        // Ошибка прошлого запроса — про прошлый выбор.
-        setErrors((current) => without(current, key));
-        const sentIn = generation.current;
-        const ok = await send(key, sent, sentIn);
-        // На выбор ответили — он больше не ждёт. Набор с тех пор сменился — выбор уже про новый объект с тем же
-        // ключом, и его ещё надо отправить.
-        if (generation.current === sentIn && wanted.current[key] === sent) want(without(wanted.current, key));
-        return ok;
-      }),
-    );
+    fail(without(failed.current, key));
+    const byKey = lanes();
+    const previous = byKey.get(key) ?? Promise.resolve(true);
+    const queued = previous.then(async (saved) => {
+      // Черёд пришёл, а lane уже другая — выбор про прежнюю: в новой его не шлём, там своя очередь.
+      if (lanes() !== byKey) return saved;
+      // Черёд пришёл: шлём то, что человек выбрал последним; на это уже ответили — слать нечего.
+      const sent = wanted.current[key];
+      if (sent === undefined) return saved;
+      // Ошибка прошлого запроса — про прошлый выбор.
+      fail(without(failed.current, key));
+      const sentIn = generation.current;
+      const ok = await send(key, sent, sentIn);
+      // На выбор ответили — он больше не ждёт. Набор с тех пор сменился — выбор уже про новый объект с тем же
+      // ключом, и его ещё надо отправить.
+      if (generation.current === sentIn && wanted.current[key] === sent) want(without(wanted.current, key));
+      return ok;
+    });
+    byKey.set(key, queued);
+    return queued;
   };
 
   const settle = async () => {
-    const waiting = Object.keys(wanted.current).map((key) => queues.current.get(key) ?? Promise.resolve(true));
+    const byKey = lanes();
+    const waiting = Object.keys(wanted.current).map((key) => byKey.get(key) ?? Promise.resolve(true));
     return (await Promise.all(waiting)).every(Boolean);
   };
 
-  return { pending, errors, change, settle };
+  return { pending, errors, errorOf: (key) => failed.current[key], change, settle };
 }

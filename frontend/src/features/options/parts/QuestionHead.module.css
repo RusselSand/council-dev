@@ -1,0 +1,28 @@
+.head {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-10);
+}
+
+.id {
+  flex: none;
+  padding-top: var(--space-3);
+  font-family: var(--font-mono);
+  font-size: var(--text-sm);
+  color: var(--color-text-faint);
+}
+
+.source {
+  flex: none;
+  margin-top: var(--space-2);
+}
+
+.text {
+  min-width: 0;
+  margin: 0;
+  font-size: var(--text-2xl);
+  font-weight: var(--weight-bold);
+  line-height: var(--leading-compact);
+  text-wrap: pretty;
+  overflow-wrap: anywhere;
+}

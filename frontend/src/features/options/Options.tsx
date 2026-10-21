@@ -1,0 +1,109 @@
+import { LoadState } from '../../components/LoadState';
+import type { State } from '../../domain/council';
+import { useI18n } from '../../i18n';
+import { Button } from '../../ui/Button';
+import { CardFooter } from '../../ui/CardFooter';
+import { RadioCard } from '../../ui/RadioCard';
+import { Skeleton } from '../../ui/Skeleton';
+import { JudgeNote } from './parts/JudgeNote';
+import { OptionCard } from './parts/OptionCard';
+import { OptionEditor } from './parts/OptionEditor';
+import { OwnOption } from './parts/OwnOption';
+import { QuestionHead } from './parts/QuestionHead';
+import { QuestionNav } from './parts/QuestionNav';
+import styles from './Options.module.css';
+import { useOptionsStep } from './useOptionsStep';
+
+interface OptionsProps {
+  councilId: string;
+  streamId: string;
+  /** Состояние шага «Варианты». */
+  state: State;
+  /** Судья совета: «судья fable» на плашке. */
+  judge: string;
+  /** Шаг запускают снова: выбор, свой вариант, правка и «Утвердить» не действуют. */
+  retrying: boolean;
+  /** Ждут ли ответа утверждение, выбор, свой вариант или правка: пока да, «Запустить снова» не действует. */
+  onBusy: (busy: boolean) => void;
+}
+
+/**
+ * Шаг «Варианты» внутри карточки шага: вопросы по одному, плашка судьи, варианты с кружком выбора, «Свой вариант» и
+ * «Пока не решаю»; шаг ждёт вас или остановился — внизу «Выбрано 2 из 4» и «Утвердить выбор → к решениям». Пока на
+ * шаге работают модели — серые строки на месте вариантов.
+ */
+export function Options({ councilId, streamId, state, judge, retrying, onBusy }: OptionsProps) {
+  const { t } = useI18n();
+  const step = useOptionsStep(councilId, streamId, state, judge, retrying, onBusy);
+  if (step.running) return <Skeleton />;
+  if (!step.loaded) return <LoadState loading={step.loading} error={step.error} onRetry={step.reload} />;
+  return (
+    <>
+      {step.question && step.judge && (
+        <>
+          <QuestionNav
+            chips={step.chips}
+            done={step.done}
+            disabled={step.navLocked}
+            onShow={step.show}
+            onPrev={step.prev}
+            onNext={step.next}
+          />
+          <QuestionHead id={step.question.id} source={step.question.source} text={step.question.text} />
+          <JudgeNote judge={step.judge} onToggle={step.toggleDropped} />
+          <div className={styles.options} role="radiogroup" aria-label={step.question.text}>
+            {step.options.map((option) => (
+              <OptionCard
+                key={option.id}
+                option={option}
+                disabled={step.locked}
+                onPick={step.pick}
+                onEdit={step.startEdit}
+                onShowQuestion={step.show}
+                editor={
+                  <OptionEditor
+                    option={option.id}
+                    text={step.editText}
+                    disabled={step.locked || step.editSaving}
+                    error={step.editError}
+                    onChange={step.changeEdit}
+                    onSave={step.saveEdit}
+                    onCancel={step.cancelEdit}
+                  />
+                }
+              />
+            ))}
+            <OwnOption
+              open={step.ownOpen}
+              selected={step.ownSelected}
+              text={step.ownText}
+              disabled={step.locked}
+              error={step.ownError}
+              onOpen={step.openOwn}
+              onChange={step.editOwn}
+            />
+            <RadioCard
+              variant="dashed"
+              size="sm"
+              selected={step.unresolved}
+              disabled={step.locked}
+              onSelect={step.pickUnresolved}
+              head={<span className={styles.unresolved}>{t('options.unresolved')}</span>}
+            />
+          </div>
+          <LoadState loading={false} error={step.choiceError} />
+        </>
+      )}
+      {step.approvable && (
+        <>
+          <CardFooter lead={<span className={styles.count}>{step.chosen}</span>}>
+            <Button disabled={step.approveDisabled} onClick={step.approve}>
+              {t('options.approve')}
+            </Button>
+          </CardFooter>
+          <LoadState loading={false} error={step.approveError} onRetry={step.approve} />
+        </>
+      )}
+    </>
+  );
+}

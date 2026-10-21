@@ -1,20 +1,27 @@
 import type { Stream } from '../../domain/stream';
 import { source } from '../config';
 import { ApiError } from '../errors';
-import { markStale, type CouncilStreams, type StreamProjectDecisions } from './stale';
+import { markStale, type CouncilStreams, type StreamProjectDecisions, type Topic } from './stale';
 import { useMutation, type Mutation } from './useMutation';
 import { useQuery, type Query } from './useQuery';
 import { useModelsPoll } from './useStageQuery';
 
 /**
+ * С потоками опрашиваются и варианты открытого потока: шаг «Варианты» могли запустить снова в другой вкладке, и он
+ * успел кончиться между опросами — состояние шага то же, а варианты другие (другой run), и узнать это можно только по
+ * ним самим.
+ */
+const POLLED_WITH_STREAMS: readonly Topic[] = ['options'];
+
+/**
  * Потоки совета — GET /api/councils/<id>/streams: потоки и их шаги. Пока хоть на одном шаге работают модели или в списке
- * советов этап «Потоки» ещё идёт (councilRunning), потоки и список советов перезапрашиваются через 5 с после ответа на
- * потоки — см. useModelsPoll(). Перезапрашиваются и после действий с потоками.
+ * советов этап «Потоки» ещё идёт (councilRunning), потоки, список советов и варианты открытого потока перезапрашиваются
+ * через 5 с после ответа на потоки — см. useModelsPoll(). Перезапрашиваются и после действий с потоками.
  */
 export function useCouncilStreams(id: string, councilRunning: boolean): Query<CouncilStreams> {
   const query = useQuery(async () => ({ council: id, streams: await source.listStreams(id) }), [id], 'streams');
   const running = query.data?.streams.some((stream) => stream.steps.some((step) => step.state === 'running')) ?? false;
-  useModelsPoll(councilRunning || running, query);
+  useModelsPoll(councilRunning || running, query, POLLED_WITH_STREAMS);
   return query;
 }
 

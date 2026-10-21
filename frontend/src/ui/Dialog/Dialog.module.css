@@ -50,18 +50,6 @@
   overflow-wrap: anywhere;
 }
 
-.close {
-  flex: none;
-  width: var(--icon-button);
-  height: var(--icon-button);
-  border: 0;
-  border-radius: var(--radius-round);
-  background: var(--color-hover);
-  font-size: var(--text-3xl);
-  color: var(--color-ink);
-  cursor: pointer;
-}
-
 .actions {
   display: flex;
   flex-wrap: wrap;

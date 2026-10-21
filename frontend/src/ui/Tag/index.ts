@@ -1,1 +1,1 @@
-export { Tag, type TagSize, type TagTone } from './Tag';
+export { Tag, type TagShape, type TagSize, type TagTone } from './Tag';

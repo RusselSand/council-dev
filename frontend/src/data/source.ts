@@ -1,6 +1,7 @@
 import type { Brief } from '../domain/brief';
 import type { CouncilFields, CouncilSummary } from '../domain/council';
 import type { Model } from '../domain/model';
+import type { Choice, Option, OptionSet, OptionsRound } from '../domain/options';
 import type { Project, ProjectFields } from '../domain/project';
 import type { Question } from '../domain/questions';
 import type { Decision, Finding, Research, ResearchKind } from '../domain/research';
@@ -81,6 +82,48 @@ export interface DataSource {
   addQuestion(id: string, streamId: string, text: string, key: string): Promise<Question>;
   /** POST /api/councils/<id>/streams/<streamId>/questions/approve — «Утвердить вопросы → к вариантам»; ответ — поток. */
   approveQuestions(id: string, streamId: string): Promise<Stream>;
+  /**
+   * GET /api/councils/<id>/streams/<streamId>/options — варианты по неубранным вопросам потока, по порядку, и номер
+   * запуска шага «Варианты».
+   */
+  listOptions(id: string, streamId: string): Promise<OptionsRound>;
+  /**
+   * PUT /api/councils/<id>/streams/<streamId>/options/<questionId>/choice — выбор по вопросу; ответ — его варианты.
+   * run здесь и у правок вариантов — номер запуска шага, варианты которого на экране: шаг с тех пор запустили снова —
+   * сервер не меняет новые варианты и отвечает options_not_ready.
+   */
+  setChoice(id: string, streamId: string, run: number, questionId: string, choice: Choice): Promise<OptionSet>;
+  /**
+   * POST /api/councils/<id>/streams/<streamId>/options/<questionId> — свой вариант (basedOn — какой вариант правили;
+   * с нуля — null); выбор не меняет. Ответ — созданный вариант. key — Idempotency-Key поля: тот же ключ — тот же
+   * вариант.
+   */
+  addOption(
+    id: string,
+    streamId: string,
+    run: number,
+    questionId: string,
+    text: string,
+    basedOn: string | null,
+    key: string,
+  ): Promise<Option>;
+  /**
+   * PATCH /api/councils/<id>/streams/<streamId>/options/<questionId>/<optionId> — новый текст своего варианта; выбор не
+   * меняет. Ответ — вариант после правки.
+   */
+  updateOption(
+    id: string,
+    streamId: string,
+    run: number,
+    questionId: string,
+    optionId: string,
+    text: string,
+  ): Promise<Option>;
+  /**
+   * POST /api/councils/<id>/streams/<streamId>/options/approve — «Утвердить выбор → к решениям» вариантов запуска run;
+   * ответ — поток.
+   */
+  approveOptions(id: string, streamId: string, run: number): Promise<Stream>;
   /** GET /api/models */
   listModels(): Promise<Model[]>;
   /** GET /api/projects */

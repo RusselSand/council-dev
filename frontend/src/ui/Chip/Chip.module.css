@@ -12,6 +12,10 @@
   overflow-wrap: anywhere;
 }
 
+.chip:disabled {
+  cursor: default;
+}
+
 .glass {
   padding: var(--space-7) var(--space-14);
   background: var(--color-glass);
@@ -23,14 +27,47 @@
   background: var(--color-paper);
 }
 
+/* Вопрос на «Вариантах»: белый в светлой рамке, жирная подпись. */
+.outline {
+  gap: var(--space-6);
+  padding: var(--space-6) var(--space-12);
+  border-width: var(--border-thick);
+  border-color: var(--color-line-soft);
+  background: var(--color-paper);
+  font-weight: var(--weight-bold);
+}
+
+/* Зависимость варианта: заливка цвета состояния, без рамки. */
+.green {
+  background: var(--state-done-bg);
+  color: var(--state-done-ink);
+}
+
+.yellow {
+  background: var(--state-waiting-bg);
+  color: var(--state-waiting-ink);
+}
+
 .sm {
   padding: var(--space-4) var(--space-12);
+}
+
+.xs {
+  gap: var(--space-6);
+  padding: var(--space-4) var(--space-10);
+  font-size: var(--text-xs);
 }
 
 .selected {
   border-color: var(--color-ink);
   background: var(--color-ink);
   color: var(--color-paper);
+}
+
+/* Выбранный вопрос — в тёмной рамке, а не залит. */
+.outline.selected {
+  background: var(--color-paper);
+  color: var(--color-ink);
 }
 
 .count {

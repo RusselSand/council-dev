@@ -393,6 +393,31 @@ const STEP_WAITING: Record<Step, string> = {
 /** Порядок строк активности, как в макете: ошибки, потом «ждёт вас», потом «ИИ работает». */
 const ACTIVITY_ORDER: ActivityState[] = ['failed', 'waiting', 'running'];
 
+/** «Выберите вариант на 2 вопроса из 3» — строка «Вариантов», которые ждут вас, на Сводке; текст пишет сервер. */
+const CHOOSE: Record<string, string> = { one: 'вопрос', few: 'вопроса', many: 'вопросов' };
+const chooseText = (left: number, total: number) =>
+  left
+    ? `Выберите вариант на ${left} ${CHOOSE[new Intl.PluralRules('ru').select(left)] ?? 'вопроса'} из ${total}`
+    : 'Утвердите выбор';
+
+/**
+ * Совет после выбора по вопросу потока (stream): новое время изменения; «Варианты» потока ждут вас — их строка на Сводке
+ * говорит, на сколько вопросов (left) из всех (total) осталось выбрать.
+ */
+export const choiceChanged = (
+  council: CouncilSummary,
+  stream: string,
+  left: number,
+  total: number,
+  updatedAt: string,
+): CouncilSummary => ({
+  ...council,
+  activity: council.activity.map((a) =>
+    a.stream === stream && a.step === 'options' && a.state === 'waiting' ? { ...a, text: chooseText(left, total) } : a,
+  ),
+  updatedAt,
+});
+
 /**
  * Состояние этапа «Потоки» по шагам потоков: все шаги всех потоков готовы — готово; иначе есть шаг, который ждёт
  * человека, — ждёт вас (так у c1 в макете: поток C с ошибкой, A и B ждут вас); иначе работают модели — ИИ работает;

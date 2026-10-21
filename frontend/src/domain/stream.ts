@@ -73,10 +73,19 @@ export const unexported = (streams: readonly Stream[], id: string): string[] =>
 
 /**
  * «Ход работы» показывается у шага с ошибкой и у шага, где работают модели: в макете — у шага с ошибкой, в том числе
- * пока он запускается снова.
+ * пока он запускается снова. У «Вариантов» — всегда, когда модели на них уже работали, как в макете.
  */
 export const showsRuns = (step: StreamStep): boolean =>
-  (step.state === 'failed' || step.state === 'running') && step.progress.length > 0;
+  (step.state === 'failed' || step.state === 'running' || step.step === 'options') && step.progress.length > 0;
+
+/**
+ * То, что нашли модели на шаге («Вопросы», «Варианты»), человек правит, пока шаг ждёт вас, остановился или уже готов, —
+ * как в макете. Не начат или на нём работают модели — нет.
+ */
+export const stepEditable = (state: State): boolean => state === 'waiting' || state === 'failed' || state === 'done';
+
+/** Переход к следующему шагу («Утвердить вопросы →», «Утвердить выбор →») — когда шаг ждёт вас или остановился. */
+export const stepApprovable = (state: State): boolean => state === 'waiting' || state === 'failed';
 
 /**
  * Состояние части шага по её моделям — подпись справа от части в «Ходе работы»: хоть одна не справилась — сбой; хоть

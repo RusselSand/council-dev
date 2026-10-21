@@ -148,3 +148,43 @@
 .text:disabled {
   color: var(--color-text-ghost);
 }
+
+/* «Отброшено вариантов: 2 — почему»: текст без отступов, под курсором темнеет. */
+.plain {
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--color-text-secondary);
+  text-align: left;
+}
+
+/* «Поправить»: подчёркнутый текст, под курсором темнеет. */
+.link {
+  border: 0;
+  background: transparent;
+  color: var(--color-text-secondary);
+  text-decoration: underline;
+  text-underline-offset: var(--space-3);
+}
+
+.link.md {
+  padding: var(--space-10) var(--space-14);
+}
+
+.link.sm {
+  padding: var(--space-7) var(--space-10);
+}
+
+.link.xs {
+  padding: var(--space-4) var(--space-8);
+}
+
+.plain:not(:disabled):hover,
+.link:not(:disabled):hover {
+  color: var(--color-ink);
+}
+
+.plain:disabled,
+.link:disabled {
+  color: var(--color-text-ghost);
+}

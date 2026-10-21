@@ -1,0 +1,97 @@
+.card {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-10);
+  min-width: 0;
+  border: var(--border-thick) solid var(--color-line-softer);
+  border-radius: var(--radius-18);
+  background: var(--color-surface);
+}
+
+.md {
+  padding: var(--space-16) var(--space-18);
+}
+
+.sm {
+  padding: var(--space-14) var(--space-18);
+}
+
+.selected {
+  border-color: var(--color-ink);
+  background: var(--color-paper);
+}
+
+/* «Пока не решаю» — пунктир без заливки, выбранная — тёмный пунктир. */
+.dashed {
+  border-style: dashed;
+  border-color: var(--color-line-dashed);
+  background: transparent;
+}
+
+.dashed.selected {
+  border-color: var(--color-ink);
+  background: transparent;
+}
+
+.head {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-12);
+  width: 100%;
+  min-width: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  font: inherit;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.head:disabled {
+  cursor: default;
+}
+
+.radio {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: var(--radio-size);
+  height: var(--radio-size);
+  margin-top: var(--space-1);
+  border: var(--border-thick) solid var(--color-line-dashed);
+  border-radius: var(--radius-round);
+  background: var(--color-paper);
+}
+
+.radio::after {
+  content: '';
+  width: var(--radio-dot);
+  height: var(--radio-dot);
+  border-radius: var(--radius-round);
+}
+
+.selected .radio {
+  border-color: var(--color-ink);
+}
+
+.selected .radio::after {
+  background: var(--color-ink);
+}
+
+.label {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-8);
+  min-width: 0;
+}
+
+/* Содержимое под строкой — с отступом под кружок, как в макете. */
+.body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-8);
+  min-width: 0;
+  padding-left: calc(var(--radio-size) + var(--space-12));
+}

@@ -108,8 +108,9 @@ const protoStream = (id: keyof typeof PROTO_TITLES, stepList: StreamStep[]): Str
 
 /**
  * Потоки c1 — STREAMS из prototype.js: состояния шагов (mk) и строки под ними (notes). У «Вариантов» потока B строки
- * нет — макет считает её сам: «выбрано 1 из 4». Поток C остановился на «Вопросах», как в макете: sol не справилась,
- * fable успела ответить, судья не дождался своей очереди.
+ * нет — макет считает её сам по выбору: у нас на «Варианты» B идут 3 вопроса («отобрано 3 вопроса»), выбран один —
+ * «выбрано 1 из 3» (в макете — «из 4»: там Q4 у B не убран). Поток C остановился на «Вопросах», как в макете: sol не
+ * справилась, fable успела ответить, судья не дождался своей очереди.
  */
 const C1: Stream[] = [
   protoStream(
@@ -123,7 +124,7 @@ const C1: Stream[] = [
   ),
   protoStream(
     'B',
-    steps(mk(2, 'waiting'), ['учтено ADR-0005', 'отобрано 3 вопроса', 'выбрано 1 из 4'], PROTO_PARTICIPANTS, PROTO_JUDGE),
+    steps(mk(2, 'waiting'), ['учтено ADR-0005', 'отобрано 3 вопроса', 'выбрано 1 из 3'], PROTO_PARTICIPANTS, PROTO_JUDGE),
   ),
   protoStream(
     'C',
@@ -394,6 +395,24 @@ export const questionsApproved = (
   judge: string,
   now: string,
 ): Stream => stepApproved(stream, 'questions', questionsDoneNote(kept), participants, judge, now);
+
+/** «выбрано 2 из 3» — строка «Вариантов» в цепочке: сколько вопросов с выбором из всех; пишет сервер. */
+export const optionsNote = (chosen: number, total: number) => `выбрано ${chosen} из ${total}`;
+
+/** Поток, где у шага новая строка в цепочке; остальное — как было. */
+export const withNote = (stream: Stream, changed: Step, note: string): Stream => ({
+  ...stream,
+  steps: stream.steps.map((step) => (step.step === changed ? { ...step, note } : step)),
+});
+
+/** Поток после «Утвердить выбор → к решениям»: «Варианты» готовы — выбор на каждый вопрос, модели проверяют решения. */
+export const optionsApproved = (
+  stream: Stream,
+  total: number,
+  participants: string[],
+  judge: string,
+  now: string,
+): Stream => stepApproved(stream, 'options', optionsNote(total, total), participants, judge, now);
 
 /**
  * «Запустить снова» — шаг, который остановился, запускается снова: модели, которые уже ответили, заново не работают —
