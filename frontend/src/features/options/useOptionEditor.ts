@@ -1,5 +1,5 @@
 import { useRef, useState } from 'react';
-import { useAddOption, useUpdateOption, type ApiError, type Outcome } from '../../data';
+import { useAddOption, useRound, useUpdateOption, type ApiError, type Outcome } from '../../data';
 import { canSaveOption, sameText, type Option } from '../../domain/options';
 
 /** Правка, открытая на варианте: у какого вопроса, какой вариант и что набрано. */
@@ -49,10 +49,13 @@ export interface OptionEditor {
  * создаёт свой вариант на его основе (useAddOption(), basedOn), у своего — правит его (useUpdateOption()); сохранённая
  * правка становится выбором вопроса (onSaved), если, пока она уходила, у вопроса не выбрали другое; поле закрывается.
  * Текст не меняли — поле закрывается без запроса; пустой — не сохраняется. Не вышло — поле остаётся открытым с ошибкой.
+ * round — набор вариантов: шаг сменил состояние — варианты другие, хоть id те же: правка прежних закрывается, а та, что
+ * ещё уходит, выбором не становится.
  */
 export function useOptionEditor(
   councilId: string,
   streamId: string,
+  round: unknown,
   onSaved: (question: string, option: string) => void,
 ): OptionEditor {
   const addOption = useAddOption();
@@ -71,14 +74,23 @@ export function useOptionEditor(
     setEditing(next);
   };
 
-  /** Поменять правку варианта optionId, если она ещё открыта: пока правка уходила, её могли закрыть или открыть другую. */
-  const update = (optionId: string, change: (open: Editing) => Editing | null) => {
+  // Шаг сменил состояние — правка прежних вариантов закрывается, а та, что ещё уходит, выбором не становится.
+  const generation = useRound(round, () => {
+    if (sending.current) sending.current.select = false;
+    put(null);
+  });
+
+  /**
+   * Поменять правку варианта optionId, если она ещё открыта: пока правка уходила, её могли закрыть или открыть другую, а
+   * шаг — сменить состояние (sentIn — номер набора, в котором правка ушла).
+   */
+  const update = (optionId: string, sentIn: number, change: (open: Editing) => Editing | null) => {
     const open = editingRef.current;
-    if (open?.option.id === optionId) put(change(open));
+    if (generation.current === sentIn && open?.option.id === optionId) put(change(open));
   };
 
-  /** Сохранить правку; ответ — сохранённый вариант или ошибка. */
-  const send = async ({ question, option, text, created }: Editing): Promise<Outcome<Option>> => {
+  /** Сохранить правку; ответ — сохранённый вариант или ошибка. Ключ поля — свой у каждого набора вариантов. */
+  const send = async ({ question, option, text, created }: Editing, sentIn: number): Promise<Outcome<Option>> => {
     if (option.source === 'user' || created) {
       return updateOption.attempt(councilId, streamId, question, created ?? option.id, text);
     }
@@ -88,12 +100,12 @@ export function useOptionEditor(
       question,
       text,
       option.id,
-      `edit:${question}/${option.id}`,
+      `edit:${sentIn}:${question}/${option.id}`,
     );
     if (!added.value || sameText(added.value.text, text)) return added;
     // Вариант уже создавали по ключу этой правки, но с другим текстом (ответ на прошлую попытку не дошёл), — правим его.
     const id = added.value.id;
-    update(option.id, (open) => ({ ...open, created: id }));
+    update(option.id, sentIn, (open) => ({ ...open, created: id }));
     return updateOption.attempt(councilId, streamId, question, id, text);
   };
 
@@ -106,17 +118,18 @@ export function useOptionEditor(
       return false;
     }
     const current: Sending = { question, select: true };
+    const sentIn = generation.current;
     sending.current = current;
     inFlight.current = (async () => {
-      const outcome = await send(open);
+      const outcome = await send(open, sentIn);
       sending.current = null;
       inFlight.current = null;
       if (outcome.error) {
         const { error } = outcome;
-        update(option.id, (still) => ({ ...still, error }));
+        update(option.id, sentIn, (still) => ({ ...still, error }));
         return false;
       }
-      update(option.id, () => null);
+      update(option.id, sentIn, () => null);
       if (current.select) onSaved(question, outcome.value.id);
       return true;
     })();

@@ -2,7 +2,6 @@ import { useEffect, useRef, useState } from 'react';
 import { ApiError, useApproveOptions, useOptionChoices, useStreamOptions } from '../../data';
 import type { State } from '../../domain/council';
 import {
-  canSaveOption,
   choiceOf,
   chosenCount,
   dependencyState,
@@ -92,7 +91,10 @@ export interface OptionsStep {
   pick: (id: string) => void;
   /** Поле «Свой вариант» открыто. */
   ownOpen: boolean;
-  /** Кружок «Свой вариант» выбран: в поле что-то набрано или его вариант уже выбран. Пустое поле выбор не меняет. */
+  /**
+   * Кружок «Свой вариант» выбран: в поле набрано то, чего на сервере ещё нет, или его вариант уже выбран. Пустое поле выбор
+   * не меняет; вариант из поля сохранился, а выбрать его не вышло, — выбран прежний выбор.
+   */
   ownSelected: boolean;
   ownText: string;
   ownError: ApiError | undefined;
@@ -182,8 +184,9 @@ export function useOptionsStep(
   const set = index >= 0 ? sets[index] : undefined;
 
   const select = (question: string, option: string) => choices.change(question, { kind: 'option', option });
-  const own = useOwnOption(councilId, streamId, currentId, select);
-  const editor = useOptionEditor(councilId, streamId, select);
+  // Шаг сменил состояние — варианты другие: поле «Свой вариант» и правка прежних забываются, как и выбор.
+  const own = useOwnOption(councilId, streamId, currentId, state, select);
+  const editor = useOptionEditor(councilId, streamId, state, select);
 
   // Пока ответа ждут утверждение, выбор, свой вариант (и пока он ждёт паузы в наборе) или правка, «Запустить снова» не
   // действует; ответили или ушли с шага — снова действует.
@@ -197,10 +200,10 @@ export function useOptionsStep(
   const locked = approving || retrying || !stepEditable(state);
   const ownOpen = set !== undefined && own.shown;
   const choice: Choice | null = set ? choiceOf(set, pending) : null;
-  // Выбором станет или уже стал вариант из поля — выбран его кружок. Поле пустое, а вариант из него не выбран, — выбор
-  // прежний, он и выбран на экране: «Утвердить» утверждает то, что на экране.
-  const ownSelected =
-    ownOpen && (canSaveOption(own.text) || (own.option !== null && isChosen(choice, own.option)));
+  // Выбором станет вариант из поля (в нём набрано то, чего на сервере ещё нет) или уже стал — выбран его кружок. Поле
+  // пустое или вариант из него сохранился, а выбрать его не вышло, — выбор прежний, как на сервере, он и выбран на
+  // экране: «Утвердить» утверждает то, что на экране.
+  const ownSelected = ownOpen && (own.unsaved || (own.option !== null && isChosen(choice, own.option)));
 
   const show = (id: string) => {
     if (id === currentId) return;
@@ -327,6 +330,8 @@ export function useOptionsStep(
       if (!set || locked) return;
       // Открыли поле — выбором станет то, что в нём наберут: правка, которая ещё уходит, сохранится, но выбором не станет.
       editor.unselect(set.question.id);
+      // Вариант из поля сохранился, а выбрать его не вышло, — щелчок по кружку выбирает его снова.
+      if (ownOpen && !ownSelected && own.option !== null) select(set.question.id, own.option);
       own.open();
     },
     editOwn: own.edit,

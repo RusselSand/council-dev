@@ -1,5 +1,6 @@
-import { useEffect, useRef, useState } from 'react';
+import { useRef, useState } from 'react';
 import { toApiError, type ApiError } from '../errors';
+import { useRound } from './useRound';
 import { without } from './without';
 
 export interface QueuedSaves<V> {
@@ -31,8 +32,6 @@ export function useQueuedSaves<V>(
   const wanted = useRef<Record<string, V>>({});
   /** Очереди запросов по ключу; каждый запрос отвечает, сохранился ли выбор. */
   const queues = useRef(new Map<string, Promise<boolean>>());
-  /** Номер набора: растёт, когда round становится другим. */
-  const generation = useRef(0);
   const saveRef = useRef(save);
   saveRef.current = save;
 
@@ -41,14 +40,11 @@ export function useQueuedSaves<V>(
     setPending(next);
   };
 
-  const lastRound = useRef(round);
-  useEffect(() => {
-    if (Object.is(lastRound.current, round)) return;
-    lastRound.current = round;
-    generation.current += 1;
+  /** Номер набора: растёт, когда round становится другим. */
+  const generation = useRound(round, () => {
     want({});
     setErrors({});
-  }, [round]);
+  });
 
   /** sentIn — номер набора, в котором запрос ушёл. */
   const send = async (key: string, value: V, sentIn: number): Promise<boolean> => {

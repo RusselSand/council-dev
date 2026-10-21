@@ -35,6 +35,7 @@ export {
   useStreamQuestions,
   type QuestionRemovals,
 } from './hooks/useQuestions';
+export { useRound } from './hooks/useRound';
 export { useCouncilSlicing, useFragmentLabels, type FragmentLabels } from './hooks/useSlicing';
 export {
   useApproveProjectDecisions,

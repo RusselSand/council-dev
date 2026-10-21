@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { ApiError, useAddOption, useUpdateOption } from '../../data';
-import { canSaveOption, sameText } from '../../domain/options';
+import { ApiError, useAddOption, useRound, useUpdateOption } from '../../data';
+import { canSaveOption, sameText, type Option } from '../../domain/options';
 
 /** Через сколько после последней правки поле «Свой вариант» сохраняется, мс. */
 const DELAY = 600;
@@ -34,6 +34,8 @@ export interface OwnOption {
   text: string;
   /** Вариант, уже созданный из поля у вопроса на экране: пока поле открыто, он — в поле, а не карточкой. Нет — null. */
   option: string | null;
+  /** В поле у вопроса на экране набрано то, чего на сервере ещё нет: сохранится — станет выбором. Пустое поле — нет. */
+  unsaved: boolean;
   /** Не вышло сохранить набранное в поле у вопроса на экране. */
   error: ApiError | undefined;
   /** Набранное ждёт паузы в наборе или уходит на сервер. */
@@ -59,11 +61,14 @@ export interface OwnOption {
  * вопроса или закрыли экран — набранное уходит сразу; поле закрывается, когда сохранилось, а не вышло — остаётся у своего
  * вопроса с набранным и ошибкой. Пустое поле не сохраняется и выбор не меняет; стёрли поле, из которого вариант уже
  * создан, — на сервере он с прежним текстом: под полем ошибка, и flush() — не всё сохранилось. current — вопрос на экране.
+ * round — набор вариантов: шаг сменил состояние — варианты другие, хоть id вопросов те же: поля прежних забываются, а то,
+ * что из них ещё уходит, выбором не становится.
  */
 export function useOwnOption(
   councilId: string,
   streamId: string,
   current: string | undefined,
+  round: unknown,
   onSaved: (question: string, option: string) => void,
 ): OwnOption {
   const addOption = useAddOption();
@@ -74,8 +79,11 @@ export function useOwnOption(
   const fieldsRef = useRef<Record<string, Field>>({});
   const sessions = useRef(new Map<number, Session>());
   const nextSession = useRef(0);
-  /** Варианты, созданные из полей, — по номеру поля: чтобы показать его в поле, а не карточкой. */
-  const [created, setCreated] = useState<Record<number, string>>({});
+  /**
+   * Варианты, созданные из полей, с текстом, который у них на сервере, — по номеру поля: чтобы показать его в поле, а не
+   * карточкой, и знать, есть ли в поле несохранённое.
+   */
+  const [created, setCreated] = useState<Record<number, Option>>({});
   /** Почему не вышло сохранить поле — по номеру поля: у каждого своя ошибка, хоть потом сохраняли другие поля. */
   const [failed, setFailed] = useState<Record<number, ApiError>>({});
   const [sending, setSending] = useState(0);
@@ -107,8 +115,8 @@ export function useOwnOption(
     });
 
   /** Вариант, созданный из поля: пока поле открыто, он — в поле, а не карточкой. */
-  const markCreated = (id: number, option: string) =>
-    setCreated((ids) => (ids[id] === option ? ids : { ...ids, [id]: option }));
+  const markCreated = (id: number, option: Option) =>
+    setCreated((known) => (known[id] === option ? known : { ...known, [id]: option }));
 
   /** Сохранить то, что было в поле в момент snapshot. */
   const send = async ({ question, text, session: id }: Field): Promise<boolean> => {
@@ -134,7 +142,7 @@ export function useOwnOption(
       const recovered = outcome.value;
       session.option = recovered.id;
       session.saved = recovered.text;
-      markCreated(id, recovered.id);
+      markCreated(id, recovered);
       outcome = await updateOption.attempt(councilId, streamId, question, recovered.id, text);
     }
     setSending((n) => n - 1);
@@ -145,7 +153,7 @@ export function useOwnOption(
     const saved = outcome.value;
     session.option = saved.id;
     session.saved = saved.text;
-    markCreated(id, saved.id);
+    markCreated(id, saved);
     markFailed(id, undefined);
     if (!session.unselect) onSavedRef.current(question, saved.id);
     return true;
@@ -236,14 +244,29 @@ export function useOwnOption(
     queue.current = queue.current.then(() => sendRef.current(field));
   };
 
+  // Шаг сменил состояние — поля прежних вариантов забываются: набранное в них не уходит, а то, что уже уходит, выбором не
+  // становится.
+  useRound(round, () => {
+    clearTimeout(timer.current);
+    setScheduled(false);
+    for (const session of sessions.current.values()) session.unselect = true;
+    sessions.current.clear();
+    fieldsRef.current = {};
+    setFields({});
+    setCreated({});
+    setFailed({});
+  });
+
   // Экран закрыли — набранное уходит сразу.
   useEffect(() => () => void flush(), [flush]);
 
   const field = current === undefined ? undefined : fields[current];
+  const stored = field ? created[field.session] : undefined;
   return {
     shown: field !== undefined,
     text: field?.text ?? '',
-    option: field ? (created[field.session] ?? null) : null,
+    option: stored?.id ?? null,
+    unsaved: field !== undefined && canSaveOption(field.text) && !sameText(field.text, stored?.text ?? ''),
     error: field ? failed[field.session] : undefined,
     saving: scheduled || sending > 0,
     open,
