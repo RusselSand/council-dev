@@ -138,7 +138,10 @@ export interface OptionsStep {
   /** «Утвердить» не действует: выбор уже утверждается или шаг запускают снова. */
   approveDisabled: boolean;
   approve: () => void;
-  /** Не вышло утвердить или что-то из правок не сохранилось и «Утвердить» не утвердил. */
+  /**
+   * Не вышло утвердить или что-то из правок не сохранилось и «Утвердить» не утвердил — в этом наборе вариантов: в новом
+   * ошибки прежнего нет.
+   */
   approveError: ApiError | undefined;
 }
 
@@ -180,13 +183,16 @@ export function useOptionsStep(
   const choices = useOptionChoices(councilId, streamId, run, round);
   const approveAction = useApproveOptions();
   const [current, setCurrent] = useState<string>();
-  // Набор вариантов другой — открывается его первый вопрос без выбора, как на только что открытом шаге, а не тот, что
-  // был открыт в прежнем.
-  useRound(round, () => setCurrent(undefined));
   const [droppedOpen, setDroppedOpen] = useState(false);
   const [approving, setApproving] = useState(false);
-  /** «Утвердить» не утвердил: что-то из правок не сохранилось. */
-  const [unsaved, setUnsaved] = useState(false);
+  /** «Утвердить» не утвердил в этом наборе вариантов: не вышло утвердить или что-то из правок не сохранилось. */
+  const [approveError, setApproveError] = useState<ApiError>();
+  // Набор вариантов другой — открывается его первый вопрос без выбора, как на только что открытом шаге, а не тот, что
+  // был открыт в прежнем. Ошибка «Утвердить» — про прежний набор, правки и выбор которого уже забыты: она забывается.
+  const generation = useRound(round, () => {
+    setCurrent(undefined);
+    setApproveError(undefined);
+  });
 
   /** Шаг на экране: ушли с него, пока выбор утверждался, — «Решения» не открываем. */
   const open = useRef(false);
@@ -305,8 +311,10 @@ export function useOptionsStep(
     // Утверждается выбор в вариантах, которые на экране: шаг, пока правки дожидались ответа, запустили снова — сервер не
     // утвердит варианты, которых человек не видел.
     const approvedRun = query.data.run;
+    // Набор вариантов, в котором утверждают: сменился, пока утверждался, — ошибка про прежний, под кнопкой её нет.
+    const startedIn = generation.current;
     setApproving(true);
-    setUnsaved(false);
+    setApproveError(undefined);
     void (async () => {
       // Утверждается то, что на экране: сначала — набранное в полях «Свой вариант» (и там, где не вышло), правка и
       // выбор, которые ещё идут. Правка открыта с ошибкой или с набранным, которое не сохраняли, — она не сохранилась.
@@ -315,9 +323,11 @@ export function useOptionsStep(
       const chosen = await choices.settle();
       const saved = ownSaved && edited && chosen;
       // Не сохранилось — не утверждаем и говорим под кнопкой: ошибка может быть у вопроса, которого нет на экране.
-      setUnsaved(!saved);
-      const stream = saved ? await approveAction.run(councilId, streamId, approvedRun) : undefined;
+      const { value: stream, error } = saved
+        ? await approveAction.attempt(councilId, streamId, approvedRun)
+        : { value: undefined, error: NOT_SAVED };
       setApproving(false);
+      if (generation.current === startedIn) setApproveError(error);
       if (stream && open.current) {
         navigate(routePath({ screen: 'step', council: councilId, stream: streamId, step: 'decisions' }));
       }
@@ -406,6 +416,6 @@ export function useOptionsStep(
     chosen: t('options.chosen', { done, total: sets.length }),
     approveDisabled,
     approve,
-    approveError: unsaved ? NOT_SAVED : approveAction.error,
+    approveError,
   };
 }
