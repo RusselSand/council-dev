@@ -4,9 +4,9 @@ import type { CouncilSummary } from '../../domain/council';
 import { useI18n } from '../../i18n';
 import { Columns } from '../../ui/Columns';
 import { DashedNote } from '../../ui/DashedNote';
+import { TitledCard } from '../../ui/TitledCard';
 import { RunPanel } from './parts/RunPanel';
 import { StepBanner } from './parts/StepBanner';
-import { StepCard } from './parts/StepCard';
 import { StepChain } from './parts/StepChain';
 import { StreamTabs } from './parts/StreamTabs';
 import { useStreamPage, type StepContext, type StepRoute } from './useStreamPage';
@@ -48,9 +48,9 @@ export function Stream({ council, route, children }: StreamProps) {
           </>
         }
         main={
-          <StepCard caps={page.caps} title={page.title} hint={page.hint}>
+          <TitledCard caption={page.caps} title={page.title} intro={page.hint}>
             {page.idle ? <DashedNote text={t('stream.idle')} /> : children(page.context)}
-          </StepCard>
+          </TitledCard>
         }
       />
     </>

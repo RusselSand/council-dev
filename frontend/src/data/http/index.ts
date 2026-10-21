@@ -11,6 +11,7 @@ import type { Finding, Research } from '../../domain/research';
 import type { Fragment, Slicing } from '../../domain/slicing';
 import type { ProjectDecisions, Stream } from '../../domain/stream';
 import type { Group, Structure } from '../../domain/structure';
+import type { TasksPlan } from '../../domain/tasks';
 import type { DataSource } from '../source';
 import { request } from './request';
 
@@ -224,6 +225,17 @@ export const httpSource: DataSource = {
   async approveNotes(id, streamId) {
     const { stream } = await request<{ stream: Stream }>('POST', `${streamPath(id, streamId)}/notes/approve`, {});
     return stream;
+  },
+  async getTasks(id) {
+    const { catalog, tasks, vanished, readyStreams, pendingStreams } = await request<TasksPlan>(
+      'GET',
+      `${councilPath(id)}/tasks`,
+    );
+    return { catalog, tasks, vanished, readyStreams, pendingStreams };
+  },
+  async approveTasks(id) {
+    const { council } = await request<{ council: CouncilSummary }>('POST', `${councilPath(id)}/tasks/approve`, {});
+    return council;
   },
   async listModels() {
     const { models } = await request<{ models: Model[] }>('GET', '/models');

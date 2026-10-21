@@ -10,6 +10,7 @@ import type { Research } from '../../domain/research';
 import type { Slicing } from '../../domain/slicing';
 import type { ProjectDecisions, Stream } from '../../domain/stream';
 import type { Structure } from '../../domain/structure';
+import type { TasksPlan } from '../../domain/tasks';
 
 /**
  * Данные этапа, на котором работают модели, и чьи они: правка одного совета не должна попасть в данные другого.
@@ -97,6 +98,11 @@ export interface StreamNotes extends NotesExport {
   state: State;
 }
 
+/** План задач и совет, чей он: ответ на запрос одного совета не должен попасть на экран другого. */
+export interface CouncilTasks extends TasksPlan {
+  council: string;
+}
+
 /** Данные, которые может изменить действие, и их вид: после действия их запросы перезапрашиваются. */
 export interface Topics {
   councils: CouncilSummary[];
@@ -125,6 +131,8 @@ export interface Topics {
   outcomes: StreamOutcomes;
   /** Выгрузка открытого потока в заметки. */
   notes: StreamNotes;
+  /** План задач открытого совета. */
+  tasks: CouncilTasks;
 }
 export type Topic = keyof Topics;
 

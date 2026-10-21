@@ -20,10 +20,13 @@ interface TagProps {
   tone: TagTone;
   size?: TagSize;
   shape?: TagShape;
+  /** Подпись моноширинным: номер задачи на «Задачах». */
+  mono?: boolean;
   children: ReactNode;
 }
 
 /** Короткая метка: состояние, роль, откуда что взялось. */
-export function Tag({ tone, size = 'sm', shape = 'pill', children }: TagProps) {
-  return <span className={`${styles.tag} ${styles[tone]} ${styles[size]} ${styles[shape]}`}>{children}</span>;
+export function Tag({ tone, size = 'sm', shape = 'pill', mono = false, children }: TagProps) {
+  const classes = [styles.tag, styles[tone], styles[size], styles[shape], mono && styles.mono];
+  return <span className={classes.filter(Boolean).join(' ')}>{children}</span>;
 }

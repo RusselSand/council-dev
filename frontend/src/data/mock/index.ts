@@ -8,6 +8,7 @@ import { fitsKind, isFigmaLink, isPending, isSettled, researchStatus, type Resea
 import { isLabel, type Slicing } from '../../domain/slicing';
 import { stepOf, type ProjectDecisions } from '../../domain/stream';
 import type { Structure } from '../../domain/structure';
+import type { TasksPlan } from '../../domain/tasks';
 import { ApiError } from '../errors';
 import type { DataSource } from '../source';
 import { BRIEFS } from './briefs';
@@ -22,6 +23,8 @@ import {
   structureConfirmed,
   structureRetried,
   structureStarted,
+  tasksReopened,
+  tasksWritten,
 } from './councils';
 import { DECISIONS, type MockDecision } from './decisions';
 import { MODELS } from './models';
@@ -58,6 +61,7 @@ import {
   startedStructure,
   STRUCTURES,
 } from './structures';
+import { TASKS, tasksCatalog } from './tasks';
 
 /** Копия, чтобы экран не мог поменять моки у себя в руках. */
 const copy = <T>(value: T): T => structuredClone(value);
@@ -398,6 +402,25 @@ function notesWritten(id: string, streamId: string, written: MockNotes) {
       return change ? { ...d, status: change.to, supersededBy: change.supersededBy } : d;
     });
   }
+}
+
+/**
+ * План задач совета, как его отдаёт сервер: задачи потоков, у которых «Итоги» готовы (утверждённые итоги уходят в
+ * задачи), остальные потоки — ещё не дошли до итогов. Новых задач моки не собирают: модели в моках не заканчивают шаг,
+ * и задачи есть только у советов из данных макета.
+ */
+function tasksPlanOf(id: string): TasksPlan {
+  const council = councils[councilAt(id)];
+  const list = streams.get(id) ?? [];
+  const ready = list.filter((stream) => stepOf(stream, 'outcomes').state === 'done').map((stream) => stream.id);
+  const plan = TASKS[id] ?? { tasks: [], vanished: [] };
+  return {
+    catalog: tasksCatalog(council.project),
+    tasks: plan.tasks.filter((task) => ready.includes(task.stream)),
+    vanished: plan.vanished,
+    readyStreams: ready,
+    pendingStreams: list.filter((stream) => !ready.includes(stream.id)).map((stream) => stream.id),
+  };
 }
 
 /** Совет поменяли: новое время изменения. */
@@ -941,7 +964,8 @@ export const mockSource: DataSource = {
       const now = new Date().toISOString();
       const { participants, judge } = councils[index];
       list[at] = outcomesStepApproved(list[at], approved, all.length, participants, judge, now);
-      councils[index] = streamsChanged(councils[index], list, streamId, now);
+      // Поток дошёл до итогов: его задачи встают в план незаписанными — записанные «Задачи» снова не готовы.
+      councils[index] = streamsChanged(tasksReopened(councils[index]), list, streamId, now);
     }
     return copy(list[at]);
   },
@@ -968,6 +992,17 @@ export const mockSource: DataSource = {
       councils[index] = streamsChanged(councils[index], list, streamId, now);
     }
     return copy(list[at]);
+  },
+  async getTasks(id) {
+    return copy(tasksPlanOf(id));
+  },
+  async approveTasks(id) {
+    const index = councilAt(id);
+    const { tasks } = tasksPlanOf(id);
+    if (!tasks.length) throw new ApiError('tasks_not_ready', `В плане совета ${id} нет задач`, 409);
+    // Задачи уже записаны — ничего не меняем, отвечаем советом как есть. План после записи остаётся таким же.
+    councils[index] = tasksWritten(councils[index], tasks.length, new Date().toISOString());
+    return copy(councils[index]);
   },
   async listModels() {
     return copy(MODELS);

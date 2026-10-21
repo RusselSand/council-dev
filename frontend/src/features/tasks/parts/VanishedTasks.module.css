@@ -1,0 +1,42 @@
+.block {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-8);
+  min-width: 0;
+  padding: var(--space-16) var(--space-18);
+  border-radius: var(--radius-22);
+  background: var(--color-glass-faint);
+}
+
+.intro {
+  margin: 0;
+  font-size: var(--text-sm);
+  color: var(--color-text-muted);
+  text-wrap: pretty;
+}
+
+/* Номера — одной колонкой по самому длинному, заголовки — рядом. */
+.list {
+  display: grid;
+  grid-template-columns: max-content minmax(0, 1fr);
+  gap: var(--space-8) var(--space-10);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.row {
+  display: contents;
+}
+
+.id {
+  font-family: var(--font-mono);
+  font-size: var(--text-sm);
+  color: var(--color-text-muted);
+}
+
+.title {
+  font-size: var(--text-md);
+  color: var(--color-text-muted);
+  overflow-wrap: anywhere;
+}

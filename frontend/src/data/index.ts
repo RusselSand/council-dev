@@ -3,6 +3,7 @@ export { useAutosave, type Autosave } from './hooks/useAutosave';
 export { holdBrief, useCouncilBrief, useSaveBrief } from './hooks/useBrief';
 export {
   useApproveResearch,
+  useApproveTasks,
   useConfirmStructure,
   useCouncils,
   useCreateCouncil,
@@ -57,6 +58,7 @@ export {
   useRetryStream,
 } from './hooks/useStreams';
 export { useCouncilStructure, useGroupEdits, type GroupEdits } from './hooks/useStructure';
+export { useCouncilTasks } from './hooks/useTasks';
 export type { Mutation, Outcome } from './hooks/useMutation';
 export type { Query } from './hooks/useQuery';
 export type { DataSource } from './source';

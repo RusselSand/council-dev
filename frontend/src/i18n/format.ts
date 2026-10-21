@@ -1,4 +1,4 @@
-/** Даты и числа по правилам языка — через Intl, без склейки строк. */
+/** Даты, числа и перечисления по правилам языка — через Intl, без склейки строк. */
 
 /**
  * Как показать дату:
@@ -11,9 +11,17 @@ export type DateStyle = 'time' | 'day' | 'relative';
 export type FormatDate = (value: string | Date, style?: DateStyle, now?: Date) => string;
 export type FormatNumber = (value: number) => string;
 
+/** Перечисление через «и»: «B и C», «A, B и C» / «B and C». */
+export type FormatList = (items: readonly string[]) => string;
+
 export function createNumberFormatter(locale: string): FormatNumber {
   const format = new Intl.NumberFormat(locale);
   return (value) => format.format(value);
+}
+
+export function createListFormatter(locale: string): FormatList {
+  const format = new Intl.ListFormat(locale, { style: 'long', type: 'conjunction' });
+  return (items) => format.format(items);
 }
 
 /** Начало суток по местному времени. */

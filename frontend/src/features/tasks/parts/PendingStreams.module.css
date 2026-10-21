@@ -1,0 +1,24 @@
+/* Заголовок и текст в строку; не влезают — текст уходит вниз. */
+.plate {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--space-4) var(--space-10);
+  margin: 0;
+  padding: var(--space-12) var(--space-16);
+  border-radius: var(--radius-18);
+  background: var(--state-waiting-bg);
+  font-size: var(--text-md);
+  line-height: var(--leading-relaxed);
+  color: var(--state-waiting-ink);
+}
+
+.title {
+  font-weight: var(--weight-bold);
+}
+
+.text {
+  flex: 1 1 var(--task-title-min);
+  min-width: 0;
+  text-wrap: pretty;
+}
