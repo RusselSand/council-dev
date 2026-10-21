@@ -1,4 +1,3 @@
-import { useRef } from 'react';
 import type { State } from '../../domain/council';
 import type { Choice, Option, OptionSet } from '../../domain/options';
 import type { Stream } from '../../domain/stream';
@@ -121,11 +120,22 @@ export function useOptionChoices(councilId: string, streamId: string, run: numbe
 }
 
 /**
+ * Ключи полей, из которых свой вариант ещё не создан, — по совету, потоку, запуску шага и полю. Общие для всех экранов
+ * «Варианты», а не у каждого свои: поле, набранное в котором не сохранилось, когда экран закрыли, ждёт его, открытого
+ * снова (useOwnOption()), и создаёт вариант с тем же ключом — повтор не создаёт второй.
+ */
+const fieldKeys = new Map<string, string>();
+
+const fieldOf = (councilId: string, streamId: string, run: number, field: string) =>
+  JSON.stringify([councilId, streamId, run, field]);
+
+/**
  * Свой вариант — POST /api/councils/<id>/streams/<streamId>/options/<questionId> с Idempotency-Key. field — поле, где
  * пишут вариант («Свой вариант» или правка варианта): пока вариант из него не создан, каждая попытка идёт с одним
  * ключом, даже если текст между ними поправили, — это тот же вариант, и повтор после оборванного ответа не создаёт
  * второй; создан — следующий с новым ключом. Ключ у каждого поля свой и держится, пока из поля не создан вариант, хоть
- * между попытками сохраняли другие поля. Ответ встаёт в конец вариантов вопроса сразу, если fresh() — набор вариантов
+ * между попытками сохраняли другие поля, — и между экранами (fieldKeys); у другого запуска шага — другой. Ответ встаёт
+ * в конец вариантов вопроса сразу, если fresh() — набор вариантов
  * тот же, что когда запрос ушёл (шаг сменил состояние — варианты другие, и ответ про прежние в них не встаёт); варианты
  * и список советов перезапрашиваются. Выбор вариант не меняет — выбирают его отдельно (useOptionChoices()). run — номер
  * запуска шага, варианты которого были на экране, когда вариант начали писать: шаг с тех пор запустили снова — сервер
@@ -144,8 +154,6 @@ export function useAddOption(): Mutation<
   ],
   Option
 > {
-  /** Ключи полей, из которых вариант ещё не создан, — по полю. */
-  const keys = useRef(new Map<string, string>());
   return useMutation(
     async (
       id: string,
@@ -157,10 +165,11 @@ export function useAddOption(): Mutation<
       field: string,
       _fresh: () => boolean,
     ) => {
-      let key = keys.current.get(field);
+      const of = fieldOf(id, streamId, run, field);
+      let key = fieldKeys.get(of);
       if (key === undefined) {
         key = newKey();
-        keys.current.set(field, key);
+        fieldKeys.set(of, key);
       }
       try {
         return await source.addOption(id, streamId, run, questionId, text, basedOn, key);
@@ -169,8 +178,8 @@ export function useAddOption(): Mutation<
         throw error;
       }
     },
-    (option, id, streamId, _run, questionId, _text, _basedOn, field, fresh) => {
-      keys.current.delete(field);
+    (option, id, streamId, run, questionId, _text, _basedOn, field, fresh) => {
+      fieldKeys.delete(fieldOf(id, streamId, run, field));
       markStale('options', fresh() ? putOption(id, streamId, questionId, option) : undefined);
       markStale('councils');
     },
