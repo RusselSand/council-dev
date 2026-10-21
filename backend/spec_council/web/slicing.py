@@ -31,9 +31,9 @@ Phase = Literal["slice", "slice_judge", "label", "label_judge"]
 PHASES: tuple[Phase, ...] = ("slice", "slice_judge", "label", "label_judge")
 JUDGES = (StepName.slice_judge, StepName.label_judge)
 
-# Что новая нарезка стирает: группы и потоки были про прежние фрагменты (docs/old/arch.md,
-# «Группы»), а у новых фрагментов те же номера. Решение q-001.
-RESLICED = {"structure": None, "streams": None}
+# Что новая нарезка стирает: группы, их подтверждение и потоки были про прежние фрагменты
+# (docs/old/arch.md, «Группы»), а у новых фрагментов те же номера. Решение q-001.
+RESLICED = {"structure": None, "groups_confirmed": False, "streams": None}
 
 
 class SlicingStep(Schema):
@@ -154,5 +154,9 @@ def fragment_of(fragment: LabeledFragment) -> Fragment:
 
 
 def key_of(fragment: LabeledFragment) -> str:
+    return fragment_key(fragment.id)
+
+
+def fragment_key(number: int) -> str:
     """id фрагмента в контракте: «F2» — второй фрагмент нарезки."""
-    return f"F{fragment.id}"
+    return f"F{number}"

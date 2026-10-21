@@ -96,20 +96,74 @@ class Slicing(BaseModel):
     error: str | None = None
 
 
+class IdeaOption(BaseModel):
+    """Формулировка идеи, как её восстановили по фрагментам группы. Одинаковые формулировки
+    разных участников — один вариант."""
+
+    idea: str
+    # На какие фрагменты группы она опирается.
+    evidence: list[int]
+    reason: str
+    # Кто предложил: человек видит, судья — нет.
+    models: list[str]
+
+
+class IdeaProposal(BaseModel):
+    """Что предлагает совет. idea None — не предлагает: никто из участников не взялся
+    восстановить идею или судья не принял ни один вариант; reason — почему."""
+
+    idea: str | None
+    evidence: list[int] = []
+    reason: str
+    # agreed — вариант один у нескольких ответов (или идеи нет), судья не понадобился; judge —
+    # решал судья.
+    decided_by: Literal["agreed", "judge"]
+    # Какой из IdeaDiscovery.options предложен как есть; None — судья свёл формулировки.
+    option: int | None = None
+
+
+class IdeaDiscovery(BaseModel):
+    """Поиск идеи группы, в тексте которой её нет: участники по отдельности, судья — если
+    вариантов несколько. Ход по шагам и итог."""
+
+    state: Literal["running", "done", "failed"]
+    run: str = ""
+    steps: list[Step]
+    options: list[IdeaOption] = []
+    proposal: IdeaProposal | None = None
+    error: str | None = None
+
+
+class GroupOrigin(BaseModel):
+    """След правки человека: с группой объединили группу group (merged) или её выделили из
+    группы group (split). Объединённой группы уже нет — след остаётся."""
+
+    kind: Literal["merged", "split"]
+    group: str
+
+
 class Group(BaseModel):
     """Фрагменты вокруг одной задумки. Общий фрагмент (ограничение, риск) входит в несколько
     групп тем же ID: копия со ссылкой на источник, а не новый фрагмент."""
 
-    # A, B, C… по порядку первого фрагмента. Правки человека букв не переставляют: у новой
-    # группы — первая свободная.
+    # A, B, C… по порядку первого фрагмента, как разложил совет. Правки человека букв и порядка
+    # не меняют: новая группа встаёт за той, из которой её выделили, под первой свободной буквой.
     id: str
     title: str
+    # По порядку группы: у объединённой — сначала свои, потом той, что к ней присоединили.
     fragment_ids: list[int]
     idea_fragment_ids: list[int]
     # Идеи в тексте нет: её восстановит следующий этап, сам совет её не формулирует.
     missing_idea: bool
     # Какие из fragment_ids есть и в других группах.
     shared_fragment_ids: list[int] = []
+    # Своя идея группы: вписал человек или осталась после объединения и разделения. None —
+    # своей нет, идея — из текста или та, что восстановил совет (groups.idea_of).
+    idea: str | None = None
+    idea_by: Literal["text", "ai", "user"] | None = None
+    # Поиск идеи группы, у которой её нет: совет ищет её, когда группы подтверждают.
+    discovery: IdeaDiscovery | None = None
+    origins: list[GroupOrigin] = []
 
 
 class GroupRelation(BaseModel):
@@ -162,44 +216,6 @@ class Structure(BaseModel):
         """Человек менял группы: они не такие, как предложил совет."""
         return self.proposal is not None and (
             self.groups != self.proposal.groups or self.relations != self.proposal.relations)
-
-
-class IdeaOption(BaseModel):
-    """Формулировка идеи, как её восстановили по фрагментам группы. Одинаковые формулировки
-    разных участников — один вариант."""
-
-    idea: str
-    # На какие фрагменты группы она опирается.
-    evidence: list[int]
-    reason: str
-    # Кто предложил: человек видит, судья — нет.
-    models: list[str]
-
-
-class IdeaProposal(BaseModel):
-    """Что предлагает совет. idea None — не предлагает: никто из участников не взялся
-    восстановить идею или судья не принял ни один вариант; reason — почему."""
-
-    idea: str | None
-    evidence: list[int] = []
-    reason: str
-    # agreed — вариант один у нескольких ответов (или идеи нет), судья не понадобился; judge —
-    # решал судья.
-    decided_by: Literal["agreed", "judge"]
-    # Какой из IdeaDiscovery.options предложен как есть; None — судья свёл формулировки.
-    option: int | None = None
-
-
-class IdeaDiscovery(BaseModel):
-    """Поиск идеи группы, в тексте которой её нет: участники по отдельности, судья — если
-    вариантов несколько. Ход по шагам и итог."""
-
-    state: Literal["running", "done", "failed"]
-    run: str = ""
-    steps: list[Step]
-    options: list[IdeaOption] = []
-    proposal: IdeaProposal | None = None
-    error: str | None = None
 
 
 class StreamIdea(BaseModel):
@@ -1084,7 +1100,10 @@ class Council(BaseModel):
     project: str = ""
     slicing: Slicing | None = None
     structure: Structure | None = None
-    # Потоки подтверждённых групп, по их порядку. None — группы ещё не подтверждены.
+    # Группы подтверждены («Подтвердить группы»). Прежняя версия подтверждала их, заводя потоки,
+    # и у её советов этого поля нет: подтверждены — есть потоки (groups.confirmed).
+    groups_confirmed: bool = False
+    # Потоки групп, по их порядку. None — потоков ещё нет.
     streams: list[Stream] | None = None
     # Исследование репозитория и макета на весь совет. None — к нему ещё не приступали.
     research: Research | None = None

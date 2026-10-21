@@ -1,19 +1,17 @@
-"""Старая ручка запуска раскладки и общее для старых ходов совета. Список, создание, правка
-совета и нарезка — в новом API (web/); ход в фоне и его отчёт — background.py."""
+"""Общий запуск старых ходов совета (start_run) — ему остался поиск идеи потока. Советы, нарезка
+и группы — в новом API (web/); ход в фоне и его отчёт — background.py."""
 
 from collections.abc import Callable
 
-from fastapi import APIRouter, HTTPException
+from fastapi import HTTPException
 
 from ..agents import AgentRunner
-from ..background import RunState, Slot, launched, reporter, running, seeking
+from ..background import RunState, Slot, launched, reporter, running
 from ..config import AppConfig
-from ..deps import AgentsDep, ConfigDep, Launcher, LauncherDep, Store, StoreDep
+from ..deps import Launcher, Store
 from ..models import Council, CouncilStatus
-from ..pipeline import CouncilRun, GroupingRun
+from ..pipeline import CouncilRun
 from ..store import council_lock
-
-router = APIRouter(prefix="/councils", tags=["councils"])
 
 MISSING = "Совет не найден"
 NOT_FOUND = {404: {"description": MISSING}}
@@ -27,39 +25,12 @@ CANNOT_START = {
 # Сколько раз проверять вход заново, если состав совета меняют прямо во время проверки.
 PROBE_ATTEMPTS = 3
 
-STRUCTURE = Slot(lambda council: council.structure, lambda council, state: {"structure": state},
-                 lambda council: council.structure.revision if council.structure else 0)
-
-
-@router.post("/{council_id}/structure", status_code=202, responses={**NOT_FOUND, **CANNOT_START})
-def start_structure(council_id: str, store: StoreDep, config: ConfigDep, agents: AgentsDep,
-                    launch: LauncherDep) -> Council:
-    """Запускает раскладку фрагментов готовой нарезки по группам, в фоне. Ход — в
-    council.structure. Типы берутся текущие, с правками человека. Новая раскладка снимает
-    подтверждение групп: потоки были про прежние."""
-    def ready(council: Council) -> None:
-        if running(council.slicing):
-            raise HTTPException(423, "Нарезка ещё идёт — группы после неё")
-        if seeking(council):
-            raise HTTPException(
-                423, "Совет ищет идеи потоков — дождитесь его, потом раскладывайте заново")
-        if council.slicing is None or council.slicing.state != "done":
-            raise HTTPException(422, "Раскладывать нечего: сначала нужна готовая нарезка")
-
-    return start_run(
-        council_id, store, config, agents, launch, STRUCTURE, ready, CouncilStatus.structure,
-        lambda council, report: GroupingRun(council.id, council.slicing, council.participants,
-                                            council.judge, agents, report),
-        also={"streams": None},
-    )
-
 
 def start_run(council_id: str, store: Store, config: AppConfig, agents: AgentRunner,
               launch: Launcher, slot: Slot, ready: Callable[[Council], None],
               status: CouncilStatus | None, build: Callable[[Council, Callable], CouncilRun],
               also: dict | None = None) -> Council:
-    """Общий запуск хода совета: нарезки, групп, поиска идеи потока. status None — статус
-    совета ход не меняет.
+    """Общий запуск хода совета: поиска идеи потока. status None — статус совета ход не меняет.
 
     Вход проверяется заново, а не из памяти: запуск платный. Это запуски CLI, поэтому вне
     замка; под замком — только сверка: не запустил ли ход кто-то другой и не поменялся ли

@@ -263,6 +263,11 @@ def interrupted(council: Council) -> Council:
         state = getattr(council, field)
         if running(state):
             changes[field] = halted(state)
+    structure = changes.get("structure", council.structure)
+    if structure is not None and any(running(group.discovery) for group in structure.groups):
+        changes["structure"] = structure.model_copy(update={"groups": [
+            group.model_copy(update={"discovery": halted(group.discovery)})
+            if running(group.discovery) else group for group in structure.groups]})
     research = council.research
     if research is not None and (running(research.scan) or running(research.design_scan)):
         changes["research"] = research.model_copy(update={

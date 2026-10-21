@@ -1,5 +1,7 @@
-"""Потоки — подтверждённые группы. Подтверждение заводит поток на каждую группу и сразу
-запускает поиск идеи у тех, в тексте которых её нет. Человек утверждает идею потока —
+"""Потоки — подтверждённые группы. Прежняя версия заводила поток на каждую группу при
+подтверждении групп и сразу искала идею у тех, в тексте которых её нет; теперь группы
+подтверждает новый API (web/structure.py), а потоки этих ручек — у советов прежней версии,
+пока потоки не переедут в новый API. Человек утверждает идею потока —
 найденную советом, свою или записанную в тексте, — ещё на этапе «Группы». Когда исследование
 совета пройдено (research.py), человек начинает поток: поток берёт себе копию карты кода и
 описания макета, и совет сразу ищет открытые вопросы. Человек отбирает, какие из них решать, и
@@ -44,7 +46,6 @@ from ..models import (
     ApproveScope,
     Choice,
     Council,
-    CouncilStatus,
     Decision,
     DecisionAnalysis,
     DecisionDraft,
@@ -52,7 +53,6 @@ from ..models import (
     DesignScan,
     DesignStep,
     Group,
-    GroupsEdit,
     IdeaDiscovery,
     LabeledFragment,
     NotesDraft,
@@ -89,7 +89,6 @@ from ..pipeline import (
     scope_key,
     start_analysis,
     start_decisions,
-    start_idea,
     start_outcomes,
     start_proposals,
     start_questions,
@@ -140,46 +139,6 @@ BELOW_DECISIONS = {"questions": None, "scope": None, "proposals": None, "choices
 # Всё, что ниже шагов «Репозиторий» и «Дизайн»: другой скан, другой выбор на шаге или другая
 # идея это сбрасывает — и отбор решений проекта тоже.
 BELOW_DESIGN = {"decisions_search": None, "project_decisions": None, **BELOW_DECISIONS}
-
-
-@router.post("/{council_id}/structure/confirm",
-             responses={**NOT_FOUND, **NOT_THESE_GROUPS, **CHANGING})
-def confirm_groups(council_id: str, edit: GroupsEdit, store: StoreDep, config: ConfigDep,
-                   agents: AgentsDep, launch: LauncherDep) -> Council:
-    """Человек подтвердил группы: каждая становится потоком, совет переходит к потокам.
-    Подтверждает то, что видел: ту же раскладку и версию групп. Подтверждённые раньше —
-    ответ тот же, совет не меняется.
-
-    У групп без идеи совет сразу её ищет. Подтверждение от этого не зависит: нет
-    подключения к моделям — поиск записан упавшим с причиной, и его можно повторить."""
-    def plan() -> tuple[Council, bool]:
-        council = current(council_id, store, edit)
-        lacking = any(group.missing_idea for group in council.structure.groups)
-        return council, council.streams is None and lacking
-
-    def apply(council: Council, missing: list[str]) -> tuple[Council, list[CouncilRun]]:
-        if council.streams is not None:
-            return council, []  # подтвердили раньше или в другой вкладке
-        lacking = [group for group in council.structure.groups if group.missing_idea]
-        runs = {} if missing else {group.id: idea_run(council, group, agents, store)
-                                   for group in lacking}
-        streams = [Stream(group=group.id, discovery=searched(council, group, runs, missing))
-                   for group in council.structure.groups]
-        return store.update_council(
-            council_id, {"streams": streams, "status": CouncilStatus.review}), list(runs.values())
-
-    return launched_all(store, council_id, launch, *probed(config, agents, plan, apply))
-
-
-def searched(council: Council, group: Group, runs: dict[str, IdeaRun],
-             missing: list[str]) -> IdeaDiscovery | None:
-    """Поиск идеи потока при подтверждении: у группы с идеей его нет, без подключения —
-    упавший с причиной, иначе — идущий."""
-    if not group.missing_idea:
-        return None
-    if missing:
-        return unconnected(start_idea(council.participants, council.judge), missing)
-    return runs[group.id].state.model_copy(deep=True)
 
 
 @router.post("/{council_id}/streams/{group}/discovery", status_code=202,
@@ -1440,11 +1399,6 @@ def stream_slot(group: str, field: str) -> Slot:
         return {"streams": replaced(council, stream.model_copy(update={field: state}))}
 
     return Slot(get, put)
-
-
-def idea_run(council: Council, group: Group, runner: Runner, store: Store) -> IdeaRun:
-    return IdeaRun(council.id, fragments_of(council, group), council.participants, council.judge,
-                   runner, reporter(store, council.id, discovery(group.id)))
 
 
 def question_run(council: Council, group: str, stream: Stream, runner: Runner,
