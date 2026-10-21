@@ -7,6 +7,7 @@ from typing import Any
 
 from .deps import Launcher, Store
 from .models import (
+    STREAM_RUNS,
     Council,
     DecisionAnalysis,
     DecisionsSearch,
@@ -72,3 +73,16 @@ def reporter(store: Store, council_id: str, slot: Slot) -> Callable[[RunState], 
 
 def running(state: RunState | None) -> bool:
     return state is not None and state.state == "running"
+
+
+def seeking(council: Council) -> bool:
+    """Совет работает хоть над одним потоком — ищет идею, вопросы, варианты, проверяет выбор
+    или собирает итоги, — исследует код и макет или строит и выгружает план задач: новая
+    нарезка, раскладка или другой состав групп стёрли бы потоки из-под него."""
+    research = council.research
+    if research is not None and (running(research.scan) or running(research.design_scan)):
+        return True
+    if running(council.tasks) or running(council.tasks_draft):
+        return True
+    return any(running(getattr(stream, field))
+               for stream in council.streams or [] for field in STREAM_RUNS)

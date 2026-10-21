@@ -6,10 +6,10 @@ from collections.abc import Callable
 from fastapi import APIRouter, HTTPException
 
 from ..agents import AgentRunner
-from ..background import RunState, Slot, launched, reporter, running
+from ..background import RunState, Slot, launched, reporter, running, seeking
 from ..config import AppConfig
 from ..deps import AgentsDep, ConfigDep, Launcher, LauncherDep, Store, StoreDep
-from ..models import STREAM_RUNS, Council, CouncilStatus
+from ..models import Council, CouncilStatus
 from ..pipeline import CouncilRun, GroupingRun
 from ..store import council_lock
 
@@ -102,19 +102,6 @@ def start_run(council_id: str, store: Store, config: AppConfig, agents: AgentRun
     if not launched(launch, pipeline, report):
         raise HTTPException(503, "Сервер останавливается, ход не запущен")
     return council
-
-
-def seeking(council: Council) -> bool:
-    """Совет работает хоть над одним потоком — ищет идею, вопросы, варианты, проверяет выбор
-    или собирает итоги, — исследует код и макет или строит и выгружает план задач: новая
-    нарезка, раскладка или другой состав групп стёрли бы потоки из-под него."""
-    research = council.research
-    if research is not None and (running(research.scan) or running(research.design_scan)):
-        return True
-    if running(council.tasks) or running(council.tasks_draft):
-        return True
-    return any(running(getattr(stream, field))
-               for stream in council.streams or [] for field in STREAM_RUNS)
 
 
 def lineup(council: Council) -> frozenset[str]:

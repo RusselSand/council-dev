@@ -10,8 +10,26 @@ from fastapi.testclient import TestClient
 from spec_council.app import app
 from spec_council.config import config_of
 from spec_council.deps import get_agents, get_config, get_launcher, get_store
-from spec_council.models import ModelRun, Slicing, Step, Stream
-from spec_council.pipeline import ModelFailed, start, start_structure
+from spec_council.models import (
+    DesignStep,
+    ModelRun,
+    RepositoryStep,
+    Research,
+    Slicing,
+    Step,
+    Stream,
+    TasksDraft,
+)
+from spec_council.pipeline import (
+    ModelFailed,
+    start,
+    start_design,
+    start_idea,
+    start_questions,
+    start_scan,
+    start_structure,
+    start_tasks,
+)
 from spec_council.store import FileStore, InMemoryStore
 
 client = TestClient(app)
@@ -295,16 +313,116 @@ def test_slicing_again_starts_the_progress_over_and_drops_the_fragments(store, p
     assert slicing_of(council_id)["fragments"] == SLICED
 
 
-def test_slicing_again_drops_the_groups_and_streams_of_the_old_fragments(store, pool):
-    council_id = sliced(store, pool)
+def grouped(store, council_id: str, **fields) -> None:
+    """Совет ушёл дальше «Нарезки»: группы разложены и подтверждены — у него поток A."""
     council = store.get_council(council_id)
-    grouped = start_structure(["sol", "fable"], "fable", council.slicing).model_copy(
+    structure = start_structure(["sol", "fable"], "fable", council.slicing).model_copy(
         update={"state": "done"})
-    store.update_council(council_id, {"structure": grouped, "streams": [Stream(group="A")]})
-    slices(council_id)
-    council = store.get_council(council_id)
-    assert (council.structure, council.streams) == (None, None)
-    assert council.brief == TEXT
+    store.update_council(council_id, {"structure": structure, "streams": [Stream(group="A")],
+                                      **fields})
+
+
+SLICES_RUNNING = {"stage": "slices", "stream": None, "step": None, "state": "running",
+                  "text": "sol и fable режут текст"}
+
+
+def test_slicing_again_drops_the_groups_and_streams_of_the_old_fragments(store, pool):
+    # Решение q-001: группы и потоки были про прежние фрагменты, у новых те же id.
+    council_id = sliced(store, pool)
+    grouped(store, council_id)
+    council = slices(council_id).json()["council"]
+    assert council["stages"] == dict(zip(STAGES, ("done", "running", "idle", "idle", "idle",
+                                                  "idle"), strict=True))
+    assert (council["stage"], council["state"], council["streams"]) == ("slices", "running", [])
+    assert council["activity"] == [SLICES_RUNNING]
+    stored = store.get_council(council_id)
+    assert (stored.structure, stored.streams) == (None, None)
+    assert stored.brief == TEXT
+
+
+def test_slicing_again_keeps_the_research(store, pool):
+    # Исследование — не про фрагменты: утверждённое остаётся готовым.
+    council_id = sliced(store, pool)
+    research = Research(repository=RepositoryStep(by="skipped"), design=DesignStep(by="skipped"))
+    grouped(store, council_id, research=research)
+    council = slices(council_id).json()["council"]
+    assert council["stages"] == dict(zip(STAGES, ("done", "running", "idle", "done", "idle",
+                                                  "idle"), strict=True))
+    assert council["activity"] == [SLICES_RUNNING]
+    assert store.get_council(council_id).research == research
+
+
+def test_slicing_again_leaves_a_started_research_waiting(store, pool):
+    council_id = sliced(store, pool)
+    grouped(store, council_id, research=Research(repository=RepositoryStep(by="skipped")))
+    council = slices(council_id).json()["council"]
+    assert council["stages"]["research"] == "waiting"
+    assert council["activity"] == [
+        {"stage": "research", "stream": None, "step": None, "state": "waiting",
+         "text": "Начните или пропустите оба исследования — потом группы станут потоками."},
+        SLICES_RUNNING]
+
+
+def test_a_research_not_started_waited_for_the_groups_only(store, pool):
+    # Ждало, пока подтвердят группы; групп больше нет — не начато.
+    council_id = sliced(store, pool)
+    grouped(store, council_id)
+    assert listed(council_id)["stages"]["research"] == "waiting"
+    assert slices(council_id).json()["council"]["stages"]["research"] == "idle"
+
+
+MODELS = ["sol", "fable"]
+# Где модели работают дальше «Нарезки»: группы, исследование кода и макета, поток (идея и шаг),
+# план задач и его выгрузка.
+WORKING = {
+    "structure": lambda council: {
+        "structure": start_structure(MODELS, "fable", council.slicing), "streams": None},
+    "code": lambda council: {"research": Research(scan=start_scan(MODELS, "fable", "", []))},
+    "design": lambda council: {
+        "research": Research(repository=RepositoryStep(by="skipped"),
+                             design_scan=start_design(MODELS, "fable", "", []))},
+    "idea": lambda council: {"streams": [Stream(group="A", discovery=start_idea(MODELS, "fable"))]},
+    "questions": lambda council: {
+        "streams": [Stream(group="A"),
+                    Stream(group="B", questions=start_questions(MODELS, "fable", "идея"))]},
+    "tasks": lambda council: {"tasks": start_tasks(MODELS, "fable", {})},
+    "tasks_draft": lambda council: {"tasks_draft": TasksDraft(state="running")},
+}
+
+
+@pytest.mark.parametrize("where", WORKING)
+def test_slicing_waits_while_the_models_work_past_it(store, pool, where):
+    # Решение q-001: новая нарезка стёрла бы группы и потоки из-под их работы.
+    council_id = sliced(store, pool)
+    grouped(store, council_id)
+    store.update_council(council_id, WORKING[where](store.get_council(council_id)))
+    before, shown = store.get_council(council_id), listed(council_id)
+    assert error_of(slices(council_id)) == (409, "models_running")
+    assert store.get_council(council_id) == before
+    assert listed(council_id) == shown
+    assert pool.jobs == []
+
+
+def test_slicing_goes_once_the_models_past_it_stop(store, pool):
+    # Ход, который кончился или упал, нарезке не мешает.
+    council_id = sliced(store, pool)
+    stopped = start_questions(MODELS, "fable", "идея").model_copy(update={"state": "failed"})
+    grouped(store, council_id, streams=[Stream(group="A", questions=stopped)],
+            research=Research(scan=start_scan(MODELS, "fable", "", []).model_copy(
+                update={"state": "done"})))
+    assert slices(council_id).json()["council"]["stages"]["slices"] == "running"
+    assert len(pool.jobs) == 1
+
+
+def test_a_running_slicing_is_answered_as_is_before_anything_else(store, pool):
+    # Нарезка уже идёт — совет как есть, даже если дальше кто-то работает.
+    council_id = new_council(store)
+    first = slices(council_id).json()["council"]
+    store.update_council(council_id, {"tasks": start_tasks(MODELS, "fable", {})}, touch=False)
+    again = slices(council_id)
+    assert again.status_code == 200
+    assert again.json()["council"]["stages"] == first["stages"]
+    assert len(pool.jobs) == 1
 
 
 def test_a_start_while_the_server_stops_leaves_a_failed_slicing(store):

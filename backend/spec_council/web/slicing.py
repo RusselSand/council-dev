@@ -4,15 +4,17 @@
 Хранение прежнее — council.slicing (models.Slicing): ход по шагам и фрагменты с номерами 1, 2…;
 в контракте id фрагмента — «F» и номер. Раньше нарезку запускала старая ручка (api/councils.py)
 после проверки входа в подписку моделей и отказывала пустому тексту, а тип фрагмента меняла
-правка совета (поля labels и slicing_run). По контракту больше ничего не проверяется: текст
-может быть пустым, модели — любыми; модель без входа не справляется с нарезкой в её ходе.
+правка совета (поля labels и slicing_run). По контракту текст может быть пустым, модели —
+любыми; модель без входа не справляется с нарезкой в её ходе. Проверяется одно (решение q-001):
+новая нарезка стирает группы и потоки, поэтому, пока модели работают на группах, исследовании,
+потоках или задачах, она не запускается — их работа пропала бы.
 """
 
 from typing import Literal
 
 from fastapi import APIRouter
 
-from ..background import SLICING, launched, reporter, running
+from ..background import SLICING, launched, reporter, running, seeking
 from ..deps import AgentsDep, LauncherDep, ProjectsDep, RepositoriesDep, StoreDep
 from ..models import Council, CouncilStatus, Label, LabeledFragment, StepName
 from ..pipeline import SlicingRun
@@ -30,7 +32,7 @@ PHASES: tuple[Phase, ...] = ("slice", "slice_judge", "label", "label_judge")
 JUDGES = (StepName.slice_judge, StepName.label_judge)
 
 # Что новая нарезка стирает: группы и потоки были про прежние фрагменты (docs/old/arch.md,
-# «Группы»), а у новых фрагментов те же номера.
+# «Группы»), а у новых фрагментов те же номера. Решение q-001.
 RESLICED = {"structure": None, "streams": None}
 
 
@@ -80,8 +82,10 @@ def start_slicing(council_id: str, store: StoreDep, agents: AgentsDep, launch: L
                   body: Empty | None = None) -> CouncilAnswer:
     """Режет текст ввода, каким он сохранён, моделями и судьёй совета — в фоне: ход виден в
     нарезке, фронт её опрашивает. Повтор после сбоя берёт оплаченные ответы даром. Нарезка уже
-    идёт — не перезапускается: в ответ совет как есть. Проверка «уже идёт» и запуск — под
-    замком советов: два нажатия не запустят две нарезки."""
+    идёт — не перезапускается: в ответ совет как есть. Модели работают дальше по совету —
+    models_running: нарезка стёрла бы группы и потоки из-под них. Проверки и запуск — под
+    замком советов: два нажатия не запустят две нарезки, а ход дальше не начнётся между
+    проверкой и запуском."""
     report = reporter(store, council_id, SLICING)
     pipeline = None
     with council_lock:
@@ -89,6 +93,10 @@ def start_slicing(council_id: str, store: StoreDep, agents: AgentsDep, launch: L
         if council is None:
             raise missing(council_id)
         if not running(council.slicing):
+            if running(council.structure) or seeking(council):
+                raise ApiError(409, "models_running",
+                               f"Модели совета {council_id} работают на группах, исследовании, "
+                               "потоках или задачах — дождитесь, пока они закончат")
             pipeline = SlicingRun(council.id, council.brief, council.participants,
                                   council.judge, agents, report)
             council = store.update_council(council_id, {

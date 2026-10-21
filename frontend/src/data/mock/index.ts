@@ -81,6 +81,15 @@ const slicings = new Map(Object.entries(SLICINGS).map(([id, slicing]) => [id, co
 const structures = new Map(Object.entries(STRUCTURES).map(([id, structure]) => [id, copy(structure)]));
 /** Исследования по id совета: действия и решения по находкам меняют их здесь; у каждого совета — своя копия. */
 const researches = new Map(Object.entries(RESEARCHES).map(([id, research]) => [id, copy(research)]));
+/**
+ * Советы, к исследованию которых приступали — начинали или пропускали хоть одно: новая нарезка оставляет его, каким
+ * было. У остальных исследование ждало только подтверждённых групп.
+ */
+const researched = new Set(
+  Object.entries(RESEARCHES)
+    .filter(([, research]) => research.code.state !== 'setup' || research.design.state !== 'setup')
+    .map(([id]) => id),
+);
 /** Потоки по id совета: «К потокам →» создаёт их, действия с шагами меняют их здесь. */
 const streams = new Map(Object.entries(STREAMS).map(([id, list]) => [id, copy(list)]));
 /** Прошлые решения по совету и потоку (streamKey): отбор меняет их здесь. */
@@ -134,6 +143,27 @@ function checkNotSlicing(council: CouncilSummary) {
   }
 }
 
+/**
+ * Пока модели работают дальше «Нарезки» — раскладывают фрагменты, исследуют, работают на шаге потока, — нарезку не
+ * запускают: она стёрла бы группы и потоки из-под них (решение q-001 бекенда).
+ */
+function checkNoModelsPastSlicing(council: CouncilSummary) {
+  const streaming = (streams.get(council.id) ?? []).some((s) => s.steps.some((step) => step.state === 'running'));
+  if (council.stages.structure === 'running' || council.stages.research === 'running' || streaming) {
+    throw new ApiError('models_running', `Модели совета ${council.id} работают дальше «Нарезки»`, 409);
+  }
+}
+
+/** Новая нарезка стёрла группы и потоки совета: с ними уходит всё, что было на шагах его потоков. */
+function forgetGroups(id: string) {
+  structures.delete(id);
+  streams.delete(id);
+  const byStream = [projectDecisions, questions, options, optionRuns, decisions, decisionRuns, outcomes, outcomeRuns];
+  for (const stored of [...byStream, notesExports]) {
+    for (const key of [...stored.keys()]) if (key.startsWith(streamKey(id, ''))) stored.delete(key);
+  }
+}
+
 /** Раскладка совета; у совета, который не раскладывали, её не было. */
 function structureOf(id: string): Structure {
   const structure = structures.get(id) ?? noStructure();
@@ -164,6 +194,7 @@ function researchOf(id: string): Research {
 
 /** С исследованием что-то сделали: этап «Исследование» и совет — по исследованию, утверждение снимается. */
 function researchDone(index: number, research: Research) {
+  researched.add(councils[index].id);
   councils[index] = researchChanged(councils[index], research, new Date().toISOString());
 }
 
@@ -517,9 +548,13 @@ export const mockSource: DataSource = {
     const index = councilAt(id);
     // Нарезка уже идёт — не перезапускаем, отвечаем советом как есть.
     if (councils[index].stages.slices !== 'running') {
-      councils[index] = slicingStarted(councils[index], new Date().toISOString());
+      checkNoModelsPastSlicing(councils[index]);
+      const research = researched.has(id) ? researchOf(id) : null;
+      councils[index] = slicingStarted(councils[index], research, new Date().toISOString());
       // Модели режут текст заново: фрагментов прошлой нарезки больше нет. В моках нарезка не кончается.
       slicings.set(id, startedSlicing(councils[index].participants, councils[index].judge));
+      // Группы и потоки были про прежние фрагменты, а у новых те же id.
+      forgetGroups(id);
     }
     return copy(councils[index]);
   },
