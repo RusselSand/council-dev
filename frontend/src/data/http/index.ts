@@ -2,6 +2,7 @@ import type { Brief } from '../../domain/brief';
 import type { CouncilSummary } from '../../domain/council';
 import type { DecisionsRound, StreamDecision } from '../../domain/decisions';
 import type { Model } from '../../domain/model';
+import type { NotesExport } from '../../domain/notes';
 import type { Option, OptionSet, OptionsRound } from '../../domain/options';
 import type { OutcomesRound, StreamOutcome } from '../../domain/outcomes';
 import type { Project } from '../../domain/project';
@@ -214,6 +215,14 @@ export const httpSource: DataSource = {
   async approveOutcomes(id, streamId, run) {
     const path = `${streamPath(id, streamId)}/outcomes/approve`;
     const { stream } = await request<{ stream: Stream }>('POST', path, { run });
+    return stream;
+  },
+  async getNotes(id, streamId) {
+    const { catalog, notes, statusChanges } = await request<NotesExport>('GET', `${streamPath(id, streamId)}/notes`);
+    return { catalog, notes, statusChanges };
+  },
+  async approveNotes(id, streamId) {
+    const { stream } = await request<{ stream: Stream }>('POST', `${streamPath(id, streamId)}/notes/approve`, {});
     return stream;
   },
   async listModels() {

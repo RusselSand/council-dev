@@ -25,6 +25,7 @@ import {
 } from './councils';
 import { DECISIONS, type MockDecision } from './decisions';
 import { MODELS } from './models';
+import { NOTES, type MockNotes } from './notes';
 import { noOptions, OPTIONS, ownOption, type MockOptionSet } from './options';
 import { OUTCOMES } from './outcomes';
 import { PROJECT_LIST, REPO_LIST, type MockProject } from './projects';
@@ -37,6 +38,7 @@ import {
   decisionsStepApproved,
   newDecisions,
   newStreams,
+  notesApproved,
   optionsApproved,
   optionsNote,
   outcomesNote,
@@ -97,6 +99,11 @@ const decisionRuns = new Map<string, number>();
 const outcomes = new Map(Object.entries(OUTCOMES).map(([key, list]) => [key, copy(list)]));
 /** Номер запуска шага «Итоги» по совету и потоку (streamKey): «Зафиксировать решения» и «Запустить снова» растят его. */
 const outcomeRuns = new Map<string, number>();
+/**
+ * Выгрузки в заметки по совету и потоку (streamKey): «Записать в каталог» читает их здесь. Новых черновиков моки не
+ * собирают: модели в моках не заканчивают шаг, и до «Документации» доходят только потоки из данных макета.
+ */
+const notesExports = new Map(Object.entries(NOTES).map(([key, value]) => [key, copy(value)]));
 /** Проекты моков: создание, правка и удаление меняют их здесь; живут, пока открыта вкладка. */
 const projects = copy(PROJECT_LIST);
 /** Idempotency-Key → id созданного по нему проекта. */
@@ -366,6 +373,31 @@ function outcomesChanged(index: number, id: string, streamId: string) {
   const done = stepOf(streamList[at], 'outcomes').state === 'done';
   streamList[at] = withNote(streamList[at], 'outcomes', outcomesNote(approved, list.length, done));
   touch(index);
+}
+
+/** Выгрузка потока в заметки; у потока, которому её ещё не собирали, — ничего. */
+const notesOf = (id: string, streamId: string): MockNotes =>
+  notesExports.get(streamKey(id, streamId)) ?? { catalog: null, notes: [], statusChanges: [], refs: {} };
+
+/**
+ * Поток записан в каталог: решениям и итогам потока — их id в каталоге (refs); у прошлых решений всех потоков того же
+ * каталога — новые статусы: следующие потоки увидят решение заменённым.
+ */
+function notesWritten(id: string, streamId: string, written: MockNotes) {
+  const stored = storedDecisions(id, streamId);
+  for (const decision of Object.values(stored)) decision.catalogId = written.refs[decision.adr] ?? decision.catalogId;
+  const list = outcomesOf(id, streamId);
+  list.forEach((o, i) => {
+    list[i] = { ...o, catalogId: written.refs[o.id] ?? o.catalogId };
+  });
+  const path = written.catalog?.path;
+  for (const past of projectDecisions.values()) {
+    if (!path || past.catalog?.path !== path) continue;
+    past.decisions = past.decisions.map((d) => {
+      const change = written.statusChanges.find((c) => c.id === d.id);
+      return change ? { ...d, status: change.to, supersededBy: change.supersededBy } : d;
+    });
+  }
 }
 
 /** Совет поменяли: новое время изменения. */
@@ -909,6 +941,30 @@ export const mockSource: DataSource = {
       const now = new Date().toISOString();
       const { participants, judge } = councils[index];
       list[at] = outcomesStepApproved(list[at], approved, all.length, participants, judge, now);
+      councils[index] = streamsChanged(councils[index], list, streamId, now);
+    }
+    return copy(list[at]);
+  },
+  async getNotes(id, streamId) {
+    councilAt(id);
+    const at = streamAt(id, streamId);
+    const { catalog, notes, statusChanges } = notesOf(id, streamId);
+    // «Документация» не начата — заметок нет.
+    const idle = stepOf((streams.get(id) ?? [])[at], 'notes').state === 'idle';
+    return copy(idle ? { catalog, notes: [], statusChanges: [] } : { catalog, notes, statusChanges });
+  },
+  async approveNotes(id, streamId) {
+    const index = councilAt(id);
+    const at = streamAt(id, streamId);
+    const list = streams.get(id) ?? [];
+    const { state } = stepOf(list[at], 'notes');
+    if (state === 'idle') throw new ApiError('notes_not_ready', `Шаг «Документация» потока ${streamId} не начат`, 409);
+    // Шаг уже готов — ничего не меняем, отвечаем потоком как есть.
+    if (state !== 'done') {
+      const written = notesOf(id, streamId);
+      notesWritten(id, streamId, written);
+      const now = new Date().toISOString();
+      list[at] = notesApproved(list[at], written.catalog ? written.notes.length : null, now);
       councils[index] = streamsChanged(councils[index], list, streamId, now);
     }
     return copy(list[at]);

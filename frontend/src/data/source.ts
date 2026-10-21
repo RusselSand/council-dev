@@ -2,6 +2,7 @@ import type { Brief } from '../domain/brief';
 import type { CouncilFields, CouncilSummary } from '../domain/council';
 import type { DecisionEdit, DecisionsRound, StreamDecision } from '../domain/decisions';
 import type { Model } from '../domain/model';
+import type { NotesExport } from '../domain/notes';
 import type { Choice, Option, OptionSet, OptionsRound } from '../domain/options';
 import type { OutcomesRound, StreamOutcome } from '../domain/outcomes';
 import type { Project, ProjectFields } from '../domain/project';
@@ -161,6 +162,13 @@ export interface DataSource {
    * ответ — поток.
    */
   approveOutcomes(id: string, streamId: string, run: number): Promise<Stream>;
+  /**
+   * GET /api/councils/<id>/streams/<streamId>/notes — выгрузка потока в заметки: каталог, заметки и решения проекта,
+   * статус которых она меняет.
+   */
+  getNotes(id: string, streamId: string): Promise<NotesExport>;
+  /** POST /api/councils/<id>/streams/<streamId>/notes/approve — «Записать в каталог»; ответ — поток. */
+  approveNotes(id: string, streamId: string): Promise<Stream>;
   /** GET /api/models */
   listModels(): Promise<Model[]>;
   /** GET /api/projects */

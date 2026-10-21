@@ -4,6 +4,7 @@ import { Brief } from '../features/brief';
 import { Council } from '../features/council';
 import { Decisions } from '../features/decisions';
 import { Home } from '../features/home';
+import { Notes } from '../features/notes';
 import { Options } from '../features/options';
 import { Outcomes } from '../features/outcomes';
 import { ProjectDecisions } from '../features/projectDecisions';
@@ -89,8 +90,7 @@ export function Screen() {
                   onBusy={onBusy}
                 />
               ) : (
-                // Остальные шаги пока не сделаны — в карточке шага заглушка. Шаг появится — его ветка встанет здесь.
-                <ScreenStub route={route} />
+                <Notes key={`${council.id}/${stream.id}`} councilId={council.id} streamId={stream.id} state={step.state} />
               )
             }
           </Stream>

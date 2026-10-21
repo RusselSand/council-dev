@@ -141,14 +141,17 @@ const C1: Stream[] = [
   ),
 ];
 
-/** Потоки готового совета-примера: шаги готовы, строки — как у потока A c1, заметки выгружены. */
+/**
+ * Потоки готового совета-примера: шаги готовы, строки — как у потока A c1, заметки выгружены — заметки макета (NOTES в
+ * prototype.js, их 9; в макете на Сводке у c1 — «8 заметок»).
+ */
 const doneProto = (...ids: (keyof typeof PROTO_TITLES)[]): Stream[] =>
   ids.map((id) =>
     protoStream(
       id,
       steps(
         mk(6, 'done'),
-        ['учтены ADR-0003, ADR-0005', 'отобрано 4 вопроса', 'выбрано 4 из 4', 'решено 4 из 4', 'итоги утверждены', 'выгружено заметок: 8'],
+        ['учтены ADR-0003, ADR-0005', 'отобрано 4 вопроса', 'выбрано 4 из 4', 'решено 4 из 4', 'итоги утверждены', 'выгружено заметок: 9'],
         PROTO_PARTICIPANTS,
         PROTO_JUDGE,
       ),
@@ -458,6 +461,20 @@ export const outcomesStepApproved = (
   judge: string,
   now: string,
 ): Stream => stepApproved(stream, 'outcomes', outcomesNote(approved, total, true), participants, judge, now);
+
+/**
+ * Строка «Документации» в цепочке, когда поток записан: «выгружено заметок: 57», как у g1 в макете; папки документации
+ * нет — записывать было некуда. Пишет сервер.
+ */
+const notesDoneNote = (count: number | null) =>
+  count === null ? 'у проекта нет папки документации' : `выгружено заметок: ${count}`;
+
+/**
+ * Поток после «Записать в каталог»: «Документация» готова — со строкой, сколько заметок выгружено (count; папки нет —
+ * null). Шаг последний: дальше шагов нет.
+ */
+export const notesApproved = (stream: Stream, count: number | null, now: string): Stream =>
+  stepApproved(stream, 'notes', notesDoneNote(count), [], '', now);
 
 /**
  * «Запустить снова» — шаг, который остановился, запускается снова: модели, которые уже ответили, заново не работают —
