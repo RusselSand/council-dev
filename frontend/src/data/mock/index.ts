@@ -23,6 +23,7 @@ import {
   structureConfirmed,
   structureRetried,
   structureStarted,
+  tasksReopened,
   tasksWritten,
 } from './councils';
 import { DECISIONS, type MockDecision } from './decisions';
@@ -963,7 +964,8 @@ export const mockSource: DataSource = {
       const now = new Date().toISOString();
       const { participants, judge } = councils[index];
       list[at] = outcomesStepApproved(list[at], approved, all.length, participants, judge, now);
-      councils[index] = streamsChanged(councils[index], list, streamId, now);
+      // Поток дошёл до итогов: его задачи встают в план незаписанными — записанные «Задачи» снова не готовы.
+      councils[index] = streamsChanged(tasksReopened(councils[index]), list, streamId, now);
     }
     return copy(list[at]);
   },

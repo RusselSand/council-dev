@@ -485,6 +485,13 @@ export const streamsChanged = (
   };
 };
 
+/**
+ * Совет, когда поток дошёл до итогов: его задачи встают в план незаписанными, и записанные «Задачи» снова не готовы.
+ * Ждут ли они вас, решает streamsChanged по правилам «Задач»: все потоки готовы — ждут, иначе не начаты.
+ */
+export const tasksReopened = (council: CouncilSummary): CouncilSummary =>
+  council.stages.tasks === 'done' ? { ...council, stages: { ...council.stages, tasks: 'idle' } } : council;
+
 /** «7 задач записаны в каталог» — итог совета, когда всё готово; текст пишет сервер. */
 const TASK_FORMS: Record<string, string> = { one: 'задача записана', few: 'задачи записаны', many: 'задач записаны' };
 const writtenText = (count: number) =>
