@@ -8,7 +8,7 @@ import styles from './QuestionRow.module.css';
 
 interface QuestionRowProps {
   question: QuestionView;
-  /** Вопросы утверждаются: «Убрать» / «Вернуть» не действует. */
+  /** Вопросы утверждаются или шаг запускают снова: «Убрать» / «Вернуть» не действует. */
   disabled: boolean;
   onToggle: (id: string) => void;
 }

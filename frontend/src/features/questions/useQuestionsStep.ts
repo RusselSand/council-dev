@@ -57,8 +57,8 @@ export interface QuestionsStep {
   questions: QuestionView[];
   /** «Убрать» / «Вернуть». */
   toggle: (id: string) => void;
-  /** Вопросы утверждаются: «Убрать», «Добавить» и «Утвердить» не действуют. */
-  approving: boolean;
+  /** Вопросы утверждаются или шаг запускают снова: «Убрать», «Добавить» и «Утвердить» не действуют. */
+  locked: boolean;
 
   /** Что набрано в поле «Свой вопрос…». */
   draft: string;
@@ -81,9 +81,10 @@ export interface QuestionsStep {
  * Шаг «Вопросы», как в макете: вопросы с источником и «почему», «Пересматривает решение проекта», «В тексте уже есть
  * ответ», «Убрать» / «Вернуть» — сразу на сервер; «Свой вопрос…» и «Добавить»; «Утвердить вопросы → к вариантам» —
  * сначала дожидается «Убрать» / «Вернуть», потом утверждает и открывает «Варианты» потока; ушли с экрана, пока
- * утверждались, — не открывает. «Утвердить» и «Запустить снова» шага не уходят вместе: retrying — шаг запускают
- * снова, и «Утвердить» не действует; пока вопросы утверждаются, onBusy(true) — не действует «Запустить снова». Другой
- * поток — другой экран: ставьте с key по совету и потоку.
+ * утверждались, — не открывает. Правки и «Утвердить» не уходят вместе с «Запустить снова» шага: retrying — шаг
+ * запускают снова, и «Убрать», «Добавить», «Утвердить» не действуют; пока вопросы утверждаются, свой вопрос
+ * добавляется или «Убрать» / «Вернуть» ждут ответа, onBusy(true) — не действует «Запустить снова». Другой поток —
+ * другой экран: ставьте с key по совету и потоку.
  */
 export function useQuestionsStep(
   councilId: string,
@@ -109,14 +110,17 @@ export function useQuestionsStep(
     };
   }, []);
 
-  // Пока вопросы утверждаются, «Запустить снова» не действует; утвердили, не вышло или ушли с шага — снова действует.
+  // Пока ответа ждут утверждение, свой вопрос или «Убрать» / «Вернуть», «Запустить снова» не действует; ответили или
+  // ушли с шага — снова действует.
+  const busy = approving || addAction.pending || Object.keys(removals.pending).length > 0;
   useEffect(() => {
-    if (!approving) return undefined;
+    if (!busy) return undefined;
     onBusy(true);
     return () => onBusy(false);
-  }, [approving, onBusy]);
+  }, [busy, onBusy]);
 
-  const editable = questionsEditable(state) && !approving;
+  const locked = approving || retrying;
+  const editable = questionsEditable(state) && !locked;
   const list = query.data?.questions ?? [];
 
   const questions: QuestionView[] = list.map((question) => {
@@ -157,7 +161,7 @@ export function useQuestionsStep(
     })();
   };
 
-  const approveDisabled = approving || addAction.pending || retrying;
+  const approveDisabled = locked || addAction.pending;
 
   const approve = () => {
     if (!questionsApprovable(state) || approveDisabled) return;
@@ -186,7 +190,7 @@ export function useQuestionsStep(
       if (!question || !editable) return;
       removals.change(id, !isRemoved(question, removals.pending));
     },
-    approving,
+    locked,
 
     draft,
     editDraft: setDraft,

@@ -14,9 +14,9 @@ interface QuestionsProps {
   streamId: string;
   /** Состояние шага «Вопросы». */
   state: State;
-  /** Шаг запускают снова: «Утвердить» не действует. */
+  /** Шаг запускают снова: «Убрать», «Добавить» и «Утвердить» не действуют. */
   retrying: boolean;
-  /** Вопросы утверждаются или нет: пока да, «Запустить снова» не действует. */
+  /** Ждут ли ответа утверждение, свой вопрос или «Убрать» / «Вернуть»: пока да, «Запустить снова» не действует. */
   onBusy: (busy: boolean) => void;
 }
 
@@ -34,7 +34,7 @@ export function Questions({ councilId, streamId, state, retrying, onBusy }: Ques
       {step.questions.length > 0 && (
         <div className={styles.list}>
           {step.questions.map((question) => (
-            <QuestionRow key={question.id} question={question} disabled={step.approving} onToggle={step.toggle} />
+            <QuestionRow key={question.id} question={question} disabled={step.locked} onToggle={step.toggle} />
           ))}
         </div>
       )}
@@ -42,7 +42,7 @@ export function Questions({ councilId, streamId, state, retrying, onBusy }: Ques
         draft={step.draft}
         onEdit={step.editDraft}
         onAdd={step.add}
-        disabled={step.adding || step.approving}
+        disabled={step.adding || step.locked}
         error={step.addError}
       />
       {step.approvable && (

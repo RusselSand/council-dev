@@ -112,8 +112,20 @@ const PROTO: Question[] = [
   ),
 ];
 
-/** Потоки советов-примеров — как в streams.ts. */
-const PROTO_STREAMS: Record<string, string[]> = { c1: ['A', 'B', 'C'], c4: ['A', 'B', 'C'], c7: ['A', 'B'] };
+/**
+ * Потоки советов-примеров — как в streams.ts — и вопросы, которые в них убрал человек: неубранных столько, сколько
+ * в строке готовых «Вопросов». «отобрано 4 вопроса» — убран Q2 (в макете он не идёт на «Варианты»), у потока B c1
+ * «отобрано 3 вопроса» — ещё Q4. Поток C c1 остановился на «Вопросах» — убранных нет.
+ */
+const PROTO_STREAMS: Record<string, Record<string, string[]>> = {
+  c1: { A: ['Q2'], B: ['Q2', 'Q4'], C: [] },
+  c4: { A: ['Q2'], B: ['Q2'], C: ['Q2'] },
+  c7: { A: ['Q2'], B: ['Q2'] },
+};
+
+/** Вопросы, где убраны те, что в removed. */
+const withRemoved = (questions: Question[], removed: string[]): Question[] =>
+  questions.map((q) => ({ ...q, removed: removed.includes(q.id) }));
 
 /**
  * Вопросы по совету и потоку (streamKey). g1 — из data-1.json, советы-примеры c1, c4 и c7 — из prototype.js. У новых
@@ -122,7 +134,9 @@ const PROTO_STREAMS: Record<string, string[]> = { c1: ['A', 'B', 'C'], c4: ['A',
 export const QUESTIONS: Record<string, Question[]> = {
   [streamKey('g1', 'A')]: G1,
   ...Object.fromEntries(
-    Object.entries(PROTO_STREAMS).flatMap(([council, ids]) => ids.map((id) => [streamKey(council, id), PROTO])),
+    Object.entries(PROTO_STREAMS).flatMap(([council, streams]) =>
+      Object.entries(streams).map(([id, removed]) => [streamKey(council, id), withRemoved(PROTO, removed)]),
+    ),
   ),
 };
 

@@ -9,7 +9,7 @@ interface OwnQuestionProps {
   draft: string;
   onEdit: (text: string) => void;
   onAdd: () => void;
-  /** Вопрос добавляется или вопросы утверждаются: «Добавить» не действует. */
+  /** Вопрос добавляется, вопросы утверждаются или шаг запускают снова: «Добавить» не действует. */
   disabled: boolean;
   error: ApiError | undefined;
 }
