@@ -28,6 +28,13 @@ class Project(Schema):
     council_count: int
 
 
+class ProjectRef(Schema):
+    """Проект внутри другого объекта: id и название."""
+
+    id: str
+    name: str
+
+
 class ProjectFields(Schema):
     """Тело нового проекта и правки. У нового поле, которого нет, — пустое; у правки — не
     меняется."""

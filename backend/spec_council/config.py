@@ -13,8 +13,6 @@ from dataclasses import dataclass, field
 
 from .models import Council, Model
 
-# Участник может быть и один: его ответ проверяет судья. Больше двух пока не нужно.
-MIN_PARTICIPANTS = 1
 # COUNCIL_PARTICIPANT_2 с этим значением — второго участника нет. Пусто — по умолчанию.
 NONE = "none"
 
@@ -106,12 +104,13 @@ def config_of(first: str | None = "", second: str | None = "",
 def fitted(council: Council, config: AppConfig) -> Council:
     """Совет под нынешнюю настройку. Участник, которого больше нет среди моделей, уходит, и
     его место, пока есть кем, занимают заданные: совет из двух остаётся из двух, если в .env
-    их хоть двое; выбранные в совете и всё ещё настроенные остаются. Судья — свой, если он
-    среди моделей, иначе заданный. Поменяли модели в .env — старые советы работают на новых, а
-    не падают на «нет подключения» к тем, кого больше нет. Подгонять нечего — тот же совет."""
+    их хоть двое; выбранные в совете и всё ещё настроенные остаются. Совет без моделей так и
+    остаётся без них: на «Вводе» их можно снять все. Судья — свой, если он среди моделей, иначе
+    заданный. Поменяли модели в .env — старые советы работают на новых, а не падают на «нет
+    подключения» к тем, кого больше нет. Подгонять нечего — тот же совет."""
     aliases = {model.alias for model in config.models}
     participants = [alias for alias in council.participants if alias in aliases]
-    wanted = max(MIN_PARTICIPANTS, len(council.participants))
+    wanted = len(council.participants)
     for alias in config.default_participants:
         if len(participants) >= wanted:
             break

@@ -194,6 +194,15 @@ def test_a_council_of_one_has_every_answer_checked_by_the_judge():
     assert '"variant": 1' in runner.asked["slice_judge", "sol"]          # вариант один
 
 
+def test_a_council_without_models_stops_with_a_reason():
+    result, runner, _ = run({}, participants=())
+    assert result.state == "failed"
+    assert result.error == "в совете нет моделей — шаг slice делать некому"
+    assert steps(result) == {"slice": "failed", "slice_judge": "waiting", "label": "waiting",
+                             "label_judge": "waiting"}
+    assert runner.asked == {}                                # судья за участников не режет
+
+
 def test_unreadable_answer_is_a_failed_run_and_leaves_the_outbox():
     replies = {**AGREED, ("slice", "sol"): "не знаю, как это нарезать"}
     result, runner, _ = run(replies)
@@ -1036,7 +1045,7 @@ def test_another_snapshot_is_a_new_call_not_a_free_retry():
     _, first, _ = scan(replies)
     _, same, _ = scan(replies)
     _, other, _ = scan(replies, copy=copy_as("снимок-2"))
-    assert first.keys == same.keys
+    assert sorted(first.keys) == sorted(same.keys)  # участники отвечают параллельно: порядок любой
     assert set(first.keys).isdisjoint(other.keys)
 
 
@@ -1103,7 +1112,7 @@ def test_another_version_of_the_file_is_a_new_call_and_the_same_one_is_free():
     _, first, _ = design(replies)
     _, same, _ = design(replies)
     _, other, _ = design(replies, fetch=FakeFigma(version="v2"))
-    assert first.keys == same.keys
+    assert sorted(first.keys) == sorted(same.keys)  # участники отвечают параллельно: порядок любой
     assert set(first.keys).isdisjoint(other.keys)
 
 

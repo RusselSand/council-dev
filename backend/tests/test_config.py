@@ -108,6 +108,8 @@ def test_a_council_keeps_as_many_participants_as_the_models_allow():
     one = config_of("fable=claude/claude-fable-5-1", "none")
     alone = council(["fable"], "fable")
     assert fitted(alone, two) is alone                       # выбрали одного — один и остаётся
+    nobody = council([], "fable")
+    assert fitted(nobody, two) is nobody                     # сняли всех — так и остаётся
     assert fitted(council(["sol", "opus"], "opus"), two).participants == ["opus", "fable"]
     assert (fitted(council(["fable", "opus"], "opus"), one).participants,
             fitted(council(["fable", "opus"], "opus"), one).judge) == (["fable"], "fable")

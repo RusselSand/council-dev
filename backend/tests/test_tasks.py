@@ -101,7 +101,7 @@ def folders(tmp_path):
 
 def single():
     """Совет из одной группы C: план задач — на весь совет, и в нём один поток."""
-    council_id = client.post("/api/councils").json()["id"]
+    council_id = client.post("/api/councils").json()["council"]["id"]
     slicing = Slicing(state="done", run="s1", steps=[], fragments=[
         Fragment(id=i, text=TEXTS[i], label=label, reason="", council_label=label)
         for i, label in LABELS.items()])

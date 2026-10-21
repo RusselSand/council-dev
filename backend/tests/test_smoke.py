@@ -21,12 +21,13 @@ def test_models():
 
 
 def test_unknown_council_is_404():
-    assert client.get("/api/councils/missing").status_code == 404
+    assert client.patch("/api/councils/missing", json={}).status_code == 404
 
 
-def test_created_council_is_readable():
-    council_id = client.post("/api/councils").json()["id"]
-    assert client.get(f"/api/councils/{council_id}").json()["status"] == "brief"
+def test_created_council_is_listed():
+    council = client.post("/api/councils").json()["council"]
+    assert council["stage"] == "brief"
+    assert council in client.get("/api/councils").json()["councils"]
 
 
 def test_unknown_api_path_is_json_404():
@@ -57,7 +58,7 @@ def test_a_replaced_store_is_left_to_the_requests():
         with warnings.catch_warnings(record=True) as caught:
             warnings.simplefilter("always")
             with TestClient(app) as started:
-                assert started.get("/api/councils").json() == []
+                assert started.get("/api/councils").json() == {"councils": []}
             gc.collect()
     finally:
         app.dependency_overrides.pop(get_store)

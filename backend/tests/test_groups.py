@@ -136,7 +136,7 @@ def test_letters_go_on_after_z():
 # --- API
 
 def council_with(structure, slicing=None):
-    council_id = client.post("/api/councils").json()["id"]
+    council_id = client.post("/api/councils").json()["council"]["id"]
     get_store().update_council(council_id, {"slicing": slicing or sliced(),
                                             "structure": structure,
                                             "status": CouncilStatus.structure})

@@ -161,7 +161,7 @@ def test_notes_go_to_the_documentation_folder_of_the_council_project(agents, tmp
     try:
         council_id = approved_c()
         assert client.patch(f"/api/councils/{council_id}",
-                            json={"project": project.id}).status_code == 200
+                            json={"projectId": project.id}).status_code == 200
         assert drafts(council_id).status_code == 202
         assert writes(council_id).status_code == 200
     finally:
@@ -180,7 +180,7 @@ def test_a_folder_changed_while_the_write_waits_for_the_lock_is_not_written_into
     result = []
     try:
         council_id = approved_c()
-        client.patch(f"/api/councils/{council_id}", json={"project": project.id})
+        client.patch(f"/api/councils/{council_id}", json={"projectId": project.id})
         assert drafts(council_id).status_code == 202
         with council_lock:
             worker = threading.Thread(target=lambda: result.append(writes(council_id)))
@@ -204,7 +204,7 @@ def test_a_draft_waiting_for_the_lock_is_built_for_the_folder_it_finds_there(age
     result = []
     try:
         council_id = approved_c()
-        client.patch(f"/api/councils/{council_id}", json={"project": project.id})
+        client.patch(f"/api/councils/{council_id}", json={"projectId": project.id})
         with council_lock:
             worker = threading.Thread(target=lambda: result.append(drafts(council_id)))
             worker.start()

@@ -1,380 +1,558 @@
-"""Совет: участники, судья, правки с экрана ввода и запуск нарезки."""
+"""Советы по контракту: список, новый совет, правка — и где совет: этапы, потоки, что в нём
+происходит и итог одной строкой (standing.py)."""
 
 import json
+import re
 import threading
+from dataclasses import replace
+from datetime import UTC, datetime, timedelta
 
 import pytest
 from fastapi.testclient import TestClient
 
-from spec_council.api import councils as councils_api
 from spec_council.app import app
-from spec_council.config import AppConfig, config_of
-from spec_council.deps import get_agents, get_config, get_launcher, get_store
-from spec_council.models import Model
-from spec_council.pipeline import start, start_structure
+from spec_council.config import config_of
+from spec_council.deps import get_agents, get_config, get_projects, get_repositories, get_store
+from spec_council.models import (
+    Choice,
+    Decision,
+    DecisionAnalysis,
+    DecisionsSearch,
+    DesignStep,
+    ExportedNote,
+    Issue,
+    ModelRun,
+    NotesDraft,
+    NotesExport,
+    OpenQuestion,
+    OutcomeDiscovery,
+    ProjectDraft,
+    ProposalDiscovery,
+    QuestionDiscovery,
+    RepositoryScan,
+    RepositoryStep,
+    Research,
+    Slicing,
+    Step,
+    StepName,
+    Stream,
+    Structure,
+    TaskPlan,
+    TasksExport,
+)
+from spec_council.projects import Projects
+from spec_council.store import FileStore, InMemoryStore, council_lock
+from spec_council.tasks import basis_of
 
 client = TestClient(app)
 
-# Совет, как его зададут в .env (Sol и Fable), и ещё модель, которую не запустить: судья вне
-# совета и «нет подключения» — на ней.
-ENV = config_of()
-DEFAULT_CONFIG = AppConfig(
-    models=[*ENV.models, Model(alias="astra", short_name="Astra", display_name="Gemini Astra 3",
-                               cli="gemini")],
-    default_participants=ENV.default_participants, default_judge=ENV.default_judge,
-    agents=ENV.agents)
+STAGES = ("brief", "slices", "structure", "research", "streams", "tasks")
+# Модели совета: sol и fable — участники по умолчанию, fable — судья; opus — третья модель, не
+# подключена.
+CONFIG = replace(config_of("sol=codex/gpt-5.6-sol", "fable=claude/claude-fable-5-1",
+                           "opus=claude/claude-opus-5-5"), default_judge="fable")
+DRAFT = {"stage": "brief", "stream": None, "step": None, "state": "waiting",
+         "text": "Допишите текст и нарежьте"}
+
+
+class Agents:
+    def availability(self, aliases, *, fresh=False):
+        return {alias: alias != "opus" for alias in aliases}
 
 
 @pytest.fixture(autouse=True)
-def with_astra():
-    app.dependency_overrides[get_config] = lambda: DEFAULT_CONFIG
+def council_models():
+    app.dependency_overrides[get_config] = lambda: CONFIG
+    app.dependency_overrides[get_agents] = Agents
     yield
     app.dependency_overrides.pop(get_config)
-
-
-def new_council() -> str:
-    return client.post("/api/councils").json()["id"]
-
-
-def test_new_council_gets_default_participants_and_judge():
-    council = client.get(f"/api/councils/{new_council()}").json()
-    assert council["participants"] == DEFAULT_CONFIG.default_participants
-    assert council["judge"] == DEFAULT_CONFIG.default_judge
-    assert council["brief"] == ""
-
-
-def test_patch_changes_only_what_was_sent():
-    council_id = new_council()
-    res = client.patch(f"/api/councils/{council_id}", json={"brief": "текст", "judge": "sol"})
-    assert res.status_code == 200
-    council = client.get(f"/api/councils/{council_id}").json()
-    assert (council["brief"], council["judge"]) == ("текст", "sol")
-    assert council["participants"] == DEFAULT_CONFIG.default_participants
-    assert council["name"] == ""
-
-
-def test_judge_does_not_have_to_take_part():
-    council_id = new_council()
-    res = client.patch(f"/api/councils/{council_id}",
-                       json={"participants": ["sol", "fable"], "judge": "astra"})
-    assert res.status_code == 200
-
-
-def test_one_participant_is_a_council_too():
-    council_id = new_council()
-    res = client.patch(f"/api/councils/{council_id}",
-                       json={"participants": ["sol"], "judge": "sol"})
-    assert res.status_code == 200
-    assert (res.json()["participants"], res.json()["judge"]) == (["sol"], "sol")
-
-
-def test_null_means_no_change():
-    council_id = new_council()
-    client.patch(f"/api/councils/{council_id}", json={"name": "Проект"})
-    client.patch(f"/api/councils/{council_id}", json={"name": None, "brief": "текст"})
-    assert client.get(f"/api/councils/{council_id}").json()["name"] == "Проект"
-
-
-@pytest.mark.parametrize("patch", [
-    {"participants": []},
-    {"participants": ["sol", "sol"]},
-    {"participants": ["sol", "nobody"]},
-    {"judge": "nobody"},
-    {"author": "sol"},
-])
-def test_invalid_patch_is_refused_and_changes_nothing(patch):
-    council_id = new_council()
-    before = client.get(f"/api/councils/{council_id}").json()
-    assert client.patch(f"/api/councils/{council_id}", json=patch).status_code == 422
-    assert client.get(f"/api/councils/{council_id}").json() == before
-
-
-def test_patch_of_unknown_council_is_404():
-    assert client.patch("/api/councils/missing", json={"brief": "текст"}).status_code == 404
-
-
-def test_edited_council_goes_to_the_top_even_on_the_same_day():
-    first, second = new_council(), new_council()
-    assert [c["id"] for c in client.get("/api/councils").json()][:2] == [second, first]
-
-    client.patch(f"/api/councils/{first}", json={"brief": "правка"})
-    assert [c["id"] for c in client.get("/api/councils").json()][:2] == [first, second]
-
-
-class FakeAgents:
-    """Модели совета без CLI: sol и fable подключены, отвечают одинаково."""
-
-    def __init__(self, text):
-        self.text = text
-        self.asked = []
-        self.fresh_under_lock = []
-        self.on_probe = None   # что случится, пока идёт проверка входа
-        self.online = {"sol", "fable"}
-        self.probed = []       # (кого, fresh) — каждая проверка входа
-
-    def availability(self, aliases, *, fresh=False):
-        aliases = list(aliases)
-        self.probed.append((frozenset(aliases), fresh))
-        if fresh:
-            self.fresh_under_lock.append(councils_api.council_lock.locked())
-            if self.on_probe:
-                self.on_probe()
-        return {alias: alias in self.online for alias in aliases}
-
-    def ask(self, model, prompt, key, workspace=None):
-        self.asked.append(key)
-        if "-slice-" in key:
-            return json.dumps({"options": [{"fragments": [self.text], "reason": None}]})
-        if "-structure-" in key:
-            return json.dumps({"options": [{"groups": [{
-                "id": "A", "title": "Воркер", "idea_fragment_ids": [1], "fragment_ids": [1],
-                "missing_idea": False, "shared_fragment_ids": []}],
-                "relations": [], "reason": None}]})
-        return json.dumps({"labels": [{"id": 1, "options": [{"label": "idea", "reason": "цель"}]}]})
-
-    def forget(self, keys):
-        pass
-
-    def identity(self, model):
-        return model
-
-
-@pytest.fixture
-def agents():
-    fake = FakeAgents("Хочу воркер для Codex CLI.")
-    app.dependency_overrides[get_agents] = lambda: fake
-    # Нарезка идёт тут же, а не в пуле: к возврату из post итог уже есть.
-    app.dependency_overrides[get_launcher] = lambda: lambda job: job()
-    yield fake
     app.dependency_overrides.pop(get_agents)
-    app.dependency_overrides.pop(get_launcher)
 
 
-def test_slicing_runs_in_the_background_and_ends_with_labeled_fragments(agents):
-    council_id = new_council()
-    client.patch(f"/api/councils/{council_id}", json={"brief": agents.text})
-    res = client.post(f"/api/councils/{council_id}/slicing")
-    assert res.status_code == 202
-    assert res.json()["slicing"]["state"] == "running"
-    assert res.json()["status"] == "slices"
-
-    slicing = client.get(f"/api/councils/{council_id}").json()["slicing"]
-    assert slicing["state"] == "done"
-    assert slicing["text"] == agents.text
-    assert slicing["fragments"] == [{
-        "id": 1, "text": agents.text, "label": "idea", "reason": "цель",
-        "council_label": "idea",
-        "decided_by": "agreed", "slice_note": None,
-        "votes": [{"model": "sol", "labels": ["idea"]}, {"model": "fable", "labels": ["idea"]}],
-    }]
-    assert [s["state"] for s in slicing["steps"]] == ["done", "skipped", "done", "skipped"]
+@pytest.fixture(name="store", autouse=True)
+def fresh_store():
+    store = InMemoryStore()
+    app.dependency_overrides[get_store] = lambda: store
+    yield store
+    app.dependency_overrides.pop(get_store)
 
 
-def test_empty_text_is_not_sliced(agents):
-    res = client.post(f"/api/councils/{new_council()}/slicing")
-    assert res.status_code == 422
-    assert agents.asked == []
+@pytest.fixture(name="projects", autouse=True)
+def fresh_projects():
+    projects = Projects()
+    app.dependency_overrides[get_projects] = lambda: projects
+    yield projects
+    app.dependency_overrides.pop(get_projects)
 
 
-def test_models_without_a_connection_are_named(agents):
-    council_id = new_council()
-    client.patch(f"/api/councils/{council_id}", json={"brief": "текст", "judge": "astra"})
-    res = client.post(f"/api/councils/{council_id}/slicing")
-    assert res.status_code == 422
-    assert res.json()["detail"] == "Нет подключения к моделям: Gemini Astra 3"
+@pytest.fixture(name="repos", autouse=True)
+def repositories(tmp_path):
+    root = tmp_path / "repos"
+    root.mkdir()
+    app.dependency_overrides[get_repositories] = lambda: root
+    yield root
+    app.dependency_overrides.pop(get_repositories)
 
 
-def test_running_slicing_is_not_started_twice(agents):
-    council_id = new_council()
-    client.patch(f"/api/councils/{council_id}", json={"brief": "текст"})
-    get_store().update_council(council_id, {"slicing": start(["sol", "fable"], "fable")})
-    assert client.post(f"/api/councils/{council_id}/slicing").status_code == 409
-
-
-def test_slicing_of_unknown_council_is_404(agents):
-    assert client.post("/api/councils/missing/slicing").status_code == 404
-
-
-def sliced_council(agents):
-    council_id = new_council()
-    client.patch(f"/api/councils/{council_id}", json={"brief": agents.text})
-    client.post(f"/api/councils/{council_id}/slicing")
-    return council_id
-
-
-def test_person_can_change_a_type_and_the_council_one_stays(agents):
-    council_id = sliced_council(agents)
-    run = client.get(f"/api/councils/{council_id}").json()["slicing"]["run"]
-    res = client.patch(f"/api/councils/{council_id}",
-                       json={"labels": {"1": "risk"}, "slicing_run": run})
+def listed() -> list[dict]:
+    res = client.get("/api/councils")
     assert res.status_code == 200
-    fragment = client.get(f"/api/councils/{council_id}").json()["slicing"]["fragments"][0]
-    assert (fragment["label"], fragment["council_label"]) == ("risk", "idea")
-
-    client.patch(f"/api/councils/{council_id}", json={"labels": {"1": "idea"}, "slicing_run": run})
-    fragment = client.get(f"/api/councils/{council_id}").json()["slicing"]["fragments"][0]
-    assert fragment["label"] == fragment["council_label"] == "idea"
+    return res.json()["councils"]
 
 
-@pytest.mark.parametrize(("labels", "status"), [
-    ({"7": "risk"}, 422),
-    ({"1": "goal"}, 422),
+def creates(key: str | None = None):
+    return client.post("/api/councils", json={},
+                       headers={"Idempotency-Key": key} if key else {})
+
+
+def edits(council_id: str, **fields):
+    return client.patch(f"/api/councils/{council_id}", json=fields)
+
+
+def error_of(res) -> tuple[int, str]:
+    return res.status_code, res.json()["error"]["code"]
+
+
+def shown(store, **fields) -> dict:
+    """Совет с этими полями хранения — как его отдаёт список."""
+    council = store.create_council(participants=["sol", "fable"], judge="fable")
+    store.update_council(council.id, fields)
+    return next(summary for summary in listed() if summary["id"] == council.id)
+
+
+def stages(*states: str) -> dict:
+    return dict(zip(STAGES, states, strict=True))
+
+
+def at_stage(stage: str, state: str, text: str) -> dict:
+    return {"stage": stage, "stream": None, "step": None, "state": state, "text": text}
+
+
+def at_step(stream: str, step: str, state: str, text: str) -> dict:
+    return {"stage": "streams", "stream": stream, "step": step, "state": state, "text": text}
+
+
+# Ходы моделей: идут, упали, кончились.
+
+def going(kind, *phases: StepName, **fields):
+    """Ход, где первая часть готова, а последняя идёт: у судьи — один судья."""
+    *done, now = phases
+    steps = [Step(name=phase, state="done", runs=[ModelRun(model="sol", state="done")])
+             for phase in done]
+    models = ("fable",) if now.endswith("judge") or now.startswith("notes") else ("sol", "fable")
+    steps.append(Step(name=now, state="running",
+                      runs=[ModelRun(model=model, state="running") for model in models]))
+    return kind(state="running", run="r1", steps=steps, **fields)
+
+
+def stopped(kind, **fields):
+    return kind(state="failed", run="r1", steps=[], error="sol не справилась", **fields)
+
+
+def finished(kind, **fields):
+    return kind(state="done", run="r1", steps=[], **fields)
+
+
+SLICED = Slicing(state="done", run="s1", steps=[])
+GROUPED = Structure(state="done", run="g1", steps=[])
+RESEARCHED = Research(repository=RepositoryStep(by="skipped"), design=DesignStep(by="skipped"))
+BEFORE_STREAMS = {"slicing": SLICED, "structure": GROUPED, "research": RESEARCHED}
+# Поток начат: взял себе исследование совета.
+STARTED = {"repository": RepositoryStep(by="skipped"), "design": DesignStep(by="skipped")}
+QUESTIONS = [OpenQuestion(id=f"Q{n}", text=f"Вопрос {n}", source="discovered") for n in (1, 2)]
+
+
+# GET /api/councils
+
+def test_there_are_no_councils_yet():
+    assert listed() == []
+
+
+def test_councils_are_listed_fresh_first(store):
+    first = creates().json()["council"]["id"]
+    second = creates().json()["council"]["id"]
+    assert [council["id"] for council in listed()] == [second, first]
+    edits(first, name="Правка")
+    assert [council["id"] for council in listed()] == [first, second]
+
+
+# POST /api/councils
+
+def test_a_new_council_is_a_draft():
+    res = creates("k1")
+    assert res.status_code == 201
+    council = res.json()["council"]
+    assert council == {
+        "id": council["id"], "name": "", "project": None, "stage": "brief", "state": "idle",
+        "stages": stages(*["idle"] * 6), "streams": [], "participants": ["sol", "fable"],
+        "judge": "fable", "updatedAt": council["updatedAt"], "activity": [DRAFT],
+        "summary": "Черновик — текст не нарезан",
+    }
+    assert re.fullmatch(r"\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ", council["updatedAt"])
+    assert listed() == [council]
+
+
+def test_the_same_key_creates_one_council(store):
+    first = creates("k1").json()["council"]
+    again = creates("k1")
+    assert again.status_code == 201 and again.json()["council"] == first
+    assert creates("k2").json()["council"]["id"] != first["id"]
+    # Без ключа каждый запрос — новый совет.
+    assert creates().json()["council"]["id"] != creates().json()["council"]["id"]
+    assert len(store.list_councils()) == 4
+
+
+def test_a_new_council_takes_the_project_of_the_first_one(projects):
+    project = projects.create_project(ProjectDraft(name="Кромка"))
+    first = creates().json()["council"]
+    assert first["project"] is None
+    chosen = edits(first["id"], projectId=project.id).json()["council"]
+    assert chosen["project"] == {"id": project.id, "name": "Кромка"}
+    second = creates().json()["council"]
+    assert second["project"] == {"id": project.id, "name": "Кромка"}
+    # Первый в списке — без проекта: и новый без него.
+    edits(second["id"], projectId=None)
+    assert creates().json()["council"]["project"] is None
+
+
+def test_a_project_that_is_gone_is_not_shown_or_taken(store):
+    store.create_council(participants=["sol"], judge="sol", project="gone")
+    assert listed()[0]["project"] is None
+    assert creates().json()["council"]["project"] is None
+
+
+def test_a_new_council_takes_its_project_under_the_councils_lock():
+    created = []
+    with council_lock:
+        worker = threading.Thread(target=lambda: created.append(creates()))
+        worker.start()
+        worker.join(0.3)
+        assert worker.is_alive() and created == []     # ждёт замка: удаление проекта — под ним же
+    worker.join(5)
+    assert created[0].status_code == 201
+
+
+def test_a_foreign_field_in_the_new_council_is_a_bad_request(store):
+    assert error_of(client.post("/api/councils", json={"name": "x"})) == (400, "bad_request")
+    assert store.list_councils() == []
+
+
+# PATCH /api/councils/{id}
+
+def test_an_edit_changes_only_what_was_sent(store):
+    council = creates().json()["council"]
+    store.update_council(council["id"], {"updated_at": datetime(2020, 1, 1, tzinfo=UTC)},
+                         touch=False)
+    res = edits(council["id"], name="  Офлайн-режим заявок  ")
+    assert res.status_code == 200
+    edited = res.json()["council"]
+    assert edited == {**council, "name": "Офлайн-режим заявок", "updatedAt": edited["updatedAt"]}
+    assert edited["updatedAt"] > "2020-01-01T00:00:00Z"
+    assert listed() == [edited]
+
+
+def test_models_and_judge_are_changed(store):
+    council_id = creates().json()["council"]["id"]
+    edited = edits(council_id, participants=["fable", "sol", "fable"], judge="sol")
+    assert edited.status_code == 200
+    assert (edited.json()["council"]["participants"], edited.json()["council"]["judge"]) == (
+        ["fable", "sol"], "sol")
+    # Судья может не входить в совет, моделей может не быть совсем.
+    edited = edits(council_id, participants=[]).json()["council"]
+    assert (edited["participants"], edited["judge"]) == ([], "sol")
+
+
+def test_a_project_is_chosen_and_dropped(projects):
+    project = projects.create_project(ProjectDraft(name="Кромка"))
+    council_id = creates().json()["council"]["id"]
+    edits(council_id, projectId=project.id)
+    assert client.get("/api/projects").json()["projects"][0]["councilCount"] == 1
+    assert edits(council_id, projectId=None).json()["council"]["project"] is None
+    assert client.get("/api/projects").json()["projects"][0]["councilCount"] == 0
+
+
+@pytest.mark.parametrize(("fields", "error"), [
+    ({"projectId": "nope"}, (422, "unknown_project")),
+    ({"participants": ["sol", "nobody"]}, (422, "unknown_model")),
+    ({"judge": "nobody"}, (422, "unknown_model")),
+    ({"participants": ["sol", "opus"]}, (422, "model_offline")),
+    ({"judge": "opus"}, (422, "model_offline")),
+    ({"name": "Новое", "judge": "nobody"}, (422, "unknown_model")),
+    ({"author": "sol"}, (400, "bad_request")),
+    ({"name": None}, (400, "bad_request")),
+    ({"participants": "sol"}, (400, "bad_request")),
 ])
-def test_bad_labels_are_refused(agents, labels, status):
-    council_id = sliced_council(agents)
-    run = client.get(f"/api/councils/{council_id}").json()["slicing"]["run"]
-    res = client.patch(f"/api/councils/{council_id}", json={"labels": labels, "slicing_run": run})
-    assert res.status_code == status
+def test_a_wrong_edit_changes_nothing(fields, error):
+    council = creates().json()["council"]
+    assert error_of(edits(council["id"], **fields)) == error
+    assert listed() == [council]
 
 
-def test_labels_need_a_finished_slicing(agents):
-    council_id = new_council()
-    res = client.patch(f"/api/councils/{council_id}",
-                       json={"labels": {"1": "risk"}, "slicing_run": "x"})
-    assert res.status_code == 409
+def test_a_model_already_in_the_council_stays_even_offline(store):
+    council = store.create_council(participants=["sol", "opus"], judge="opus")
+    assert edits(council.id, participants=["opus"]).status_code == 200
+    assert edits(council.id, judge="opus").status_code == 200
+    assert edits(council.id, participants=["opus", "fable"]).status_code == 200
+    # Судья не в совете: поставить его в совет — добавить не подключённую модель.
+    store.update_council(council.id, {"participants": ["sol"]})
+    assert error_of(edits(council.id, participants=["sol", "opus"])) == (422, "model_offline")
 
 
-def test_login_check_before_a_start_runs_outside_the_lock(agents):
-    sliced_council(agents)
-    assert agents.fresh_under_lock == [False]
+def test_an_edit_of_a_missing_council_is_not_found():
+    assert error_of(edits("missing", name="x")) == (404, "not_found")
 
 
-def test_ordinary_edits_do_not_wait_for_a_slicing_start():
-    council_id = new_council()
+def test_ordinary_edits_do_not_wait_for_the_councils_lock():
+    council_id = creates().json()["council"]["id"]
     done = []
-    with councils_api.council_lock:   # как будто идёт запуск нарезки
+    with council_lock:   # как будто идёт запуск нарезки
         edit = threading.Thread(daemon=True, target=lambda: done.append(
-            client.patch(f"/api/councils/{council_id}", json={"name": "Проект"}).status_code))
+            edits(council_id, name="Проект", participants=["sol"]).status_code))
         edit.start()
         edit.join(5)
     assert done == [200]
 
 
-def test_labels_for_an_earlier_slicing_do_not_land_on_the_new_one(agents):
-    council_id = sliced_council(agents)
-    old_run = client.get(f"/api/councils/{council_id}").json()["slicing"]["run"]
-    client.post(f"/api/councils/{council_id}/slicing")   # другая вкладка переделала нарезку
-    res = client.patch(f"/api/councils/{council_id}",
-                       json={"labels": {"1": "risk"}, "slicing_run": old_run})
-    assert res.status_code == 409
-    fragment = client.get(f"/api/councils/{council_id}").json()["slicing"]["fragments"][0]
-    assert fragment["label"] == "idea"
+def test_a_project_is_chosen_under_the_councils_lock(projects):
+    project = projects.create_project(ProjectDraft(name="Кромка"))
+    council_id = creates().json()["council"]["id"]
+    done = []
+    with council_lock:   # как будто проект удаляют
+        edit = threading.Thread(target=lambda: done.append(edits(council_id,
+                                                                 projectId=project.id)))
+        edit.start()
+        edit.join(0.3)
+        assert edit.is_alive() and done == []
+    edit.join(5)
+    assert done[0].status_code == 200
 
 
-def test_labels_without_their_slicing_run_are_refused(agents):
-    council_id = sliced_council(agents)
-    res = client.patch(f"/api/councils/{council_id}", json={"labels": {"1": "risk"}})
-    assert res.status_code == 422
+# Где совет: этапы до потоков.
+
+@pytest.mark.parametrize(("fields", "states", "activity", "summary"), [
+    ({"slicing": going(Slicing, StepName.slice)},
+     stages("done", "running", "idle", "idle", "idle", "idle"),
+     at_stage("slices", "running", "sol и fable режут текст"), "Нарезка — модели режут текст"),
+    ({"slicing": stopped(Slicing)},
+     stages("done", "failed", "idle", "idle", "idle", "idle"),
+     at_stage("slices", "failed", "Нарезка остановилась"), "Нарезка остановилась"),
+    ({"slicing": SLICED},
+     stages("done", "waiting", "idle", "idle", "idle", "idle"),
+     at_stage("slices", "waiting", "Проверьте фрагменты и предложите группы"), "Нарезка ждёт вас"),
+    ({"slicing": SLICED,
+      "structure": going(Structure, StepName.structure, StepName.structure_judge)},
+     stages("done", "done", "running", "idle", "idle", "idle"),
+     at_stage("structure", "running", "fable раскладывает фрагменты по группам"),
+     "Группы — модели раскладывают фрагменты"),
+    ({"slicing": SLICED, "structure": stopped(Structure)},
+     stages("done", "done", "failed", "idle", "idle", "idle"),
+     at_stage("structure", "failed", "Раскладка по группам остановилась"),
+     "Раскладка по группам остановилась"),
+    ({"slicing": SLICED, "structure": GROUPED},
+     stages("done", "done", "waiting", "idle", "idle", "idle"),
+     at_stage("structure", "waiting", "Подтвердите группы"), "Группы ждут подтверждения"),
+    ({"slicing": SLICED, "structure": GROUPED, "streams": [Stream(group="A")]},
+     stages("done", "done", "done", "waiting", "idle", "idle"),
+     at_stage("research", "waiting",
+              "Начните или пропустите оба исследования — потом группы станут потоками."),
+     "Исследование ждёт запуска"),
+    ({"slicing": SLICED, "structure": GROUPED, "streams": [Stream(group="A")],
+      "research": Research(scan=going(RepositoryScan, StepName.repository_discovery))},
+     stages("done", "done", "done", "running", "idle", "idle"),
+     at_stage("research", "running", "sol и fable исследуют код"), "Исследование идёт"),
+    ({"slicing": SLICED, "structure": GROUPED, "streams": [Stream(group="A")],
+      "research": Research(scan=finished(RepositoryScan), design=DesignStep(by="skipped"))},
+     stages("done", "done", "done", "waiting", "idle", "idle"),
+     at_stage("research", "waiting", "Утвердите исследование — потом группы станут потоками."),
+     "Исследование ждёт вас"),
+])
+def test_a_council_stands_at_its_first_unfinished_stage(store, fields, states, activity, summary):
+    council = shown(store, **fields)
+    stage = next(stage for stage in STAGES if states[stage] != "done")
+    assert (council["stage"], council["state"], council["stages"]) == (stage, states[stage],
+                                                                        states)
+    assert council["streams"] == []
+    assert council["activity"] == [activity]
+    assert council["summary"] == summary
 
 
-def test_start_that_lost_the_race_during_the_login_check_is_refused(agents):
-    council_id = sliced_council(agents)
-
-    def other_tab_starts_and_finishes():
-        agents.on_probe = None
-        finished = start(["sol", "fable"], "fable").model_copy(update={"state": "done"})
-        get_store().update_council(council_id, {"slicing": finished})
-
-    agents.on_probe = other_tab_starts_and_finishes
-    assert client.post(f"/api/councils/{council_id}/slicing").status_code == 409
-    assert len([k for k in agents.asked if "-slice-" in k]) == 2   # только первый запуск
+def test_a_draft_waits_for_its_text(store):
+    council = shown(store)
+    assert (council["stage"], council["state"], council["activity"]) == ("brief", "idle", [DRAFT])
 
 
-def test_regrouping_does_not_overwrite_groups_edited_during_the_login_check(agents):
-    council_id = sliced_council(agents)
-    client.post(f"/api/councils/{council_id}/structure")
-    structure = client_council(council_id).structure
-
-    def other_tab_renames():
-        agents.on_probe = None
-        renamed = [group.model_copy(update={"title": "Своё"}) for group in structure.groups]
-        get_store().update_council(council_id, {"structure": structure.model_copy(
-            update={"groups": renamed, "revision": 1})})
-
-    agents.on_probe = other_tab_renames
-    res = client.post(f"/api/councils/{council_id}/structure")
-    assert res.status_code == 409
-    assert "поправили" in res.json()["detail"]
-    assert client_council(council_id).structure.groups[0].title == "Своё"
+def test_streams_appear_when_the_research_is_approved(store):
+    council = shown(store, **BEFORE_STREAMS, streams=[Stream(group="A"), Stream(group="B")])
+    assert (council["stage"], council["state"]) == ("streams", "waiting")
+    assert council["stages"] == stages("done", "done", "done", "done", "waiting", "idle")
+    assert council["streams"] == [{"id": "A", "step": "project"}, {"id": "B", "step": "project"}]
+    assert council["activity"] == [
+        at_step(stream, "project", "waiting", "Отметьте прошлые решения проекта")
+        for stream in ("A", "B")]
+    assert council["summary"] == "Потоки ждут вас"
 
 
-def test_start_while_the_server_stops_leaves_a_failed_slicing_not_a_stuck_one(agents):
-    council_id = new_council()
-    client.patch(f"/api/councils/{council_id}", json={"brief": agents.text})
-
-    def closed_pool(job):
-        raise RuntimeError("cannot schedule new futures after shutdown")
-
-    app.dependency_overrides[get_launcher] = lambda: closed_pool
-    assert client.post(f"/api/councils/{council_id}/slicing").status_code == 503
-    assert client.get(f"/api/councils/{council_id}").json()["slicing"]["state"] == "failed"
+def test_a_started_stream_stays_when_the_research_is_passed_again(store):
+    council = shown(store, slicing=SLICED, structure=GROUPED, research=Research(),
+                    streams=[Stream(group="A", **STARTED, questions=finished(QuestionDiscovery)),
+                             Stream(group="B")])
+    assert council["stages"] == stages("done", "done", "done", "waiting", "waiting", "idle")
+    assert council["streams"] == [{"id": "A", "step": "questions"},
+                                  {"id": "B", "step": "project"}]
 
 
-def test_lineup_changed_during_the_login_check_is_checked_again_outside_the_lock(agents):
-    council_id = new_council()
-    client.patch(f"/api/councils/{council_id}", json={"brief": agents.text})
+# Где совет: шаги потока.
 
-    def judge_changes():
-        agents.on_probe = None
-        get_store().update_council(council_id, {"judge": "astra"})
-
-    agents.on_probe = judge_changes
-    res = client.post(f"/api/councils/{council_id}/slicing")
-    assert res.status_code == 422
-    assert res.json()["detail"] == "Нет подключения к моделям: Gemini Astra 3"
-    assert agents.probed == [(frozenset({"sol", "fable"}), True),
-                             (frozenset({"sol", "fable", "astra"}), True)]
-    assert agents.fresh_under_lock == [False, False]
+DONE_UP_TO_OUTCOMES = {
+    **STARTED, "project_decisions": [], "questions": finished(QuestionDiscovery),
+    "scope": QUESTIONS, "proposals": finished(ProposalDiscovery),
+    "choices": [Choice(question_id="Q1"), Choice(question_id="Q2")],
+    "analysis": finished(DecisionAnalysis),
+    "decisions": [Decision(question_id="Q1"), Decision(question_id="Q2")],
+}
 
 
-def test_lineup_that_keeps_changing_gives_up_with_503(agents):
-    council_id = new_council()
-    client.patch(f"/api/councils/{council_id}", json={"brief": agents.text})
-    agents.online.add("astra")
-    judges = iter(["astra", "fable", "astra", "fable"])
-    agents.on_probe = lambda: get_store().update_council(council_id, {"judge": next(judges)})
-    res = client.post(f"/api/councils/{council_id}/slicing")
-    assert res.status_code == 503   # не 409: нарезку никто не запускал
-    assert agents.fresh_under_lock == [False] * councils_api.PROBE_ATTEMPTS
-    assert agents.asked == []
+@pytest.mark.parametrize(("stream", "step", "state", "text"), [
+    ({**STARTED, "decisions_search": going(DecisionsSearch,
+                                           StepName.project_decisions_discovery)},
+     "project", "running", "sol и fable отбирают прошлые решения"),
+    ({**STARTED, "decisions_search": finished(DecisionsSearch)},
+     "project", "waiting", "Отметьте прошлые решения проекта"),
+    ({**STARTED, "questions": going(QuestionDiscovery, StepName.question_discovery)},
+     "questions", "running", "sol и fable собирают вопросы"),
+    ({**STARTED, "questions": stopped(QuestionDiscovery)},
+     "questions", "failed", "Сбор вопросов остановился"),
+    ({**STARTED, "project_decisions": [], "questions": finished(QuestionDiscovery)},
+     "questions", "waiting", "Отберите вопросы"),
+    ({**STARTED, "questions": finished(QuestionDiscovery), "scope": QUESTIONS,
+      "proposals": going(ProposalDiscovery, StepName.proposal_discovery,
+                         StepName.proposal_judge)},
+     "options", "running", "fable ищет варианты"),
+    ({**STARTED, "questions": finished(QuestionDiscovery), "scope": QUESTIONS,
+      "proposals": finished(ProposalDiscovery)},
+     "options", "waiting", "Выберите вариант на 2 вопроса из 2"),
+    ({**STARTED, "questions": finished(QuestionDiscovery), "scope": [],
+      "proposals": finished(ProposalDiscovery)},
+     "options", "waiting", "Утвердите выбор"),
+    ({**DONE_UP_TO_OUTCOMES, "decisions": None,
+      "analysis": going(DecisionAnalysis, StepName.decision_analysis)},
+     "decisions", "running", "sol и fable проверяют решения"),
+    ({**DONE_UP_TO_OUTCOMES, "decisions": None, "analysis": stopped(DecisionAnalysis)},
+     "decisions", "failed", "Проверка решений остановилась"),
+    ({**DONE_UP_TO_OUTCOMES, "decisions": None},
+     "decisions", "waiting", "Зафиксируйте решения"),
+    ({**DONE_UP_TO_OUTCOMES, "outcomes": stopped(OutcomeDiscovery)},
+     "outcomes", "failed", "Сбор итогов остановился"),
+    ({**DONE_UP_TO_OUTCOMES, "outcomes": finished(OutcomeDiscovery)},
+     "outcomes", "waiting", "Утвердите итоги"),
+    ({**DONE_UP_TO_OUTCOMES, "outcomes": finished(OutcomeDiscovery, approved=True)},
+     "notes", "waiting", "Черновик заметок ждёт вас"),
+    ({**DONE_UP_TO_OUTCOMES, "outcomes": finished(OutcomeDiscovery, approved=True),
+      "notes_draft": going(NotesDraft, StepName.notes_translation)},
+     "notes", "running", "fable переводит заметки"),
+])
+def test_a_stream_stands_at_its_first_unfinished_step(store, stream, step, state, text):
+    council = shown(store, **BEFORE_STREAMS, streams=[Stream(group="A", **stream)])
+    assert council["streams"] == [{"id": "A", "step": step}]
+    assert council["stages"]["streams"] == state
+    assert (council["stage"], council["state"]) == ("streams", state)
+    assert council["activity"] == [at_step("A", step, state, text)]
 
 
-
-def test_groups_are_built_from_a_finished_slicing(agents):
-    council_id = sliced_council(agents)
-    res = client.post(f"/api/councils/{council_id}/structure")
-    assert res.status_code == 202
-    assert res.json()["status"] == "structure"
-    structure = client.get(f"/api/councils/{council_id}").json()["structure"]
-    assert structure["state"] == "done"
-    assert [(g["id"], g["title"], g["fragment_ids"]) for g in structure["groups"]] == [
-        ("A", "Воркер", [1])]
-    assert structure["labels"] == {"1": "idea"}
-    assert structure["proposal"]["groups"] == structure["groups"]
-    assert structure["edited"] is False
-
-
-def test_groups_need_a_finished_slicing(agents):
-    council_id = new_council()
-    client.patch(f"/api/councils/{council_id}", json={"brief": agents.text})
-    assert client.post(f"/api/councils/{council_id}/structure").status_code == 422
-    get_store().update_council(council_id, {"slicing": start(["sol", "fable"], "fable")})
-    assert client.post(f"/api/councils/{council_id}/structure").status_code == 423
-
-
-def test_slicing_again_drops_the_old_groups_and_waits_for_a_running_grouping(agents):
-    council_id = sliced_council(agents)
-    client.post(f"/api/councils/{council_id}/structure")
-    running = start_structure(["sol", "fable"], "fable",
-                              client_council(council_id).slicing)
-    get_store().update_council(council_id, {"structure": running})
-    assert client.post(f"/api/councils/{council_id}/slicing").status_code == 423
-
-    finished = running.model_copy(update={"state": "done"})
-    get_store().update_council(council_id, {"structure": finished})
-    assert client.post(f"/api/councils/{council_id}/slicing").status_code == 202
-    assert client.get(f"/api/councils/{council_id}").json()["structure"] is None
+def test_activity_goes_from_errors_to_waiting_to_work_and_the_later_change_first(store):
+    earlier = datetime(2026, 10, 20, 11, 0, tzinfo=UTC)
+    council = store.create_council(participants=["sol", "fable"], judge="fable")
+    store.update_council(council.id, {**BEFORE_STREAMS, "streams": [
+        Stream(group="A", **STARTED, questions=finished(QuestionDiscovery)),
+        Stream(group="B", **STARTED, questions=finished(QuestionDiscovery), scope=QUESTIONS,
+               proposals=finished(ProposalDiscovery)),
+        Stream(group="C", **STARTED, questions=stopped(QuestionDiscovery)),
+        Stream(group="D", **STARTED,
+               questions=going(QuestionDiscovery, StepName.question_discovery)),
+    ]})
+    store.update_council(council.id, {"streams_changed": {
+        "A": earlier, "B": earlier + timedelta(minutes=30), "C": earlier, "D": earlier}})
+    shown_council = listed()[0]
+    assert shown_council["activity"] == [
+        at_step("C", "questions", "failed", "Сбор вопросов остановился"),
+        at_step("B", "options", "waiting", "Выберите вариант на 2 вопроса из 2"),
+        at_step("A", "questions", "waiting", "Отберите вопросы"),
+        at_step("D", "questions", "running", "sol и fable собирают вопросы"),
+    ]
+    # Шаг, который ждёт человека, важнее ошибки: «Потоки» ждут вас.
+    assert shown_council["stages"]["streams"] == "waiting"
 
 
-def client_council(council_id):
-    return get_store().get_council(council_id)
+# Где совет: «Задачи» и готовый совет.
+
+def test_a_council_is_done_when_its_tasks_are_written(store, projects, repos):
+    project = projects.create_project(ProjectDraft(name="Кромка", notes="docs", issues="issues"))
+    notes, issues = (str((repos / folder).resolve()) for folder in ("docs", "issues"))
+    exported = [ExportedNote(key=f"k{n}", id=f"ADR-{n}", type="adr", generated="", written="",
+                             digest="") for n in (1, 2, 3)]
+    exported += [ExportedNote(key="old", id="ADR-9", type="adr", generated="", written="",
+                              digest="", kept=True),
+                 ExportedNote(key="issue", id="ISS-1", type="issue", generated="", written="",
+                              digest="")]
+    stream = Stream(group="A", **DONE_UP_TO_OUTCOMES,
+                    outcomes=finished(OutcomeDiscovery, approved=True),
+                    notes=NotesExport(run="n1", outcomes="r1", language="русский", root=notes,
+                                      notes=exported))
+    council = store.create_council(participants=["sol", "fable"], judge="fable",
+                                   project=project.id)
+    store.update_council(council.id, {**BEFORE_STREAMS, "streams": [stream]})
+
+    # Все потоки готовы, задачи не записаны — «Задачи» ждут вас.
+    waiting = listed()[0]
+    assert waiting["stages"] == stages("done", "done", "done", "done", "done", "waiting")
+    assert waiting["streams"] == [{"id": "A", "step": "notes"}]
+    assert waiting["activity"] == [at_stage("tasks", "waiting", "Запишите задачи в каталог")]
+    assert waiting["summary"] == "Задачи ждут записи"
+
+    plan = TaskPlan(state="done", run="t1", basis=basis_of(store.get_council(council.id)),
+                    steps=[], issues=[Issue(id="I1", title="Очередь", user_story="",
+                                            outcome_id="OUT-1")])
+    store.update_council(council.id, {"tasks": plan})
+    planned = listed()[0]
+    assert planned["activity"] == [at_stage("tasks", "waiting", "Запишите 1 задачу в каталог")]
+    assert planned["summary"] == "1 задача ждёт записи"
+
+    store.update_council(council.id, {"tasks_export": TasksExport(
+        run="w1", plan="t1", language="русский", root=issues)})
+    done = listed()[0]
+    assert (done["stage"], done["state"]) == ("tasks", "done")
+    assert done["stages"] == stages(*["done"] * 6)
+    assert done["activity"] == []
+    assert done["summary"] == "1 задача и 3 заметки записаны"
+
+    # Папку документации сменили: выгрузка потока — в прежнюю, «Документация» снова ждёт. Задачи
+    # записаны к тому же плану — они готовы.
+    projects.update_project(project.id, {"notes": "other"})
+    moved = listed()[0]
+    assert moved["stages"] == stages("done", "done", "done", "done", "waiting", "done")
+    assert (moved["stage"], moved["state"]) == ("streams", "waiting")
+    assert moved["activity"] == [at_step("A", "notes", "waiting", "Черновик заметок ждёт вас")]
+
+
+def test_a_council_saved_by_the_old_version_opens(tmp_path):
+    folder = tmp_path / "data"
+    folder.mkdir()
+    old = {"id": "old1", "name": "Офлайн-режим заявок", "status": "review", "brief": "текст",
+           "participants": ["sol", "fable"], "judge": "fable",
+           "updated_at": "2026-10-08T09:00:00Z", "project": "",
+           "slicing": {"state": "done", "run": "s1", "steps": [], "fragments": []},
+           "structure": {"state": "done", "run": "g1", "steps": []},
+           "streams": [{"group": "A", "idea": {"text": "Идея", "by": "text"}}]}
+    (folder / "old1.json").write_text(json.dumps(old), encoding="utf-8")
+    store = FileStore(folder)
+    app.dependency_overrides[get_store] = lambda: store
+    assert listed() == [{
+        "id": "old1", "name": "Офлайн-режим заявок", "project": None, "stage": "research",
+        "state": "waiting", "stages": stages("done", "done", "done", "waiting", "idle", "idle"),
+        "streams": [], "participants": ["sol", "fable"], "judge": "fable",
+        "updatedAt": "2026-10-08T09:00:00Z",
+        "activity": [at_stage("research", "waiting", "Начните или пропустите оба исследования — "
+                                                     "потом группы станут потоками.")],
+        "summary": "Исследование ждёт запуска",
+    }]
+    assert edits("old1", name="Старый").json()["council"]["name"] == "Старый"
