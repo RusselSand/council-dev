@@ -398,7 +398,7 @@ export const en = translation({
     'The questions can’t be changed right now: the step hasn’t started or the models are collecting questions again. The stream has been refreshed.',
   'error.text_required': 'Type the text — it can’t be saved empty.',
   'error.options_not_ready':
-    'The choice can’t be changed now: the step hasn’t started or the models are finding options again. The stream is updated.',
+    'The choice can’t be changed now: the step hasn’t started or it was run again. The stream and options are updated.',
   'error.unknown_option': 'The question has no such option. Options are updated.',
   'error.not_own_option': 'Council options aren’t edited — an edit becomes your own option.',
   'error.network': 'No connection to the server. Check your network and try again.',

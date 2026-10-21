@@ -14,8 +14,9 @@ import { replaceStream } from './useStreams';
 /**
  * Варианты потока — GET /api/councils/<id>/streams/<streamId>/options. state — состояние шага «Варианты» сейчас: оно
  * сменилось (модели закончили или остановились, шаг запустили снова) — варианты перезапрашиваются, а до ответа их нет
- * (data — undefined, loading): прежние — от другой работы моделей. Перезапрашиваются и после правок выбора; run в
- * ответе — номер запуска шага: по нему видно, что варианты от другой работы моделей, и когда состояние шага то же.
+ * (data — undefined, loading): прежние — от другой работы моделей. Перезапрашиваются и после правок выбора, и вместе с
+ * опросом потоков (useCouncilStreams()); run в ответе — номер запуска шага: по нему видно, что варианты от другой
+ * работы моделей, и когда состояние шага то же.
  */
 export function useStreamOptions(id: string, streamId: string, state: State): Query<StreamOptions> {
   const query = useQuery(
@@ -52,8 +53,8 @@ const putOption =
   };
 
 /**
- * Выбор сейчас не меняют (шаг запустили снова в другой вкладке) — потоки и варианты на экране устарели; варианта или
- * вопроса уже нет — устарели варианты.
+ * Выбор сейчас не меняют (шаг запустили снова в другой вкладке: модели ещё работают или варианты уже другого запуска) —
+ * потоки и варианты на экране устарели; варианта или вопроса уже нет — устарели варианты.
  */
 function staleOnRefused(error: unknown) {
   if (!(error instanceof ApiError)) return;
@@ -77,10 +78,16 @@ export type OptionChoices = QueuedSaves<Choice>;
 const choiceWrites = new Map<string, Promise<unknown>>();
 
 /** Отправить выбор по вопросу после тех, что уже ушли по нему с любого экрана. */
-function writeChoice(councilId: string, streamId: string, questionId: string, choice: Choice): Promise<OptionSet> {
+function writeChoice(
+  councilId: string,
+  streamId: string,
+  run: number,
+  questionId: string,
+  choice: Choice,
+): Promise<OptionSet> {
   const key = JSON.stringify([councilId, streamId, questionId]);
   const written = (choiceWrites.get(key) ?? Promise.resolve()).then(() =>
-    source.setChoice(councilId, streamId, questionId, choice),
+    source.setChoice(councilId, streamId, run, questionId, choice),
   );
   const settled = written.catch(() => undefined);
   choiceWrites.set(key, settled);
@@ -96,12 +103,13 @@ function writeChoice(councilId: string, streamId: string, questionId: string, ch
  * после тех, что ещё идут по вопросу с экрана, с которого ушли (writeChoice()). Ответ встаёт в варианты сразу;
  * варианты, потоки (строка шага в цепочке) и список советов перезапрашиваются. round — набор вариантов: шаг сменил
  * состояние или пришли варианты другого его запуска — варианты другие, хоть id вопросов те же, и выборы прежних
- * забываются.
+ * забываются. run — номер запуска шага, варианты которого на экране: выбор уходит с ним, и сервер не примет его, если шаг
+ * с тех пор запустили снова, — выбор, отправленный до того, не встанет в новые варианты с теми же id.
  */
-export function useOptionChoices(councilId: string, streamId: string, round: unknown): OptionChoices {
+export function useOptionChoices(councilId: string, streamId: string, run: number, round: unknown): OptionChoices {
   return useQueuedSaves<Choice>(async (questionId, choice, fresh) => {
     try {
-      const set = await writeChoice(councilId, streamId, questionId, choice);
+      const set = await writeChoice(councilId, streamId, run, questionId, choice);
       markStale('options', fresh() ? putSet(councilId, streamId, set) : undefined);
       markStale('streams');
       markStale('councils');
@@ -119,12 +127,15 @@ export function useOptionChoices(councilId: string, streamId: string, round: unk
  * второй; создан — следующий с новым ключом. Ключ у каждого поля свой и держится, пока из поля не создан вариант, хоть
  * между попытками сохраняли другие поля. Ответ встаёт в конец вариантов вопроса сразу, если fresh() — набор вариантов
  * тот же, что когда запрос ушёл (шаг сменил состояние — варианты другие, и ответ про прежние в них не встаёт); варианты
- * и список советов перезапрашиваются. Выбор вариант не меняет — выбирают его отдельно (useOptionChoices()).
+ * и список советов перезапрашиваются. Выбор вариант не меняет — выбирают его отдельно (useOptionChoices()). run — номер
+ * запуска шага, варианты которого были на экране, когда вариант начали писать: шаг с тех пор запустили снова — сервер
+ * его не примет.
  */
 export function useAddOption(): Mutation<
   [
     id: string,
     streamId: string,
+    run: number,
     questionId: string,
     text: string,
     basedOn: string | null,
@@ -139,6 +150,7 @@ export function useAddOption(): Mutation<
     async (
       id: string,
       streamId: string,
+      run: number,
       questionId: string,
       text: string,
       basedOn: string | null,
@@ -151,13 +163,13 @@ export function useAddOption(): Mutation<
         keys.current.set(field, key);
       }
       try {
-        return await source.addOption(id, streamId, questionId, text, basedOn, key);
+        return await source.addOption(id, streamId, run, questionId, text, basedOn, key);
       } catch (error) {
         staleOnRefused(error);
         throw error;
       }
     },
-    (option, id, streamId, questionId, _text, _basedOn, field, fresh) => {
+    (option, id, streamId, _run, questionId, _text, _basedOn, field, fresh) => {
       keys.current.delete(field);
       markStale('options', fresh() ? putOption(id, streamId, questionId, option) : undefined);
       markStale('councils');
@@ -168,22 +180,38 @@ export function useAddOption(): Mutation<
 /**
  * Правка своего варианта — PATCH /api/councils/<id>/streams/<streamId>/options/<questionId>/<optionId>: новый текст.
  * Ответ встаёт на место прежнего варианта сразу, если fresh() — набор вариантов тот же, что когда запрос ушёл (как
- * у useAddOption()); варианты и список советов перезапрашиваются. Выбор правка не меняет.
+ * у useAddOption()); варианты и список советов перезапрашиваются. Выбор правка не меняет. run — как у useAddOption().
  */
 export function useUpdateOption(): Mutation<
-  [id: string, streamId: string, questionId: string, optionId: string, text: string, fresh: () => boolean],
+  [
+    id: string,
+    streamId: string,
+    run: number,
+    questionId: string,
+    optionId: string,
+    text: string,
+    fresh: () => boolean,
+  ],
   Option
 > {
   return useMutation(
-    async (id: string, streamId: string, questionId: string, optionId: string, text: string, _fresh: () => boolean) => {
+    async (
+      id: string,
+      streamId: string,
+      run: number,
+      questionId: string,
+      optionId: string,
+      text: string,
+      _fresh: () => boolean,
+    ) => {
       try {
-        return await source.updateOption(id, streamId, questionId, optionId, text);
+        return await source.updateOption(id, streamId, run, questionId, optionId, text);
       } catch (error) {
         staleOnRefused(error);
         throw error;
       }
     },
-    (option, id, streamId, questionId, _optionId, _text, fresh) => {
+    (option, id, streamId, _run, questionId, _optionId, _text, fresh) => {
       markStale('options', fresh() ? putOption(id, streamId, questionId, option) : undefined);
       markStale('councils');
     },
@@ -192,13 +220,14 @@ export function useUpdateOption(): Mutation<
 
 /**
  * «Утвердить выбор → к решениям» — POST /api/councils/<id>/streams/<streamId>/options/approve; ответ — поток. Он сразу
- * встаёт на место прежнего; потоки, варианты и список советов перезапрашиваются.
+ * встаёт на место прежнего; потоки, варианты и список советов перезапрашиваются. run — номер запуска шага, выбор в
+ * вариантах которого утверждают: шаг с тех пор запустили снова — сервер не утвердит варианты, которых человек не видел.
  */
-export function useApproveOptions(): Mutation<[id: string, streamId: string], Stream> {
+export function useApproveOptions(): Mutation<[id: string, streamId: string, run: number], Stream> {
   return useMutation(
-    async (id: string, streamId: string) => {
+    async (id: string, streamId: string, run: number) => {
       try {
-        return await source.approveOptions(id, streamId);
+        return await source.approveOptions(id, streamId, run);
       } catch (error) {
         staleOnRefused(error);
         throw error;

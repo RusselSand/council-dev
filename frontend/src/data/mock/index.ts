@@ -211,11 +211,18 @@ function optionSetAt(id: string, streamId: string, questionId: string): OptionSe
   return found;
 }
 
-/** Выбор правят, когда шаг «Варианты» начат и модели на нём не работают. */
-function checkOptionsReady(id: string, at: number) {
+/**
+ * Выбор правят, когда шаг «Варианты» начат и модели на нём не работают, — и только у вариантов того запуска шага, что
+ * на экране (run): шаг с тех пор запустили снова — варианты другие, хоть id у них те же.
+ */
+function checkOptionsReady(id: string, streamId: string, at: number, run: number) {
   const { state } = stepOf((streams.get(id) ?? [])[at], 'options');
   if (state === 'idle' || state === 'running') {
     throw new ApiError('options_not_ready', `Шаг «Варианты» не начат или на нём работают модели (${state})`, 409);
+  }
+  const current = optionsRun(id, streamId);
+  if (run !== current) {
+    throw new ApiError('options_not_ready', `Варианты запуска ${run}, а шаг «Варианты» уже запуска ${current}`, 409);
   }
 }
 
@@ -599,10 +606,10 @@ export const mockSource: DataSource = {
     if (stepOf((streams.get(id) ?? [])[at], 'options').state === 'idle') return { run, optionSets: [] };
     return { run, optionSets: copy(optionSetsOf(id, streamId)) };
   },
-  async setChoice(id, streamId, questionId, choice) {
+  async setChoice(id, streamId, run, questionId, choice) {
     const index = councilAt(id);
     const at = streamAt(id, streamId);
-    checkOptionsReady(id, at);
+    checkOptionsReady(id, streamId, at, run);
     const found = optionSetAt(id, streamId, questionId);
     if (choice.kind === 'option' && !found.options.some((o) => o.id === choice.option)) {
       throw new ApiError('unknown_option', `Варианта ${choice.option} у вопроса ${questionId} нет`, 422);
@@ -613,7 +620,7 @@ export const mockSource: DataSource = {
     choicesChanged(index, id, streamId);
     return copy(optionSetAt(id, streamId, questionId));
   },
-  async addOption(id, streamId, questionId, text, basedOn, key) {
+  async addOption(id, streamId, run, questionId, text, basedOn, key) {
     const index = councilAt(id);
     const at = streamAt(id, streamId);
     const stream = streamKey(id, streamId);
@@ -625,7 +632,7 @@ export const mockSource: DataSource = {
       optionsOf(id, streamId)[questionId]?.options.find((o) => o.id === created.id);
     if (existing) return copy(existing);
     if (!canSaveOption(text)) throw new ApiError('text_required', 'Пустой вариант не сохранить', 422);
-    checkOptionsReady(id, at);
+    checkOptionsReady(id, streamId, at, run);
     const found = optionSetAt(id, streamId, questionId);
     if (basedOn !== null && !found.options.some((o) => o.id === basedOn)) {
       throw new ApiError('unknown_option', `Варианта ${basedOn} у вопроса ${questionId} нет`, 422);
@@ -637,10 +644,10 @@ export const mockSource: DataSource = {
     touch(index);
     return copy(option);
   },
-  async updateOption(id, streamId, questionId, optionId, text) {
+  async updateOption(id, streamId, run, questionId, optionId, text) {
     const index = councilAt(id);
     const at = streamAt(id, streamId);
-    checkOptionsReady(id, at);
+    checkOptionsReady(id, streamId, at, run);
     optionSetAt(id, streamId, questionId);
     const list = optionsOf(id, streamId)[questionId].options;
     const found = list.findIndex((o) => o.id === optionId);
@@ -652,10 +659,10 @@ export const mockSource: DataSource = {
     touch(index);
     return copy(list[found]);
   },
-  async approveOptions(id, streamId) {
+  async approveOptions(id, streamId, run) {
     const index = councilAt(id);
     const at = streamAt(id, streamId);
-    checkOptionsReady(id, at);
+    checkOptionsReady(id, streamId, at, run);
     const list = streams.get(id) ?? [];
     // Шаг уже готов — ничего не меняем, отвечаем потоком как есть.
     if (stepOf(list[at], 'options').state !== 'done') {

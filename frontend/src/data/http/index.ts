@@ -165,25 +165,25 @@ export const httpSource: DataSource = {
     const { run, optionSets } = await request<OptionsRound>('GET', `${streamPath(id, streamId)}/options`);
     return { run, optionSets };
   },
-  async setChoice(id, streamId, questionId, choice) {
+  async setChoice(id, streamId, run, questionId, choice) {
     const path = `${optionsPath(id, streamId, questionId)}/choice`;
-    const { optionSet } = await request<{ optionSet: OptionSet }>('PUT', path, choice);
+    const { optionSet } = await request<{ optionSet: OptionSet }>('PUT', path, { run, choice });
     return optionSet;
   },
-  async addOption(id, streamId, questionId, text, basedOn, key) {
+  async addOption(id, streamId, run, questionId, text, basedOn, key) {
     const path = optionsPath(id, streamId, questionId);
-    const body = { text, basedOn };
+    const body = { run, text, basedOn };
     const { option } = await request<{ option: Option }>('POST', path, body, { 'Idempotency-Key': key });
     return option;
   },
-  async updateOption(id, streamId, questionId, optionId, text) {
+  async updateOption(id, streamId, run, questionId, optionId, text) {
     const path = `${optionsPath(id, streamId, questionId)}/${encodeURIComponent(optionId)}`;
-    const { option } = await request<{ option: Option }>('PATCH', path, { text });
+    const { option } = await request<{ option: Option }>('PATCH', path, { run, text });
     return option;
   },
-  async approveOptions(id, streamId) {
+  async approveOptions(id, streamId, run) {
     const path = `${streamPath(id, streamId)}/options/approve`;
-    const { stream } = await request<{ stream: Stream }>('POST', path, {});
+    const { stream } = await request<{ stream: Stream }>('POST', path, { run });
     return stream;
   },
   async listModels() {

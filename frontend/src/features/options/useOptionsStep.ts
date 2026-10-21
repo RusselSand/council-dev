@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { ApiError, useApproveOptions, useOptionChoices, useStreamOptions } from '../../data';
+import { ApiError, useApproveOptions, useOptionChoices, useRound, useStreamOptions } from '../../data';
 import type { State } from '../../domain/council';
 import {
   choiceOf,
@@ -150,8 +150,8 @@ const NOT_SAVED = new ApiError('not_saved', 'Не всё сохранилось 
  * варианты с «почему», «ценой» и зависимостями; «Поправить»; «Свой вариант»; «Пока не решаю». Выбор уходит сразу по
  * щелчку (useOptionChoices()); свой вариант — после паузы в наборе (useOwnOption()), правка — по «Сохранить»
  * (useOptionEditor()), и сохранённое становится выбором, если, пока оно сохранялось, у вопроса не выбрали другое (щелчок
- * по варианту, «Пока не решаю», «Свой вариант», ушедшая правка) — и на экране, открытом снова, когда с него ушли, пока
- * оно сохранялось (claimChoice()): выбор за последним щелчком. «Утвердить выбор → к
+ * по варианту, «Пока не решаю», «Свой вариант», в котором начали писать, ушедшая правка) — и на экране, открытом снова,
+ * когда с него ушли, пока оно сохранялось (claimChoice()): выбор за последним щелчком. «Утвердить выбор → к
  * решениям» сначала дожидается выбора, своего варианта и правки, потом утверждает и открывает «Решения» потока; что-то не
  * сохранилось — не утверждает, под кнопкой — «Не всё сохранилось»; ушли с экрана, пока утверждался, — не открывает.
  * Правки и «Утвердить» не уходят вместе с «Запустить снова» шага: retrying — шаг запускают снова, и они не действуют;
@@ -174,9 +174,15 @@ export function useOptionsStep(
   // Набор вариантов: шаг сменил состояние или пришли варианты другого его запуска (шаг запустили снова в другой вкладке,
   // и он успел кончиться, пока экран не видел, что он шёл), — варианты другие, хоть id те же.
   const round = query.data && `${query.data.state}/${query.data.run}`;
-  const choices = useOptionChoices(councilId, streamId, round);
+  // Номер запуска шага, варианты которого на экране: с ним уходят выбор, правки и «Утвердить», и сервер не примет их,
+  // если шаг с тех пор запустили снова. Вариантов нет — 0, как у не начатого шага: без вариантов правок нет.
+  const run = query.data?.run ?? 0;
+  const choices = useOptionChoices(councilId, streamId, run, round);
   const approveAction = useApproveOptions();
   const [current, setCurrent] = useState<string>();
+  // Набор вариантов другой — открывается его первый вопрос без выбора, как на только что открытом шаге, а не тот, что
+  // был открыт в прежнем.
+  useRound(round, () => setCurrent(undefined));
   const [droppedOpen, setDroppedOpen] = useState(false);
   const [approving, setApproving] = useState(false);
   /** «Утвердить» не утвердил: что-то из правок не сохранилось. */
@@ -193,7 +199,8 @@ export function useOptionsStep(
 
   const sets = query.data?.optionSets ?? [];
   const { pending } = choices;
-  // Открытый вопрос: выбранный человеком; не выбирал или его больше нет — первый без выбора, как пришли варианты.
+  // Открытый вопрос: выбранный человеком в этом наборе вариантов; не выбирал или его больше нет — первый без выбора, как
+  // пришли варианты.
   const first = firstOpenQuestion(sets);
   const currentId = sets.some((s) => s.question.id === current) ? current : first;
   useEffect(() => {
@@ -205,8 +212,8 @@ export function useOptionsStep(
   const select = (question: string, option: string) => choices.change(question, { kind: 'option', option });
   // Набор вариантов другой: поле «Свой вариант» и правка прежних забываются, как и выбор. Вопрос убрали, а шаг тот же, —
   // забываются его поле и правка.
-  const own = useOwnOption(councilId, streamId, currentId, round, query.data?.optionSets, select);
-  const editor = useOptionEditor(councilId, streamId, round, query.data?.optionSets, select);
+  const own = useOwnOption(councilId, streamId, currentId, run, round, query.data?.optionSets, select);
+  const editor = useOptionEditor(councilId, streamId, run, round, query.data?.optionSets, select);
 
   // Пока ответа ждут утверждение, выбор, свой вариант (и пока он ждёт паузы в наборе) или правка, «Запустить снова» не
   // действует; ответили или ушли с шага — снова действует.
@@ -294,7 +301,10 @@ export function useOptionsStep(
   const approveDisabled = approving || retrying;
 
   const approve = () => {
-    if (!stepApprovable(state) || approveDisabled) return;
+    if (!stepApprovable(state) || approveDisabled || !query.data) return;
+    // Утверждается выбор в вариантах, которые на экране: шаг, пока правки дожидались ответа, запустили снова — сервер не
+    // утвердит варианты, которых человек не видел.
+    const approvedRun = query.data.run;
     setApproving(true);
     setUnsaved(false);
     void (async () => {
@@ -306,7 +316,7 @@ export function useOptionsStep(
       const saved = ownSaved && edited && chosen;
       // Не сохранилось — не утверждаем и говорим под кнопкой: ошибка может быть у вопроса, которого нет на экране.
       setUnsaved(!saved);
-      const stream = saved ? await approveAction.run(councilId, streamId) : undefined;
+      const stream = saved ? await approveAction.run(councilId, streamId, approvedRun) : undefined;
       setApproving(false);
       if (stream && open.current) {
         navigate(routePath({ screen: 'step', council: councilId, stream: streamId, step: 'decisions' }));
@@ -366,7 +376,8 @@ export function useOptionsStep(
       if (!set || locked) return;
       // Вариант из поля сохранился, а выбрать его не вышло, — щелчок по кружку выбирает его снова.
       if (ownOpen && !ownSelected && own.option !== null) select(set.question.id, own.option);
-      // Открыли поле — выбором станет то, что в нём наберут: правка, которая ещё уходит, сохранится, но выбором не станет.
+      // Открыли поле — выбором станет то, что в нём наберут: начнут писать, пока правка ещё уходит, — правка сохранится,
+      // но выбором не станет; пустое поле выбор не меняет, и правка станет выбором.
       own.open();
     },
     editOwn: own.edit,

@@ -87,8 +87,12 @@ export interface DataSource {
    * запуска шага «Варианты».
    */
   listOptions(id: string, streamId: string): Promise<OptionsRound>;
-  /** PUT /api/councils/<id>/streams/<streamId>/options/<questionId>/choice — выбор по вопросу; ответ — его варианты. */
-  setChoice(id: string, streamId: string, questionId: string, choice: Choice): Promise<OptionSet>;
+  /**
+   * PUT /api/councils/<id>/streams/<streamId>/options/<questionId>/choice — выбор по вопросу; ответ — его варианты.
+   * run здесь и у правок вариантов — номер запуска шага, варианты которого на экране: шаг с тех пор запустили снова —
+   * сервер не меняет новые варианты и отвечает options_not_ready.
+   */
+  setChoice(id: string, streamId: string, run: number, questionId: string, choice: Choice): Promise<OptionSet>;
   /**
    * POST /api/councils/<id>/streams/<streamId>/options/<questionId> — свой вариант (basedOn — какой вариант правили;
    * с нуля — null); выбор не меняет. Ответ — созданный вариант. key — Idempotency-Key поля: тот же ключ — тот же
@@ -97,6 +101,7 @@ export interface DataSource {
   addOption(
     id: string,
     streamId: string,
+    run: number,
     questionId: string,
     text: string,
     basedOn: string | null,
@@ -106,9 +111,19 @@ export interface DataSource {
    * PATCH /api/councils/<id>/streams/<streamId>/options/<questionId>/<optionId> — новый текст своего варианта; выбор не
    * меняет. Ответ — вариант после правки.
    */
-  updateOption(id: string, streamId: string, questionId: string, optionId: string, text: string): Promise<Option>;
-  /** POST /api/councils/<id>/streams/<streamId>/options/approve — «Утвердить выбор → к решениям»; ответ — поток. */
-  approveOptions(id: string, streamId: string): Promise<Stream>;
+  updateOption(
+    id: string,
+    streamId: string,
+    run: number,
+    questionId: string,
+    optionId: string,
+    text: string,
+  ): Promise<Option>;
+  /**
+   * POST /api/councils/<id>/streams/<streamId>/options/approve — «Утвердить выбор → к решениям» вариантов запуска run;
+   * ответ — поток.
+   */
+  approveOptions(id: string, streamId: string, run: number): Promise<Stream>;
   /** GET /api/models */
   listModels(): Promise<Model[]>;
   /** GET /api/projects */

@@ -18,18 +18,24 @@ interface Field {
   left: boolean;
 }
 
-/** Что известно о поле на сервере: у какого вопроса, вариант, созданный из него, его текст и номер его выбора. */
+/**
+ * Что известно о поле на сервере: у какого вопроса и в вариантах какого запуска шага, вариант, созданный из него, его
+ * текст и номер его выбора.
+ */
 interface Session {
   question: string;
+  /** Номер запуска шага, варианты которого были на экране, когда поле открыли: с ним уходит набранное. */
+  run: number;
   /** Вариант, созданный из поля; не создан — null. */
   option: string | null;
   /** Последний сохранённый текст. */
   saved: string;
   /**
    * Номер выбора поля (claimChoice()): у вопроса с тех пор выбрали другое — здесь или на экране, открытом снова, —
-   * сохранённое из поля больше не выбирается: выбор за последним щелчком.
+   * сохранённое из поля больше не выбирается: выбор за последним щелчком. null — поле открыли, но ничего в нём не
+   * набрали: пустое поле выбор не меняет, и правка, которая ещё уходит, становится выбором.
    */
-  claim: number;
+  claim: number | null;
 }
 
 export interface OwnOption {
@@ -49,7 +55,10 @@ export interface OwnOption {
    * сохранился, его не правят, иначе набранное в поле ушло бы после правки и затёрло её.
    */
   saves: (option: string) => boolean;
-  /** Открыть поле у вопроса на экране: выбором вопроса станет то, что в нём наберут (claimChoice()). */
+  /**
+   * Открыть поле у вопроса на экране: выбором вопроса станет то, что в нём наберут (claimChoice() — с первым набранным,
+   * а у поля, где уже есть текст или созданный вариант, — сразу). Пустое поле выбор не меняет.
+   */
   open: () => void;
   edit: (text: string) => void;
   /** Уходят от вопроса на экране: набранное в его поле уходит сразу; сохранилось — поле закрывается. */
@@ -66,11 +75,13 @@ export interface OwnOption {
 /**
  * Поле «Свой вариант», как в макете: набранное сохраняется само, после паузы в наборе, — сначала создаёт свой вариант
  * (useAddOption()), дальше правит его (useUpdateOption()); запросы идут по одному, каждый — с тем, что набрано к его
- * отправке. Сохранённое становится выбором вопроса (onSaved), если с открытия поля у вопроса не выбрали другое — и на
- * экране, открытом снова, когда с него ушли, пока поле сохранялось (holdsChoice()). Ушли от вопроса или закрыли экран —
+ * отправке. Сохранённое становится выбором вопроса (onSaved), если с тех пор, как в поле начали писать, у вопроса не
+ * выбрали другое — и на экране, открытом снова, когда с него ушли, пока поле сохранялось (holdsChoice()); поле только
+ * открыли — правка, которая ещё уходит, всё равно станет выбором. Ушли от вопроса или закрыли экран —
  * набранное уходит сразу; поле закрывается, когда сохранилось, а не вышло — остаётся у своего вопроса с набранным и
  * ошибкой. Пустое поле не сохраняется и выбор не меняет; стёрли поле, из которого вариант уже создан, — на сервере он
- * с прежним текстом: под полем ошибка, и flush() — не всё сохранилось. current — вопрос на экране. round — набор
+ * с прежним текстом: под полем ошибка, и flush() — не всё сохранилось. current — вопрос на экране. run — номер запуска
+ * шага, варианты которого на экране: набранное уходит с ним. round — набор
  * вариантов: шаг сменил состояние или пришли варианты другого его запуска — варианты другие, хоть id вопросов те же:
  * поля прежних забываются, а то, что из них ещё
  * уходит, выбором не становится, в варианты не встаёт и дальше не правится. sets — варианты, как пришли; не пришли —
@@ -80,6 +91,7 @@ export function useOwnOption(
   councilId: string,
   streamId: string,
   current: string | undefined,
+  run: number,
   round: unknown,
   sets: readonly OptionSet[] | undefined,
   onSaved: (question: string, option: string) => void,
@@ -180,9 +192,10 @@ export function useOwnOption(
     // Поле не забыто: шаг не сменил состояние и вопрос не убрали.
     const live = () => fresh() && sessions.current.get(id) === session;
     setSending((n) => n + 1);
+    const { run: sentRun } = session;
     let outcome = session.option
-      ? await updateOption.attempt(councilId, streamId, question, session.option, text, fresh)
-      : await addOption.attempt(councilId, streamId, question, text, null, `own:${id}`, fresh);
+      ? await updateOption.attempt(councilId, streamId, sentRun, question, session.option, text, fresh)
+      : await addOption.attempt(councilId, streamId, sentRun, question, text, null, `own:${id}`, fresh);
     // Вариант уже создавали по ключу этого поля, но с другим текстом (ответ на прошлую попытку не дошёл), — правим. Он
     // уже в поле: не вышло поправить — карточкой с прежним текстом рядом с полем он не встаёт. Поле забыто, пока
     // вариант уходил, — он из прежних вариантов или у убранного вопроса, и его не правим.
@@ -191,7 +204,7 @@ export function useOwnOption(
       session.option = recovered.id;
       session.saved = recovered.text;
       markCreated(id, recovered);
-      outcome = await updateOption.attempt(councilId, streamId, question, recovered.id, text, fresh);
+      outcome = await updateOption.attempt(councilId, streamId, sentRun, question, recovered.id, text, fresh);
     }
     setSending((n) => n - 1);
     // Поле забыто: его ответ — про прежние варианты или убранный вопрос, ни в поле, ни в выбор он не идёт.
@@ -205,8 +218,11 @@ export function useOwnOption(
     session.saved = saved.text;
     markCreated(id, saved);
     markFailed(id, undefined);
-    // Выбор за последним щелчком: после открытия поля у вопроса выбрали другое (и на экране, открытом снова) — не выбираем.
-    if (holdsChoice(councilId, streamId, question, session.claim)) onSavedRef.current(question, saved.id);
+    // Выбор за последним щелчком: с тех пор, как в поле начали писать, у вопроса выбрали другое (и на экране, открытом
+    // снова) — не выбираем.
+    if (session.claim !== null && holdsChoice(councilId, streamId, question, session.claim)) {
+      onSavedRef.current(question, saved.id);
+    }
     return true;
   };
 
@@ -275,18 +291,20 @@ export function useOwnOption(
 
   const open = () => {
     if (current === undefined) return;
-    // Выбором вопроса станет поле: то, что выбрали у него раньше и ещё сохраняется, — уже нет.
-    const claim = claimChoice(councilId, streamId, current);
     const field = fieldsRef.current[current];
-    // Поле осталось с тех пор, как ушли от вопроса, — снова открытое.
+    // Поле осталось с тех пор, как ушли от вопроса, — снова открытое. В нём текст или созданный из него вариант —
+    // выбором вопроса сразу становится поле: то, что выбрали у него раньше и ещё сохраняется, — уже нет.
     if (field) {
       const session = sessions.current.get(field.session);
-      if (session) session.claim = claim;
+      if (session && (canSaveOption(field.text) || session.option !== null)) {
+        session.claim = claimChoice(councilId, streamId, current);
+      }
       if (field.left) put(current, { ...field, left: false });
       return;
     }
+    // Новое поле пустое и выбор не меняет: выбором оно станет, когда в нём начнут писать (edit()).
     const session = nextSession.current++;
-    sessions.current.set(session, { question: current, option: null, saved: '', claim });
+    sessions.current.set(session, { question: current, run, option: null, saved: '', claim: null });
     put(current, { question: current, text: '', session, left: false });
   };
 
@@ -294,6 +312,11 @@ export function useOwnOption(
     const field = shown();
     if (!field) return;
     const { question } = field;
+    // В поле начали писать — выбором вопроса станет оно: то, что выбрали у него раньше и ещё сохраняется, — уже нет.
+    const session = sessions.current.get(field.session);
+    if (session && session.claim === null && canSaveOption(text)) {
+      session.claim = claimChoice(councilId, streamId, question);
+    }
     put(question, { ...field, text, left: false });
     clearTimeout(timer.current);
     timer.current = setTimeout(() => {

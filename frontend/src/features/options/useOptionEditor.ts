@@ -6,6 +6,8 @@ import { claimChoice, holdsChoice } from './choiceClaims';
 /** Правка, открытая на варианте: у какого вопроса, какой вариант и что набрано. */
 interface Editing {
   question: string;
+  /** Номер запуска шага, варианты которого были на экране, когда правку открыли: с ним она уходит. */
+  run: number;
   option: Option;
   text: string;
   /** Свой вариант, который правка уже создала, но не с последним текстом: следующее «Сохранить» правит его. Нет — null. */
@@ -50,7 +52,8 @@ export interface OptionEditor {
  * правка становится выбором вопроса (onSaved), если, пока она уходила, у вопроса не выбрали другое — и на экране,
  * открытом снова, когда с него ушли, пока правка уходила (holdsChoice()); поле закрывается. Текст не меняли — поле
  * закрывается без запроса; пустой — не сохраняется. Не вышло — поле остаётся открытым с ошибкой; вариант, который правка
- * нашла по своему ключу, а поправить не вышло (created), — в ней, пока её не сохранят или не закроют. round — набор
+ * нашла по своему ключу, а поправить не вышло (created), — в ней, пока её не сохранят или не закроют. run — номер
+ * запуска шага, варианты которого на экране: правка уходит с ним. round — набор
  * вариантов: шаг сменил состояние или пришли варианты другого его запуска — варианты другие, хоть id те же: правка
  * прежних закрывается, а та, что ещё уходит,
  * выбором не становится, в варианты не встаёт и дальше не правится. sets — варианты, как пришли; не пришли — undefined:
@@ -59,6 +62,7 @@ export interface OptionEditor {
 export function useOptionEditor(
   councilId: string,
   streamId: string,
+  run: number,
   round: unknown,
   sets: readonly OptionSet[] | undefined,
   onSaved: (question: string, option: string) => void,
@@ -100,14 +104,16 @@ export function useOptionEditor(
    * Сохранить правку; ответ — сохранённый вариант или ошибка. Ключ поля — свой у каждого набора вариантов; ответ про
    * прежний набор в варианты не встаёт.
    */
-  const send = async ({ question, option, text, created }: Editing, sentIn: number): Promise<Outcome<Option>> => {
+  const send = async (sent: Editing, sentIn: number): Promise<Outcome<Option>> => {
+    const { question, run: sentRun, option, text, created } = sent;
     const fresh = () => generation.current === sentIn;
     if (option.source === 'user' || created) {
-      return updateOption.attempt(councilId, streamId, question, created ?? option.id, text, fresh);
+      return updateOption.attempt(councilId, streamId, sentRun, question, created ?? option.id, text, fresh);
     }
     const added = await addOption.attempt(
       councilId,
       streamId,
+      sentRun,
       question,
       text,
       option.id,
@@ -119,7 +125,7 @@ export function useOptionEditor(
     // Вариант уже создавали по ключу этой правки, но с другим текстом (ответ на прошлую попытку не дошёл), — правим его.
     const id = added.value.id;
     update(option.id, sentIn, (open) => ({ ...open, created: id }));
-    return updateOption.attempt(councilId, streamId, question, id, text, fresh);
+    return updateOption.attempt(councilId, streamId, sentRun, question, id, text, fresh);
   };
 
   const save = () => {
@@ -159,7 +165,7 @@ export function useOptionEditor(
     saving: addOption.pending || updateOption.pending,
     error: editing?.error,
     start: (question, option) => {
-      if (!inFlight.current) put({ question, option, text: option.text, created: null, error: undefined });
+      if (!inFlight.current) put({ question, run, option, text: option.text, created: null, error: undefined });
     },
     edit: (text) => {
       const open = editingRef.current;
