@@ -1045,7 +1045,7 @@ def test_another_snapshot_is_a_new_call_not_a_free_retry():
     _, first, _ = scan(replies)
     _, same, _ = scan(replies)
     _, other, _ = scan(replies, copy=copy_as("снимок-2"))
-    assert first.keys == same.keys
+    assert sorted(first.keys) == sorted(same.keys)  # участники отвечают параллельно: порядок любой
     assert set(first.keys).isdisjoint(other.keys)
 
 
@@ -1112,7 +1112,7 @@ def test_another_version_of_the_file_is_a_new_call_and_the_same_one_is_free():
     _, first, _ = design(replies)
     _, same, _ = design(replies)
     _, other, _ = design(replies, fetch=FakeFigma(version="v2"))
-    assert first.keys == same.keys
+    assert sorted(first.keys) == sorted(same.keys)  # участники отвечают параллельно: порядок любой
     assert set(first.keys).isdisjoint(other.keys)
 
 
