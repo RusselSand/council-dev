@@ -75,6 +75,10 @@ export interface StepContext {
   stream: Stream;
   streams: Stream[];
   step: StreamStep;
+  /** «Запустить снова» ждёт ответа: переход и правки шага не действуют — запросы не уходят вместе. */
+  retrying: boolean;
+  /** Шаг сообщает, что его переход или правка ждёт ответа: пока да — «Запустить снова» не действует. */
+  onBusy: (busy: boolean) => void;
 }
 
 export interface StreamPage {
@@ -99,7 +103,8 @@ export interface StreamPage {
   runs: RunGroup[] | null;
   /** «Запустить снова» шаг с ошибкой. */
   retry: () => void;
-  retrying: boolean;
+  /** «Запустить снова» не действует: ждёт ответа или ответа ждёт переход или правка шага. */
+  retryDisabled: boolean;
   /** Ошибка «Запустить снова» этого шага; ушли на другой шаг или поток, шаг больше не с ошибкой — сбрасывается. */
   retryError: ApiError | undefined;
 }
@@ -125,7 +130,8 @@ const stepPath = (council: string, stream: string, step: Step) =>
 
 /**
  * Экран потока — общий для всех шагов, как в макете: вкладки потоков, цепочка шагов, плашка состояния открытого шага
- * и «Запустить снова», «Ход работы» (вид «grouped»), карточка шага с подписью, названием и пояснением. Потока из адреса
+ * и «Запустить снова», «Ход работы» (вид «grouped»), карточка шага с подписью, названием и пояснением. «Запустить
+ * снова» и переход или правки шага не уходят вместе: пока ответа ждёт одно, другое не действует. Потока из адреса
  * у совета нет — открывает первый поток на его текущем шаге; потоков нет — «Исследование».
  */
 export function useStreamPage(council: CouncilSummary, route: StepRoute): StreamPage {
@@ -190,6 +196,13 @@ export function useStreamPage(council: CouncilSummary, route: StepRoute): Stream
     if (!retriedHere) setRetried(null);
   }, [retriedHere]);
 
+  /**
+   * Переход или правка шага внутри карточки ждёт ответа («Утвердить вопросы», «Добавить»): «Запустить снова» не уходит
+   * вместе с ними.
+   */
+  const [stepBusy, setStepBusy] = useState(false);
+  const retryDisabled = retryAction.pending || stepBusy;
+
   const caps =
     state === 'waiting'
       ? t('stream.caps.waiting', { step: stepTitle })
@@ -228,7 +241,10 @@ export function useStreamPage(council: CouncilSummary, route: StepRoute): Stream
       : null;
 
   return {
-    context: stream && step && streams ? { stream, streams, step } : undefined,
+    context:
+      stream && step && streams
+        ? { stream, streams, step, retrying: retryAction.pending, onBusy: setStepBusy }
+        : undefined,
     loading: query.loading || missing,
     error: query.error,
     reload: query.reload,
@@ -243,11 +259,11 @@ export function useStreamPage(council: CouncilSummary, route: StepRoute): Stream
     banner,
     runs,
     retry: () => {
-      if (state !== 'failed' || retryAction.pending) return;
+      if (state !== 'failed' || retryDisabled) return;
       setRetried(here);
       void retryAction.run(council.id, route.stream);
     },
-    retrying: retryAction.pending,
+    retryDisabled,
     retryError: retriedHere ? retryAction.error : undefined,
   };
 }

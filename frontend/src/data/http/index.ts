@@ -2,6 +2,7 @@ import type { Brief } from '../../domain/brief';
 import type { CouncilSummary } from '../../domain/council';
 import type { Model } from '../../domain/model';
 import type { Project } from '../../domain/project';
+import type { Question } from '../../domain/questions';
 import type { Finding, Research } from '../../domain/research';
 import type { Fragment, Slicing } from '../../domain/slicing';
 import type { ProjectDecisions, Stream } from '../../domain/stream';
@@ -134,6 +135,25 @@ export const httpSource: DataSource = {
   async approveProjectDecisions(id, streamId, selected) {
     const path = `${streamPath(id, streamId)}/project-decisions/approve`;
     const { stream } = await request<{ stream: Stream }>('POST', path, { selected });
+    return stream;
+  },
+  async listQuestions(id, streamId) {
+    const { questions } = await request<{ questions: Question[] }>('GET', `${streamPath(id, streamId)}/questions`);
+    return questions;
+  },
+  async setQuestionRemoved(id, streamId, questionId, removed) {
+    const path = `${streamPath(id, streamId)}/questions/${encodeURIComponent(questionId)}`;
+    const { question } = await request<{ question: Question }>('PATCH', path, { removed });
+    return question;
+  },
+  async addQuestion(id, streamId, text, key) {
+    const path = `${streamPath(id, streamId)}/questions`;
+    const { question } = await request<{ question: Question }>('POST', path, { text }, { 'Idempotency-Key': key });
+    return question;
+  },
+  async approveQuestions(id, streamId) {
+    const path = `${streamPath(id, streamId)}/questions/approve`;
+    const { stream } = await request<{ stream: Stream }>('POST', path, {});
     return stream;
   },
   async listModels() {

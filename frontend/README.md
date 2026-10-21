@@ -57,7 +57,7 @@ src/
 Экраны: `features/home` — Сводка, `features/projects` — Проекты, `features/council` — совет, `features/brief` — его
 этап «Ввод», `features/slices` — этап «Нарезка», `features/structure` — этап «Группы», `features/research` — этап
 «Исследование», `features/stream` — шаг потока (общее для всех шагов), `features/projectDecisions` — шаг «Решения
-проекта».
+проекта», `features/questions` — шаг «Вопросы».
 
 Экран совета (`features/council`, `<Council route>`) — общий для всех этапов и шагов потока: под шапкой рамки вкладки
 шести этапов, под ними — этап, который `app/Screen.tsx` выбирает по адресу и получает совет из списка
@@ -118,8 +118,10 @@ src/
 этапов — вкладки потоков (`parts/StreamTabs`), слева цепочка шагов (`parts/StepChain`), плашка состояния открытого шага
 с «Запустить снова» (`parts/StepBanner`) и «Ход работы» вида «grouped» (`parts/RunPanel`: у шага с ошибкой и у шага, где
 работают модели), справа — карточка шага (`parts/StepCard`: подпись капсом, название, пояснение). Внутри карточки —
-шаг, который `app/Screen.tsx` выбирает по адресу и получает поток, все потоки совета и шаг (`{({ stream, streams, step })
-=> …}`); шаг не начат — «Шаг откроется, когда пройдены предыдущие.» вместо него. Шага ещё нет — в карточке заглушка
+шаг, который `app/Screen.tsx` выбирает по адресу и получает поток, все потоки совета и шаг (`{({ stream, streams, step,
+retrying, onBusy }) => …}`); шаг не начат — «Шаг откроется, когда пройдены предыдущие.» вместо него. «Запустить снова»
+и переход или правки шага не уходят вместе: пока запуск ждёт ответа (`retrying`), переход и правки шага не действуют;
+пока переход или правка ждёт ответа, шаг сообщает об этом (`onBusy(true)`), и «Запустить снова» не действует. Шага ещё нет — в карточке заглушка
 `features/stub`. Потоки даёт `useCouncilStreams(id, running)` из `data/`: пока на шаге работают модели, потоки и список
 советов опрашиваются (`useModelsPoll()`). Потока из адреса нет — открывается первый поток на его текущем шаге. Расчёты —
 текущий шаг и состояние потока, когда показывать «Ход работы», состояние части шага, «думает 0:12» — `domain/stream.ts`.
@@ -130,6 +132,17 @@ src/
 решения с галочками (`parts/DecisionCard` на `CheckTile variant="card"`) и два перехода к вопросам. Галочки живут
 в `useProjectDecisionsStep()` рядом с экраном до перехода; переход — `useApproveProjectDecisions()`, потом открываются
 «Вопросы» потока. Экран ставится с `key` по совету и потоку.
+
+«Вопросы» (`features/questions`) — вопросы строками (`parts/QuestionRow`: id, текст, откуда и «почему», справа «Убрать» /
+«Вернуть»), на строке — «Пересматривает решение проекта» (`parts/RevisitNote`) и «В тексте уже есть ответ»
+(`parts/AnswerNote`), обе на `ui/Callout`; под вопросами — «Свой вопрос…» и «Добавить» (`parts/OwnQuestion`); шаг ждёт
+вас или остановился — внизу «Утвердить вопросы → к вариантам». Пока на шаге работают модели — серые строки
+(`ui/Skeleton`). Вопросы даёт `useStreamQuestions(id, streamId, state)`: шаг сменил состояние — вопросы
+перезапрашиваются, а до ответа их нет. «Убрать» / «Вернуть» уходят сразу (`useQuestionRemovals()` на `useQueuedSaves()`),
+свой вопрос — по «Добавить» (`useAddQuestion()`: повтор с тем же текстом, без пробелов по краям, — с прежним
+Idempotency-Key, текст поправили — с новым), «Утвердить» сначала дожидается «Убрать» / «Вернуть», потом
+утверждает (`useApproveQuestions()`) и открывает «Варианты». Поле и действия — `useQuestionsStep()` рядом с экраном;
+когда вопросы правят и утверждают — `domain/questions.ts`. Экран ставится с `key` по совету и потоку.
 
 «Новый совет» — одно действие на все его кнопки (шапка, меню, колонка «Ввод» на Сводке): `useNewCouncil()` из
 `components/NewCouncil` создаёт совет и открывает его «Ввод». `NewCouncilProvider` ставит `app/App.tsx`; ошибку
@@ -169,7 +182,9 @@ src/
 плашка «работа остановилась» со знаком «!» и кнопкой, `Badge` — кружок с буквой группы или потока (`dark` — тёмный,
 `light` — белый на тёмной вкладке; `sm` — на вкладке потока), `CardFooter` — низ карточки под чертой: слева пояснение
 или второе действие, справа главное, `DashedNote` — пояснение на пунктирной плашке на месте того, чего нет
-(«Пропущено — …», «Шаг откроется, …»), `Highlight` — жёлтая плашка с подписью капсом (идея группы, идея потока).
+(«Пропущено — …», «Шаг откроется, …»), `Highlight` — жёлтая плашка с подписью капсом (идея группы, идея потока),
+`Callout` — цветная плашка-пояснение внутри строки списка: заголовок мелко и жирно и под ним содержимое (`red` —
+«Пересматривает решение проекта», `green` — «В тексте уже есть ответ»).
 В `components/`:
 `StateDot` — точка состояния совета, этапа или шага; `StateTag` — метка состояния; `LoadState` — загрузка и ошибка
 (без `onRetry` — только текст ошибки); `NewCouncil` — действие «Новый совет»; `ProjectDialog` — окно проекта: новый
@@ -197,23 +212,23 @@ src/
 Экран не ходит в `fetch` сам — только через хуки из `data/`.
 
 - `data/source.ts` — интерфейс источника `DataSource`: по методу на ручку контракта.
-- `data/mock/` — моки. Совет `g1`, его нарезка, группы, исследование и поток — из `data-1.json` макета, остальные
-  советы, их фрагменты, группы, находки, потоки, прошлые решения и проекты — из `prototype.js`. «К потокам →» в моках
-  создаёт потоки из групп.
+- `data/mock/` — моки. Совет `g1`, его нарезка, группы, исследование, поток и вопросы — из `data-1.json` макета,
+  остальные советы, их фрагменты, группы, находки, потоки, прошлые решения, вопросы и проекты — из `prototype.js`.
+  «К потокам →» в моках создаёт потоки из групп.
   Моки отдают копию данных: экран не может их испортить.
 - `data/http/` — настоящий сервер: `request()` разбирает ответ и ошибку по контракту.
 - `data/config.ts` — какой источник взять, по `VITE_DATA_SOURCE`.
 - `data/hooks/` — хуки запросов: `useCouncils()`, `useCouncilBrief(id)`, `useCouncilSlicing(id, running)`,
   `useCouncilStructure(id, running)`, `useCouncilResearch(id, running)`, `useCouncilStreams(id, running)`,
-  `useProjectDecisions(id, streamId)`, `useModels()`, `useProjects()`, `useRepos()` →
-  `{ data, error, loading, reload }`; хуки действий: `useCreateCouncil()`, `useUpdateCouncil()`, `useSaveBrief()`,
-  `useStartSlicing()`, `useStartStructure()`, `useConfirmStructure()`, `useRetryStructure()`, `useResearchAction()`
-  (`run(id, { action: 'start' | 'skip' | 'stop' | 'reset', kind, … })`), `useApproveResearch()`, `useRetryStream()`,
-  `useApproveProjectDecisions()`, `useCreateProject()`, `useUpdateProject()`, `useDeleteProject()` →
-  `{ run, pending, error }`.
+  `useProjectDecisions(id, streamId)`, `useStreamQuestions(id, streamId, state)`, `useModels()`, `useProjects()`,
+  `useRepos()` → `{ data, error, loading, reload }`; хуки действий: `useCreateCouncil()`, `useUpdateCouncil()`,
+  `useSaveBrief()`, `useStartSlicing()`, `useStartStructure()`, `useConfirmStructure()`, `useRetryStructure()`,
+  `useResearchAction()` (`run(id, { action: 'start' | 'skip' | 'stop' | 'reset', kind, … })`), `useApproveResearch()`,
+  `useRetryStream()`, `useApproveProjectDecisions()`, `useAddQuestion()`, `useApproveQuestions()`, `useCreateProject()`,
+  `useUpdateProject()`, `useDeleteProject()` → `{ run, pending, error }`.
   `run()` отвечает изменённым объектом (удаление — id удалённого) или `undefined`, если не вышло (причина — в `error`).
   `useFragmentLabels(id, running)` — смена типа фрагмента по щелчку, `useFindingDecisions(id, round)` — решение по
-  находке по щелчку: оба — на `useQueuedSaves()` (у каждого ключа своя очередь, на сервере — последний выбор; `pending`
+  находке по щелчку, `useQuestionRemovals(id, streamId, round)` — «Убрать» / «Вернуть» вопрос: все — на `useQueuedSaves()` (у каждого ключа своя очередь, на сервере — последний выбор; `pending`
   и `errors` по ключу, `change()`, `settle()`; сменился набор `round` — выборы прежних забываются).
   `useGroupEdits(id, running)` — правки групп: `change()` (название, идея), `merge()`, `split()`, `pending` и `errors`
   по id группы, `reshaping`, `settle()`.
@@ -233,7 +248,8 @@ src/
   видно, что хоть одно исследование идёт.
 - Действие, которое создаёт объект, шлёт `Idempotency-Key` (`data/hooks/idempotency.ts`): пока объект не создан, все
   попытки идут с одним ключом, и повтор после оборванного ответа не создаёт второй (`useCreateCouncil()`,
-  `useCreateProject()`). Ключ живёт столько же, сколько хук: у проекта — пока открыто окно «Новый проект».
+  `useCreateProject()`, `useAddQuestion()`). Ключ живёт столько же, сколько хук: у проекта — пока открыто окно «Новый
+  проект»; у вопроса — пока он не создан.
 - `data/errors.ts` — `ApiError` с `code`; текст ошибки — `t(errorKey(error.code))`, а не `message`.
 
 Новая ручка: описать в `docs/api-contract.md` → тип в `domain/` → метод в `DataSource` → мок → http → хук.
@@ -417,6 +433,16 @@ src/
 | Изменить отбор  | Change selection  |
 | Учитываются     | Taken into account |
 | выгружен в заметки | exported to notes |
+| почему          | why               |
+| вы (источник вопроса) | you         |
+| Убрать          | Remove            |
+| Вернуть         | Restore           |
+| Свой вопрос     | Your own question |
+| Добавить        | Add               |
+| Пересматривает решение проекта | Revisits a project decision |
+| В тексте уже есть ответ | The text already has an answer |
+| вариант «из группы» | “from the group” option |
+| Утвердить вопросы | Approve questions |
 
 ## Токены
 
@@ -441,9 +467,10 @@ src/
   и макета), `--ref-min` («где найдено» на находке), `--conflict-side-min` (сторона противоречия), `--flow-step-num`
   (кружок с номером шага сценария в коде), `--stage-side-max` (боковая колонка слева: цепочка шагов потока),
   `--badge-sm` (буква потока на вкладке), `--step-num`, `--chain-line`, `--chain-line-min` (кружок шага и черта в
-  цепочке), `--hint-width` (пояснение шага потока), `--pulse-spread` (кольцо вокруг точки модели, которая думает);
+  цепочке), `--hint-width` (пояснение шага потока), `--pulse-spread` (кольцо вокруг точки модели, которая думает),
+  `--question-id-width` (колонка с id вопроса потока);
 - прозрачность — `--opacity-count` (число на чипе), `--opacity-disabled` (недоступный переключатель), `--opacity-idle`
-  (не начатый шаг в цепочке);
+  (не начатый шаг в цепочке), `--opacity-removed` (убранный вопрос потока);
 - тени — `--shadow-card`, `--shadow-modal`, `--shadow-knob`; фон страницы — `--page-background`; затемнение под
   окном — `--overlay-bg`, `--overlay-blur`.
 
@@ -477,6 +504,13 @@ npm --prefix frontend run shot -- --name projedit --proto "#/projects" --click "
 ```
 npm --prefix frontend run shot -- --name project --proto "#/c/c1/streams/A/project" --click "Изменить отбор" --app "/c/c1/streams/A/project" --app-click "Изменить отбор"
 npm --prefix frontend run shot -- --name failed --proto "#/c/c1/streams/C/questions" --app "/c/c1/streams/C/questions"
+```
+
+«Вопросы»: у `g1` шаг готов; у `c1` поток A — с «Пересматривает решение проекта» и «В тексте уже есть ответ», C —
+остановился, внизу «Утвердить вопросы → к вариантам». Убрать вопрос и добавить свой:
+
+```
+npm --prefix frontend run shot -- --name questions --proto "#/c/c1/streams/C/questions" --click "Убрать" --click "fill:input[placeholder]=Свой" --click "Добавить" --app "/c/c1/streams/C/questions" --app-click "Убрать" --app-click "fill:input[placeholder]=Свой" --app-click "Добавить"
 ```
 
 Для снимков нужен браузер: один раз `npx playwright install chromium` в `frontend/`. Если его нет, скрипт снимает в

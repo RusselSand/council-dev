@@ -8,8 +8,8 @@ import styles from './StepBanner.module.css';
 
 interface StepBannerProps {
   banner: Banner;
-  /** «Запустить снова» ждёт ответа. */
-  retrying: boolean;
+  /** «Запустить снова» не действует: ждёт ответа или ответа ждёт переход шага. */
+  retryDisabled: boolean;
   /** Не вышло запустить снова. */
   retryError: ApiError | undefined;
   onRetry: () => void;
@@ -20,7 +20,7 @@ interface StepBannerProps {
  * «Сбой · Вопросы», почему и «Запустить снова»; ИИ работает — зелёная, что делают модели. Не вышло запустить снова —
  * ошибка под плашкой.
  */
-export function StepBanner({ banner, retrying, retryError, onRetry }: StepBannerProps) {
+export function StepBanner({ banner, retryDisabled, retryError, onRetry }: StepBannerProps) {
   const { t } = useI18n();
   return (
     <>
@@ -32,7 +32,7 @@ export function StepBanner({ banner, retrying, retryError, onRetry }: StepBanner
         {banner.text && <p className={styles.text}>{banner.text}</p>}
         {banner.state === 'failed' && (
           <div>
-            <Button size="sm" tone="danger" disabled={retrying} onClick={onRetry}>
+            <Button size="sm" tone="danger" disabled={retryDisabled} onClick={onRetry}>
               {t('stream.retry')}
             </Button>
           </div>

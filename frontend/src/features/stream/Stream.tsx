@@ -39,7 +39,7 @@ export function Stream({ council, route, children }: StreamProps) {
             {page.banner && (
               <StepBanner
                 banner={page.banner}
-                retrying={page.retrying}
+                retryDisabled={page.retryDisabled}
                 retryError={page.retryError}
                 onRetry={page.retry}
               />

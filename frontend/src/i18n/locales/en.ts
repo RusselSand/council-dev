@@ -252,6 +252,24 @@ export const en = translation({
   'projectDecisions.skip': 'Without past decisions → to questions',
   'projectDecisions.approve': 'Use checked → to questions',
 
+  'questions.source.text': 'from the text',
+  'questions.source.ai': 'AI',
+  'questions.source.user': 'you',
+  'questions.why': 'why: {reason}',
+  'questions.remove': 'Remove',
+  'questions.restore': 'Restore',
+  'questions.revisits': 'Revisits a project decision',
+  'questions.revisits.note':
+    'While the question is open, {id} is under_review: other streams don’t rely on it. Once the question is decided, a new ADR replaces it and {id} becomes superseded.',
+  'questions.answers.single': 'The text already has an answer · proposal',
+  'questions.answers.several': 'The text already has answers · proposals: {count}',
+  'questions.answers.quote': '“{text}”',
+  'questions.answers.note':
+    'It will become a “from the group” option at the next step — you can keep the question to compare it with others.',
+  'questions.own': 'Your own question…',
+  'questions.add': 'Add',
+  'questions.approve': 'Approve questions → to options',
+
   'progress.title': 'Progress',
   'progress.note': 'Members work separately; the judge decides where they disagree.',
 
@@ -344,6 +362,9 @@ export const en = translation({
   'error.research_not_ready':
     'The research can’t be approved yet: wait for it to finish, decide on the findings and confirm the groups. The research has been refreshed.',
   'error.unknown_decision': 'One of the checked decisions is no longer in the catalog. The list has been refreshed — check your selection.',
+  'error.questions_not_ready':
+    'The questions can’t be changed right now: the step hasn’t started or the models are collecting questions again. The stream has been refreshed.',
+  'error.text_required': 'Type a question.',
   'error.network': 'No connection to the server. Check your network and try again.',
   'error.unknown': 'Something went wrong. Please try again.',
 

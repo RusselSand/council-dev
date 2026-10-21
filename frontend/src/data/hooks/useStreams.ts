@@ -19,7 +19,7 @@ export function useCouncilStreams(id: string, councilRunning: boolean): Query<Co
 }
 
 /** Поток из ответа действия — на место прежнего в потоках того же совета. */
-const replaceStream = (councilId: string, stream: Stream) => (current: CouncilStreams) =>
+export const replaceStream =(councilId: string, stream: Stream) => (current: CouncilStreams) =>
   current.council === councilId
     ? { ...current, streams: current.streams.map((s) => (s.id === stream.id ? stream : s)) }
     : current;

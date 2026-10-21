@@ -1,0 +1,27 @@
+.callout {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-6);
+  min-width: 0;
+  padding: var(--space-10) var(--space-12);
+  border-radius: var(--radius-12);
+}
+
+.red {
+  background: var(--state-failed-bg);
+  color: var(--state-failed-ink);
+}
+
+.green {
+  background: var(--state-done-bg);
+  color: var(--state-done-ink);
+}
+
+.title {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-8);
+  font-size: var(--text-xs);
+  font-weight: var(--weight-bold);
+}

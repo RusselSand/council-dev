@@ -1,8 +1,9 @@
 import { cleanName, type CouncilFields, type CouncilSummary } from '../../domain/council';
 import { cleanFields, MAX_PROJECT_REPOS, type Project, type ProjectFields } from '../../domain/project';
+import { canAddQuestion, type Question } from '../../domain/questions';
 import { fitsKind, isFigmaLink, isPending, isSettled, researchStatus, type Research } from '../../domain/research';
 import { isLabel, type Slicing } from '../../domain/slicing';
-import type { ProjectDecisions } from '../../domain/stream';
+import { stepOf, type ProjectDecisions } from '../../domain/stream';
 import type { Structure } from '../../domain/structure';
 import { ApiError } from '../errors';
 import type { DataSource } from '../source';
@@ -20,15 +21,17 @@ import {
 } from './councils';
 import { MODELS } from './models';
 import { PROJECT_LIST, REPO_LIST, type MockProject } from './projects';
+import { ownQuestion, QUESTIONS } from './questions';
 import { noResearch, RESEARCHES, startedCode, startedDesign, toSetup } from './research';
 import { noSlicing, SLICINGS, startedSlicing } from './slicings';
 import {
   decisionsApproved,
-  decisionsKey,
   newDecisions,
   newStreams,
   PROJECT_DECISIONS,
+  questionsApproved,
   STREAMS,
+  streamKey,
   streamRetried,
 } from './streams';
 import {
@@ -60,8 +63,12 @@ const structures = new Map(Object.entries(STRUCTURES).map(([id, structure]) => [
 const researches = new Map(Object.entries(RESEARCHES).map(([id, research]) => [id, copy(research)]));
 /** Потоки по id совета: «К потокам →» создаёт их, действия с шагами меняют их здесь. */
 const streams = new Map(Object.entries(STREAMS).map(([id, list]) => [id, copy(list)]));
-/** Прошлые решения по совету и потоку (decisionsKey): отбор меняет их здесь. */
+/** Прошлые решения по совету и потоку (streamKey): отбор меняет их здесь. */
 const projectDecisions = new Map(Object.entries(PROJECT_DECISIONS).map(([key, value]) => [key, copy(value)]));
+/** Вопросы по совету и потоку (streamKey): правки и свои вопросы меняют их здесь. */
+const questions = new Map(Object.entries(QUESTIONS).map(([key, list]) => [key, copy(list)]));
+/** Idempotency-Key → ключ потока и id созданного по нему вопроса. */
+const questionByKey = new Map<string, { stream: string; id: string }>();
 /** Проекты моков: создание, правка и удаление меняют их здесь; живут, пока открыта вкладка. */
 const projects = copy(PROJECT_LIST);
 /** Idempotency-Key → id созданного по нему проекта. */
@@ -130,10 +137,26 @@ function streamAt(id: string, streamId: string): number {
 
 /** Прошлые решения потока; у потока, которого нет в моках, каталога нет. */
 function decisionsOf(id: string, streamId: string): ProjectDecisions {
-  const key = decisionsKey(id, streamId);
+  const key = streamKey(id, streamId);
   const decisions = projectDecisions.get(key) ?? { catalog: null, decisions: [] };
   projectDecisions.set(key, decisions);
   return decisions;
+}
+
+/** Вопросы потока; у потока, которому их ещё не собрали, — пусто. */
+function questionsOf(id: string, streamId: string): Question[] {
+  const key = streamKey(id, streamId);
+  const list = questions.get(key) ?? [];
+  questions.set(key, list);
+  return list;
+}
+
+/** Вопросы правят и утверждают, когда шаг начат и модели на нём не работают. */
+function checkQuestionsReady(id: string, at: number) {
+  const { state } = stepOf((streams.get(id) ?? [])[at], 'questions');
+  if (state === 'idle' || state === 'running') {
+    throw new ApiError('questions_not_ready', `Шаг «Вопросы» не начат или на нём работают модели (${state})`, 409);
+  }
 }
 
 /** Совет поменяли: новое время изменения. */
@@ -405,7 +428,7 @@ export const mockSource: DataSource = {
     // «Потоки» не начаты — каждая группа становится потоком; прошлые решения — из папки документации проекта.
     if (starting) {
       const docs = projects.find((p) => p.id === councils[index].project?.id)?.docs ?? '';
-      for (const group of groups) projectDecisions.set(decisionsKey(id, group.id), newDecisions(docs));
+      for (const group of groups) projectDecisions.set(streamKey(id, group.id), newDecisions(docs));
       streams.set(id, newStreams(groups, (stream) => decisionsOf(id, stream)));
     }
     return copy(councils[index]);
@@ -445,6 +468,54 @@ export const mockSource: DataSource = {
     const { participants, judge } = councils[index];
     list[at] = decisionsApproved(list[at], chosen, participants, judge, now);
     councils[index] = streamsChanged(councils[index], list, streamId, now);
+    return copy(list[at]);
+  },
+  async listQuestions(id, streamId) {
+    councilAt(id);
+    streamAt(id, streamId);
+    return copy(questionsOf(id, streamId));
+  },
+  async setQuestionRemoved(id, streamId, questionId, removed) {
+    const index = councilAt(id);
+    const at = streamAt(id, streamId);
+    checkQuestionsReady(id, at);
+    const list = questionsOf(id, streamId);
+    const found = list.findIndex((q) => q.id === questionId);
+    if (found < 0) throw new ApiError('not_found', `Вопроса ${questionId} у потока ${streamId} нет`, 404);
+    list[found] = { ...list[found], removed };
+    // Шаги потока правка не меняет, как в макете; у совета — новое время изменения.
+    touch(index);
+    return copy(list[found]);
+  },
+  async addQuestion(id, streamId, text, key) {
+    const index = councilAt(id);
+    const at = streamAt(id, streamId);
+    const list = questionsOf(id, streamId);
+    // Ключ уже был — вопрос создан раньше, второй не создаём.
+    const created = questionByKey.get(key);
+    const existing = created?.stream === streamKey(id, streamId) && list.find((q) => q.id === created.id);
+    if (existing) return copy(existing);
+    if (!canAddQuestion(text)) throw new ApiError('text_required', 'Пустой вопрос не добавить', 422);
+    checkQuestionsReady(id, at);
+    const question = ownQuestion(list, text);
+    list.push(question);
+    questionByKey.set(key, { stream: streamKey(id, streamId), id: question.id });
+    touch(index);
+    return copy(question);
+  },
+  async approveQuestions(id, streamId) {
+    const index = councilAt(id);
+    const at = streamAt(id, streamId);
+    checkQuestionsReady(id, at);
+    const list = streams.get(id) ?? [];
+    // Шаг уже готов — ничего не меняем, отвечаем потоком как есть.
+    if (stepOf(list[at], 'questions').state !== 'done') {
+      const now = new Date().toISOString();
+      const { participants, judge } = councils[index];
+      const kept = questionsOf(id, streamId).filter((q) => !q.removed).length;
+      list[at] = questionsApproved(list[at], kept, participants, judge, now);
+      councils[index] = streamsChanged(councils[index], list, streamId, now);
+    }
     return copy(list[at]);
   },
   async listModels() {

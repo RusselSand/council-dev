@@ -2,6 +2,7 @@ import type { Brief } from '../domain/brief';
 import type { CouncilFields, CouncilSummary } from '../domain/council';
 import type { Model } from '../domain/model';
 import type { Project, ProjectFields } from '../domain/project';
+import type { Question } from '../domain/questions';
 import type { Decision, Finding, Research, ResearchKind } from '../domain/research';
 import type { Fragment, Label, Slicing } from '../domain/slicing';
 import type { ProjectDecisions, Stream } from '../domain/stream';
@@ -69,6 +70,17 @@ export interface DataSource {
    * без прошлых решений) и перейти к вопросам; ответ — поток.
    */
   approveProjectDecisions(id: string, streamId: string, selected: string[]): Promise<Stream>;
+  /** GET /api/councils/<id>/streams/<streamId>/questions — вопросы потока по порядку. */
+  listQuestions(id: string, streamId: string): Promise<Question[]>;
+  /** PATCH /api/councils/<id>/streams/<streamId>/questions/<questionId> — убрать или вернуть вопрос; ответ — вопрос. */
+  setQuestionRemoved(id: string, streamId: string, questionId: string, removed: boolean): Promise<Question>;
+  /**
+   * POST /api/councils/<id>/streams/<streamId>/questions — свой вопрос; ответ — созданный вопрос. key —
+   * Idempotency-Key: тот же ключ — тот же вопрос.
+   */
+  addQuestion(id: string, streamId: string, text: string, key: string): Promise<Question>;
+  /** POST /api/councils/<id>/streams/<streamId>/questions/approve — «Утвердить вопросы → к вариантам»; ответ — поток. */
+  approveQuestions(id: string, streamId: string): Promise<Stream>;
   /** GET /api/models */
   listModels(): Promise<Model[]>;
   /** GET /api/projects */

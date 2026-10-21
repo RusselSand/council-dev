@@ -1,0 +1,24 @@
+.fragment {
+  display: flex;
+  gap: var(--space-8);
+  font-size: var(--text-md);
+  line-height: var(--leading-normal);
+}
+
+.id {
+  flex: none;
+  font-family: var(--font-mono);
+  font-size: var(--text-sm);
+}
+
+.text {
+  flex: 1 1 auto;
+  min-width: 0;
+  color: var(--color-ink);
+  overflow-wrap: anywhere;
+}
+
+.note {
+  font-size: var(--text-xs);
+  color: var(--color-success-text-soft);
+}
