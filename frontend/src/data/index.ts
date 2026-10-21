@@ -18,6 +18,7 @@ export {
   type DecisionEdits,
 } from './hooks/useDecisions';
 export { useModels } from './hooks/useModels';
+export { useApproveNotes, useStreamNotes } from './hooks/useNotes';
 export {
   useAddOption,
   useApproveOptions,

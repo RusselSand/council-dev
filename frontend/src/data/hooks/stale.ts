@@ -1,6 +1,7 @@
 import type { CouncilSummary, State } from '../../domain/council';
 import type { DecisionsRound } from '../../domain/decisions';
 import type { Model } from '../../domain/model';
+import type { NotesExport } from '../../domain/notes';
 import type { OptionsRound } from '../../domain/options';
 import type { OutcomesRound } from '../../domain/outcomes';
 import type { Project } from '../../domain/project';
@@ -86,6 +87,16 @@ export interface StreamOutcomes extends OutcomesRound {
   state: State;
 }
 
+/**
+ * Выгрузка потока в заметки и чья она — совет и поток, а ещё в каком состоянии был шаг «Документация», когда её
+ * запросили: запрошенная до того, как шаг начался или поток записали в каталог, — экран её не показывает.
+ */
+export interface StreamNotes extends NotesExport {
+  council: string;
+  stream: string;
+  state: State;
+}
+
 /** Данные, которые может изменить действие, и их вид: после действия их запросы перезапрашиваются. */
 export interface Topics {
   councils: CouncilSummary[];
@@ -112,6 +123,8 @@ export interface Topics {
   decisions: StreamDecisions;
   /** Итоги открытого потока. */
   outcomes: StreamOutcomes;
+  /** Выгрузка открытого потока в заметки. */
+  notes: StreamNotes;
 }
 export type Topic = keyof Topics;
 

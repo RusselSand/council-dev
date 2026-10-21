@@ -5,7 +5,17 @@
   min-width: 0;
   padding: var(--space-14);
   border-radius: var(--radius-16);
+}
+
+.attention {
   background: var(--color-attention-bg);
+}
+
+/* Статус решения проекта меняется: просторнее, строки — через 10. */
+.danger {
+  gap: var(--space-10);
+  padding: var(--space-14) var(--space-16);
+  background: var(--state-failed-bg);
 }
 
 .head {
@@ -13,5 +23,12 @@
   flex-wrap: wrap;
   align-items: center;
   gap: var(--space-8);
+}
+
+.attention .head {
   color: var(--state-waiting-ink);
+}
+
+.danger .head {
+  color: var(--state-failed-ink);
 }

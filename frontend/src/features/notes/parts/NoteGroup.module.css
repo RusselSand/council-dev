@@ -1,0 +1,72 @@
+.group {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-6);
+  min-width: 0;
+}
+
+/* Название, число и «свернуть» / «показать» — одна кнопка во всю ширину. */
+.head {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-8);
+  padding: var(--space-4) var(--space-2);
+  border: 0;
+  background: transparent;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.label {
+  font-size: var(--text-md);
+  font-weight: var(--weight-bold);
+}
+
+.count {
+  font-size: var(--text-sm);
+  color: var(--color-text-faint);
+}
+
+.toggle {
+  margin-left: auto;
+  font-size: var(--text-sm);
+  color: var(--color-text-muted);
+}
+
+.head:hover .toggle {
+  color: var(--color-ink);
+}
+
+.list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-6);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+/* id, заголовок и метка в строку; заголовок занимает остаток и обрезается многоточием. */
+.note {
+  display: grid;
+  grid-template-columns: minmax(var(--note-id-min), auto) minmax(0, 1fr) auto;
+  align-items: center;
+  gap: var(--space-12);
+  padding: var(--space-9) var(--space-14);
+  border-radius: var(--radius-14);
+  background: var(--color-surface-muted);
+}
+
+.id {
+  font-family: var(--font-mono);
+  font-size: var(--text-sm);
+}
+
+.title {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--text-md);
+}

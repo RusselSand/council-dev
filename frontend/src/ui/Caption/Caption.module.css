@@ -20,3 +20,8 @@
   font-size: var(--text-2xs);
   color: var(--state-waiting-ink);
 }
+
+/* «Статус решения проекта меняется» на красной плашке. */
+.onDanger {
+  color: var(--state-failed-ink);
+}
