@@ -7,8 +7,10 @@ import { TextArea } from '../../../ui/TextArea';
 import styles from './OwnOption.module.css';
 
 interface OwnOptionProps {
-  /** Поле открыто: кружок выбран, под ним — поле. */
+  /** Поле открыто: под кружком — поле. */
   open: boolean;
+  /** Кружок выбран. Поле открыто, но пустое, — не выбран: пустое поле выбор не меняет. */
+  selected: boolean;
   text: string;
   disabled: boolean;
   error: ApiError | undefined;
@@ -20,12 +22,12 @@ interface OwnOptionProps {
  * «вы · Свой вариант» под вариантами, как в макете: щелчок открывает поле «Опишите, как должно работать. …»; набранное
  * сохраняется само. Не вышло — ошибка под полем.
  */
-export function OwnOption({ open, text, disabled, error, onOpen, onChange }: OwnOptionProps) {
+export function OwnOption({ open, selected, text, disabled, error, onOpen, onChange }: OwnOptionProps) {
   const { t } = useI18n();
   return (
     <RadioCard
       size="sm"
-      selected={open}
+      selected={selected}
       disabled={disabled}
       onSelect={onOpen}
       head={

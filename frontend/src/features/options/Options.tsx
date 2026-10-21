@@ -74,6 +74,7 @@ export function Options({ councilId, streamId, state, judge, retrying, onBusy }:
             ))}
             <OwnOption
               open={step.ownOpen}
+              selected={step.ownSelected}
               text={step.ownText}
               disabled={step.locked}
               error={step.ownError}

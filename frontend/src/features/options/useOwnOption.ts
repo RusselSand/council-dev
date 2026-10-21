@@ -1,9 +1,12 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { useAddOption, useUpdateOption, type ApiError } from '../../data';
+import { ApiError, useAddOption, useUpdateOption } from '../../data';
 import { canSaveOption, sameText } from '../../domain/options';
 
 /** Через сколько после последней правки поле «Свой вариант» сохраняется, мс. */
 const DELAY = 600;
+
+/** Поле, из которого вариант уже создан, стёрли: пустым вариант не сохранить. */
+const EMPTY = new ApiError('text_required', 'Пустой вариант не сохранить');
 
 /** Поле «Свой вариант» у вопроса: что в нём набрано; session — номер поля, у каждого открытия свой. */
 interface Field {
@@ -26,7 +29,7 @@ interface Session {
 }
 
 export interface OwnOption {
-  /** Поле открыто у вопроса на экране: его кружок выбран. */
+  /** Поле открыто у вопроса на экране. */
   shown: boolean;
   text: string;
   /** Вариант, уже созданный из поля у вопроса на экране: пока поле открыто, он — в поле, а не карточкой. Нет — null. */
@@ -54,7 +57,8 @@ export interface OwnOption {
  * (useAddOption()), дальше правит его (useUpdateOption()); запросы идут по одному, каждый — с тем, что набрано к его
  * отправке. Сохранённое становится выбором вопроса (onSaved), если с открытия поля у вопроса не выбрали другое. Ушли от
  * вопроса или закрыли экран — набранное уходит сразу; поле закрывается, когда сохранилось, а не вышло — остаётся у своего
- * вопроса с набранным и ошибкой. Пустое поле не сохраняется и выбор не меняет. current — вопрос на экране.
+ * вопроса с набранным и ошибкой. Пустое поле не сохраняется и выбор не меняет; стёрли поле, из которого вариант уже
+ * создан, — на сервере он с прежним текстом: под полем ошибка, и flush() — не всё сохранилось. current — вопрос на экране.
  */
 export function useOwnOption(
   councilId: string,
@@ -102,10 +106,19 @@ export function useOwnOption(
       return next;
     });
 
+  /** Вариант, созданный из поля: пока поле открыто, он — в поле, а не карточкой. */
+  const markCreated = (id: number, option: string) =>
+    setCreated((ids) => (ids[id] === option ? ids : { ...ids, [id]: option }));
+
   /** Сохранить то, что было в поле в момент snapshot. */
   const send = async ({ question, text, session: id }: Field): Promise<boolean> => {
     const session = sessions.current.get(id);
     if (!session) return true;
+    if (!canSaveOption(text) && session.option) {
+      // Поле стёрли, а вариант из него уже есть — с прежним текстом: пустым его не сохранить, и утверждать его нельзя.
+      markFailed(id, EMPTY);
+      return false;
+    }
     if (!canSaveOption(text) || sameText(text, session.saved)) {
       // Сохранять нечего: прошлая ошибка уже ни о чём.
       markFailed(id, undefined);
@@ -115,10 +128,14 @@ export function useOwnOption(
     let outcome = session.option
       ? await updateOption.attempt(councilId, streamId, question, session.option, text)
       : await addOption.attempt(councilId, streamId, question, text, null, `own:${id}`);
-    // Вариант уже создавали по ключу этого поля, но с другим текстом (ответ на прошлую попытку не дошёл), — правим.
+    // Вариант уже создавали по ключу этого поля, но с другим текстом (ответ на прошлую попытку не дошёл), — правим. Он
+    // уже в поле: не вышло поправить — карточкой с прежним текстом рядом с полем он не встаёт.
     if (outcome.value && !session.option && !sameText(outcome.value.text, text)) {
-      session.option = outcome.value.id;
-      outcome = await updateOption.attempt(councilId, streamId, question, outcome.value.id, text);
+      const recovered = outcome.value;
+      session.option = recovered.id;
+      session.saved = recovered.text;
+      markCreated(id, recovered.id);
+      outcome = await updateOption.attempt(councilId, streamId, question, recovered.id, text);
     }
     setSending((n) => n - 1);
     if (outcome.error) {
@@ -128,7 +145,7 @@ export function useOwnOption(
     const saved = outcome.value;
     session.option = saved.id;
     session.saved = saved.text;
-    setCreated((ids) => (ids[id] === saved.id ? ids : { ...ids, [id]: saved.id }));
+    markCreated(id, saved.id);
     markFailed(id, undefined);
     if (!session.unselect) onSavedRef.current(question, saved.id);
     return true;

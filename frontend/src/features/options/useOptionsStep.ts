@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { ApiError, useApproveOptions, useOptionChoices, useStreamOptions } from '../../data';
 import type { State } from '../../domain/council';
 import {
+  canSaveOption,
   choiceOf,
   chosenCount,
   dependencyState,
@@ -89,8 +90,10 @@ export interface OptionsStep {
   options: OptionView[];
   /** Выбрать вариант. */
   pick: (id: string) => void;
-  /** Поле «Свой вариант» открыто: его кружок выбран. */
+  /** Поле «Свой вариант» открыто. */
   ownOpen: boolean;
+  /** Кружок «Свой вариант» выбран: в поле что-то набрано или его вариант уже выбран. Пустое поле выбор не меняет. */
+  ownSelected: boolean;
   ownText: string;
   ownError: ApiError | undefined;
   openOwn: () => void;
@@ -194,6 +197,10 @@ export function useOptionsStep(
   const locked = approving || retrying || !stepEditable(state);
   const ownOpen = set !== undefined && own.shown;
   const choice: Choice | null = set ? choiceOf(set, pending) : null;
+  // Выбором станет или уже стал вариант из поля — выбран его кружок. Поле пустое, а вариант из него не выбран, — выбор
+  // прежний, он и выбран на экране: «Утвердить» утверждает то, что на экране.
+  const ownSelected =
+    ownOpen && (canSaveOption(own.text) || (own.option !== null && isChosen(choice, own.option)));
 
   const show = (id: string) => {
     if (id === currentId) return;
@@ -232,7 +239,7 @@ export function useOptionsStep(
           label: t('options.dependency', { id, state: t(`options.dependency.${dependency}`) }),
         };
       }),
-      selected: !ownOpen && isChosen(choice, option.id),
+      selected: !ownSelected && isChosen(choice, option.id),
       editing: editor.option === option.id,
     }));
 
@@ -313,16 +320,17 @@ export function useOptionsStep(
     options,
     pick: (id) => choose({ kind: 'option', option: id }),
     ownOpen,
+    ownSelected,
     ownText: ownOpen ? own.text : '',
     ownError: ownOpen ? own.error : undefined,
     openOwn: () => {
       if (!set || locked) return;
-      // Открыли поле — выбран его кружок: правка, которая ещё уходит, сохранится, но выбором не станет.
+      // Открыли поле — выбором станет то, что в нём наберут: правка, которая ещё уходит, сохранится, но выбором не станет.
       editor.unselect(set.question.id);
       own.open();
     },
     editOwn: own.edit,
-    unresolved: !ownOpen && choice?.kind === 'unresolved',
+    unresolved: !ownSelected && choice?.kind === 'unresolved',
     pickUnresolved: () => choose({ kind: 'unresolved' }),
     choiceError: set ? choices.errors[set.question.id] : undefined,
 
