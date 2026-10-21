@@ -38,6 +38,7 @@ from .models import (
     Conflict,
     CoverageArea,
     Evidence,
+    FindingDecision,
     FlowStep,
     FollowUp,
     RepositoryFinding,
@@ -47,6 +48,7 @@ from .models import (
     RepositoryUnknown,
     ScannedRepository,
 )
+from .research import decided
 from .slicing import BadAnswer
 
 # Больше файлов в промпт не кладём: модели всё равно ищут по репозиторию сами.
@@ -1443,10 +1445,12 @@ def as_prompt(result: RepositoryMap) -> dict:
 
 def context_prompt(result: RepositoryMap | None,
                    repositories: Sequence[ScannedRepository] = (), *, complete: bool = True,
-                   follow_up: Sequence[FollowUp] = ()) -> str:
-    """Что получают следующие шаги: проверенная карта или честное «не сканировали». По каждой
-    рабочей копии (repositories): folder — папка её файлов в путях карты ("" — одна копия, пути
-    без папки), commit_sha; uncommitted_changes — карта снята с рабочей копии с
+                   follow_up: Sequence[FollowUp] = (),
+                   decisions: Mapping[str, FindingDecision] | None = None) -> str:
+    """Что получают следующие шаги: проверенная карта — с решениями человека по её находкам
+    (decisions, research.decided) — или честное «не сканировали». По каждой рабочей копии
+    (repositories): folder — папка её файлов в путях карты ("" — одна копия, пути без папки),
+    commit_sha; uncommitted_changes — карта снята с рабочей копии с
     незакоммиченными правками, а не с самого коммита: следующие шаги не припишут ему то, чего в
     нём нет; files_outside_checkout — сколько файлов коммита вне sparse checkout, а
     not_in_snapshot — чего ещё нет в снимке (нескачанные подмодули, ссылки; первые, всего —
@@ -1467,5 +1471,5 @@ def context_prompt(result: RepositoryMap | None,
                        "remaining_follow_up": [
                            {"objective": item.objective, "reason": item.reason,
                             "targets": item.targets} for item in follow_up[:ABSENT_SHOWN]],
-                       **as_prompt(result)},
+                       **decided(as_prompt(result), decisions or {}, "code")},
                       ensure_ascii=False, indent=2)

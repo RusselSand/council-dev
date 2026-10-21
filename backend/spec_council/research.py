@@ -12,10 +12,14 @@
 один на всё исследование: у кода — R1… (их называют сценарии в коде), U1… у неизвестного, C1… у
 противоречий; у макета — D1…, DU1…, DC1…. Решения человека лежат у скана (decisions), по id
 находки: вместе со сканом их берёт поток. У пробела решение по умолчанию — вопрос в поток.
+
+Карту скана потоки читают с решениями человека (decided): так находка идёт в потоки, как сказано
+на ней, — «→ в потоки как факт», «не пойдёт в потоки», «→ прав текст», «→ вопрос в поток».
 """
 
+from collections.abc import Mapping
 from dataclasses import dataclass
-from typing import Literal
+from typing import Any, Literal
 
 from .models import (
     Conflict,
@@ -45,6 +49,17 @@ KINDS: dict[str, Kind] = {"verified": "fact", "inferred": "inference", "unknown"
 # Противоречия сканов прежней версии — строкой: о чём они и чья сторона против кода или макета.
 LEGACY = {"code": ("Документация расходится с кодом", "docs"),
           "design": ("Макет расходится с текстом", "text")}
+
+# id находок, которые не из списка находок карты: неизвестное и противоречия, — и поле карты,
+# где лежат противоречия строками.
+NUMBERED: dict[Source, tuple[str, str, str]] = {"code": ("U", "C", "documentation_conflicts"),
+                                                "design": ("DU", "DC", "design_conflicts")}
+# Решение человека по находке в карте для моделей потоков — по-английски, как и промпты: кто в
+# противоречии прав и что из карты в потоки не идёт.
+SIDE_NAMES = {"text": "the text", "docs": "the documentation", "code": "the code",
+              "design": "the design"}
+QUESTION = "not resolved: ask it as a question of the stream"
+GONE: tuple[FindingDecision, ...] = ("reject", "drop")
 
 
 # Состояние исследований.
@@ -151,12 +166,13 @@ def code_findings(scan: RepositoryScan, group: str) -> list[Finding]:
     result = scan.result
     if result is None:
         return []
+    unknown, conflict, _ = NUMBERED["code"]
     found = [made(scan, finding.id, finding.group or group, "code", KINDS[finding.status],
                   finding.statement, None, code_ref(finding.evidence))
              for finding in result.findings]
-    found += [made(scan, f"U{n}", unknown.group or group, "code", "gap", unknown.question,
-                   None, None) for n, unknown in enumerate(result.unknowns, 1)]
-    return found + conflicts(scan, "C", "code", result.conflicts,
+    found += [made(scan, f"{unknown}{n}", one.group or group, "code", "gap", one.question,
+                   None, None) for n, one in enumerate(result.unknowns, 1)]
+    return found + conflicts(scan, conflict, "code", result.conflicts,
                              result.documentation_conflicts, group)
 
 
@@ -164,13 +180,14 @@ def design_findings(scan: DesignScan, group: str) -> list[Finding]:
     result = scan.result
     if result is None:
         return []
+    unknown, conflict, _ = NUMBERED["design"]
     found = [made(scan, finding.id, finding.group or group, "design", KINDS[finding.status],
                   finding.statement, None, design_ref(finding.evidence))
              for finding in result.findings]
-    found += [made(scan, f"DU{n}", unknown.group or group, "design", "gap", unknown.question,
-                   None, None) for n, unknown in enumerate(result.unknowns, 1)]
-    return found + conflicts(scan, "DC", "design", result.conflicts, result.design_conflicts,
-                             group)
+    found += [made(scan, f"{unknown}{n}", one.group or group, "design", "gap", one.question,
+                   None, None) for n, one in enumerate(result.unknowns, 1)]
+    return found + conflicts(scan, conflict, "design", result.conflicts,
+                             result.design_conflicts, group)
 
 
 def conflicts(scan: RepositoryScan | DesignScan, prefix: str, source: Source,
@@ -229,3 +246,58 @@ def design_ref(evidence: list[DesignNode]) -> str | None:
 
 def more(items: list) -> str:
     return f" +{len(items) - 1}" if len(items) > 1 else ""
+
+
+# Карта для потоков.
+
+def decided(shown: dict[str, Any], decisions: Mapping[str, FindingDecision],
+            source: Source) -> dict[str, Any]:
+    """Карта скана, как её читают модели (as_prompt), — с решениями человека по находкам, как
+    сказано на находке: вывод ИИ «Верно» — факт (verified); «Неверно» и пробел «Не важно» в
+    потоки не идут — ни сами, ни ссылки на них; у противоречия — чья сторона права или что оно —
+    вопрос потока (human_decision). Решений нет — карта как есть."""
+    if not decisions:
+        return shown
+    unknown, conflict, legacy = NUMBERED[source]
+    gone = {finding_id for finding_id, decision in decisions.items() if decision in GONE}
+    sided = shown.get("conflicts", [])
+    by = LEGACY[source][1]
+    return unlinked({
+        **shown,
+        "findings": [{**finding, "status": "verified"}
+                     if decisions.get(finding["id"]) == "accept" else finding
+                     for finding in shown.get("findings", []) if finding["id"] not in gone],
+        "unknowns": [one for n, one in enumerate(shown.get("unknowns", []), 1)
+                     if f"{unknown}{n}" not in gone],
+        "conflicts": [resolved(one, decisions.get(f"{conflict}{n}"), one["by"], source)
+                      for n, one in enumerate(sided, 1)],
+        legacy: [f"{text} (human_decision: {phrase})"
+                 if (phrase := side_of(decisions.get(f"{conflict}{n}"), by, source)) else text
+                 for n, text in enumerate(shown.get(legacy, []), len(sided) + 1)],
+    }, gone)
+
+
+def resolved(conflict: dict[str, Any], decision: FindingDecision | None, by: str,
+             source: Source) -> dict[str, Any]:
+    phrase = side_of(decision, by, source)
+    return {**conflict, "human_decision": phrase} if phrase else conflict
+
+
+def side_of(decision: FindingDecision | None, by: str, source: Source) -> str | None:
+    """Решение по противоречию словами: «the text is right», «the code is right», вопрос."""
+    if decision == "text":
+        return f"{SIDE_NAMES[by]} is right"
+    if decision == "source":
+        return f"{SIDE_NAMES[source]} is right"
+    return QUESTION if decision == "question" else None
+
+
+def unlinked(value: Any, gone: set[str]) -> Any:
+    """Без ссылок на находки, которые в потоки не идут: из списков номеров (…_ids)."""
+    if isinstance(value, dict):
+        return {key: [i for i in item if i not in gone]
+                if key.endswith("_ids") and isinstance(item, list) else unlinked(item, gone)
+                for key, item in value.items()}
+    if isinstance(value, list):
+        return [unlinked(item, gone) for item in value]
+    return value

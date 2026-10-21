@@ -16,6 +16,7 @@ ResearchStage, startStream). По контракту исследования к
 списке советов видно, что оно остановилось.
 """
 
+from collections.abc import Callable
 from dataclasses import replace
 from math import ceil
 from pathlib import Path
@@ -24,7 +25,7 @@ from typing import Literal
 from fastapi import APIRouter, HTTPException
 
 from .. import research as domain
-from ..background import Slot, halt, launched, reporter
+from ..background import Slot, halt, held, launched, reporter
 from ..deps import (
     AgentsDep,
     FigmaDep,
@@ -54,7 +55,7 @@ from ..models import (
 from ..models import Research as Stored
 from ..pipeline import SCAN_ROUNDS, CodeResearchRun, DesignRun
 from ..projects import Projects
-from ..repository import council_folders, working_copy
+from ..repository import Inventory, RepositoryError, council_folders, working_copy
 from ..standing import shown_streams
 from ..standing import structure_of as groups_stage
 from ..store import council_lock
@@ -218,12 +219,12 @@ def start_code(council_id: str, body: CodeStart, store: StoreDep, agents: Agents
             if unknown:
                 raise ApiError(422, "unknown_repo",
                                f"Нет в репозиториях проекта: {', '.join(unknown)}")
-            skip = skipped_folders(council, notes_of, issues_of)
             pipeline = CodeResearchRun(
                 council.id, ideas_of(council), chosen,
-                lambda name: working_copy(name, repositories, mark=True, skip=skip),
+                copy_reader(store, council_id, projects, repositories, notes_of, issues_of),
                 all_fragments(council), council.participants, council.judge, agents, report,
                 groups=letters_of(council))
+            held(pipeline)
             council = store.update_council(council_id, {"research": research.model_copy(update={
                 "scan": pipeline.state.model_copy(deep=True), "repository": None,
                 "repos": chosen, "approved": False})}) or council
@@ -244,7 +245,7 @@ def start_design(council_id: str, body: DesignStart, store: StoreDep, agents: Ag
         research = stored_of(council)
         if domain.blocks_of(research)[1] == "setup":
             link = body.link.strip()
-            if "figma.com" not in link:
+            if "figma.com" not in link.lower():          # имя сайта — в любом регистре
                 raise ApiError(422, "bad_link", f"В ссылке нет figma.com: {link or '(пусто)'}")
             try:
                 links = links_of([link if "://" in link else f"https://{link}"])
@@ -253,6 +254,7 @@ def start_design(council_id: str, body: DesignStart, store: StoreDep, agents: Ag
             pipeline = DesignRun(council.id, ideas_of(council), links, all_fragments(council),
                                  council.participants, council.judge, agents, report,
                                  fetch=figma or Tokenless(), groups=letters_of(council))
+            held(pipeline)
             council = store.update_council(council_id, {"research": research.model_copy(update={
                 "design_scan": pipeline.state.model_copy(deep=True), "design": None,
                 "link": link, "approved": False})}) or council
@@ -505,6 +507,24 @@ def repos_of(council: Council, projects: Projects) -> list[str]:
     """Рабочие копии проекта совета по порядку; без проекта — их нет."""
     project = projects.get_project(council.project) if council.project else None
     return list(project.repositories) if project else []
+
+
+def copy_reader(store: StoreDep, council_id: str, projects: Projects,
+                repositories: Path | None, notes_of: NotesOf,
+                issues_of: NotesOf) -> Callable[[str], Inventory]:
+    """Как ход читает рабочую копию: с проектом совета и его папками документации и задач,
+    какие они, когда ход до неё дошёл, — их могли поправить, пока ход ждал места в пуле. Копии
+    в проекте совета уже нет — она не читается: ход падает с причиной."""
+    def read(name: str) -> Inventory:
+        with council_lock:
+            council = store.get_council(council_id)
+            if council is None or name not in repos_of(council, projects):
+                raise RepositoryError(f"Рабочей копии {name} больше нет в репозиториях проекта "
+                                      "совета")
+            skip = skipped_folders(council, notes_of, issues_of)
+        return working_copy(name, repositories, mark=True, skip=skip)
+
+    return read
 
 
 def skipped_folders(council: Council, notes_of: NotesOf,

@@ -422,21 +422,23 @@ def sources_of(stream: Stream, fragments: Mapping[int, LabeledFragment],
 
 
 def repository_map(owner: Stream | Research) -> str:
-    """Карта утверждённого скана (потока или исследования совета) или «не сканировали»."""
+    """Карта утверждённого скана (потока или исследования совета) с решениями человека по её
+    находкам или «не сканировали»."""
     step, scan = owner.repository, owner.scan
     if step is None or step.by != "scan" or scan is None or scan.run != step.scan_run:
         return context_prompt(None)
     return context_prompt(scan.result, scan.repositories, complete=scan.complete,
-                          follow_up=scan.follow_up)
+                          follow_up=scan.follow_up, decisions=scan.decisions)
 
 
 def design_map(owner: Stream | Research) -> str:
-    """Описание утверждённого скана макета (потока или исследования совета) или «не смотрели»."""
+    """Описание утверждённого скана макета (потока или исследования совета) с решениями
+    человека по его находкам или «не смотрели»."""
     step, scan = owner.design, owner.design_scan
     if step is None or step.by != "scan" or scan is None or scan.run != step.scan_run:
         return design_context(None)
     return design_context(scan.result, scan.source, complete=scan.complete,
-                          follow_up=scan.follow_up)
+                          follow_up=scan.follow_up, decisions=scan.decisions)
 
 
 def maps_of(owner: Stream | Research) -> list[str]:

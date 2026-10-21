@@ -420,6 +420,24 @@ def choose(council_id, group, keep, added=(), revision=0, questions_run=None):
                              "keep": list(keep), "added": list(added)})
 
 
+def test_research_skipped_anew_is_not_taken_before_it_is_approved(agents):
+    """Утверждённое исследование вернули к настройке и снова пропустили: оба шага пройдены, но
+    «К потокам →» его ещё не утвердила — поток его не берёт."""
+    council_id = grouped()
+    confirm(council_id)
+    approve(council_id, "C", IDEA_C)
+    skip(council_id, "C")
+    passed(council_id, design=DesignStep(by="skipped"))
+    for action in ("reset", "skip"):
+        assert client.post(f"/api/councils/{council_id}/research/code/{action}",
+                           json={}).status_code == 200
+    research = research_of(council_id)
+    assert (research.repository.by, research.design.by, research.approved) == (
+        "skipped", "skipped", False)
+    assert starts(council_id, "C").status_code == 409
+    assert streams_of(council_id)["C"].questions is None
+
+
 def test_a_stream_starts_after_the_research_and_goes_to_questions(agents):
     council_id = grouped()
     confirm(council_id)

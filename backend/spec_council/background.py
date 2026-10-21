@@ -51,13 +51,21 @@ _going: dict[str, CouncilRun] = {}
 _going_lock = Lock()
 
 
+def held(pipeline: CouncilRun) -> None:
+    """Ход можно остановить (halt) ещё до того, как он отдан в пул. Ход, который можно
+    остановить, кладут в совет так: held, под замком советов — его состояние в совет, после
+    замка — launched. Иначе «Остановить» между ними не нашла бы хода, а он потом пошёл бы и
+    звал модели."""
+    with _going_lock:
+        _going[pipeline.state.run] = pipeline
+
+
 def launched(launch: Launcher, pipeline: CouncilRun, report: Callable[[RunState], None]) -> bool:
     """Отдать ход в пул. Пул закрыт — приложение останавливается: ход не начался, так и
     записываем, иначе совет навсегда остался бы «идёт» и повтор получал бы 409. Пока ход не
     кончился, его можно остановить — и тот, что ещё ждёт места в пуле."""
     run = pipeline.state.run
-    with _going_lock:
-        _going[run] = pipeline
+    held(pipeline)
 
     def job() -> None:
         try:

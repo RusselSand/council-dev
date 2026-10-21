@@ -10,6 +10,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from spec_council.app import app
+from spec_council.background import launched
 from spec_council.deps import (
     get_agents,
     get_figma,
@@ -19,6 +20,7 @@ from spec_council.deps import (
     get_repositories,
     get_store,
 )
+from spec_council.export import design_map, repository_map
 from spec_council.figma import NO_TOKEN, FigmaError
 from spec_council.groups import marked
 from spec_council.models import (
@@ -39,6 +41,7 @@ from spec_council.models import (
 from spec_council.pipeline import ModelFailed
 from spec_council.projects import Projects
 from spec_council.repository import inventory
+from spec_council.research import QUESTION, decided
 from spec_council.store import InMemoryStore
 from tests.figma_fake import LINK, FakeFigma
 
@@ -449,6 +452,34 @@ def test_the_code_research_does_not_read_the_council_folders(store, projects, ag
         "docs/council/"]
 
 
+def test_the_copies_are_read_with_the_project_as_it_is_when_the_research_gets_to_them(
+        store, projects, agents, pool, repos):
+    """Пока ход ждал места в пуле, проекту задали папку документации и убрали из него рабочую
+    копию: ход читает копии с проектом, какой он сейчас."""
+    (repos / "docs" / "council").mkdir(parents=True)
+    (repos / "docs" / "council" / "ADR-0047.md").write_text("Пока не делаем.\n", encoding="utf-8")
+    notes = {"folder": None}
+    app.dependency_overrides[get_notes_of] = lambda: lambda council: notes["folder"]
+    try:
+        council_id = confirmed(store, projects)
+        starts(council_id, "code", {"repos": ["api"]})
+        notes["folder"] = repos / "docs" / "council"
+        pool.run()
+        assert agents.seen == ["app.py"]
+
+        acts(council_id, "code", "reset")
+        starts(council_id, "code", {"repos": ["api"]})
+        projects.update_project(store.get_council(council_id).project, {"repositories": ["front"]})
+        asked = len(agents.asked)
+        pool.run()
+    finally:
+        app.dependency_overrides.pop(get_notes_of)
+    scan = store.get_council(council_id).research.scan
+    assert scan.state == "failed" and "api больше нет" in scan.error
+    assert len(agents.asked) == asked
+    assert research_of(council_id)["code"]["state"] == "setup"
+
+
 def test_the_research_shows_what_each_model_is_doing(store, projects):
     """Судья — он же участник: одной строкой, тем, что делает сейчас; пока участники читают код,
     он с ними."""
@@ -516,9 +547,11 @@ def test_a_link_not_to_a_figma_file_is_refused(store, projects, figma, link):
     assert store.get_council(council_id).research is None
 
 
-def test_a_link_without_its_scheme_is_a_link_too(store, projects, pool, figma):
+@pytest.mark.parametrize("link", [LINK.removeprefix("https://"),
+                                  LINK.replace("www.figma.com", "WWW.Figma.COM")])
+def test_a_link_without_its_scheme_or_in_capitals_is_a_link_too(store, projects, pool, figma,
+                                                                link):
     council_id = confirmed(store, projects)
-    link = LINK.removeprefix("https://")
     assert starts(council_id, "design", {"link": link}).status_code == 200
     pool.run()
     assert research_of(council_id)["design"]["link"] == link
@@ -607,6 +640,24 @@ def test_a_stop_breaks_off_the_call_that_is_going(store, projects, agents, pool)
     assert seen == [False, True]                        # идущий вызов видит остановку
     assert len(agents.asked) == 1                       # судью уже не зовут
     assert store.get_council(council_id).research.scan is None   # и упавшее не пишется
+    assert research_of(council_id)["code"]["state"] == "setup"
+
+
+def test_a_stop_before_the_run_is_in_the_pool_stops_it_too(store, projects, agents, pool,
+                                                          monkeypatch):
+    """«Остановить» пришла, когда исследование уже «идёт», а ход ещё не отдан в пул: ход и
+    тогда моделей не зовёт."""
+    council_id = confirmed(store, projects)
+
+    def stopped_first(launch, pipeline, report):
+        assert acts(council_id, "code", "stop").status_code == 200
+        return launched(launch, pipeline, report)
+
+    monkeypatch.setattr("spec_council.web.research.launched", stopped_first)
+    starts(council_id, "code", {"repos": ["api"]})
+    pool.run()
+    assert agents.asked == []
+    assert store.get_council(council_id).research.scan is None
     assert research_of(council_id)["code"]["state"] == "setup"
 
 
@@ -761,6 +812,60 @@ def test_an_action_takes_the_approval_back_but_leaves_the_streams(store, project
     decides(council_id, "C1", "question")
     assert approves(council_id).json()["council"]["stages"]["research"] == "done"
     assert store.get_council(council_id).streams == streams    # потоки уже есть — те же
+
+
+def test_the_streams_read_the_research_with_the_decisions_on_its_findings(store, projects, pool,
+                                                                          figma):
+    """Как сказано на находке: «Неверно» и «Не важно» в потоки не идут, пробел без решения —
+    вопрос, у противоречия — чья сторона права. Так же — исследование совета для плана задач."""
+    council_id = confirmed(store, projects)
+    researched_code(council_id, pool)
+    starts(council_id, "design", {"link": LINK})
+    pool.run()
+    for finding, decision in (("R2", "reject"), ("R3", "drop"), ("U1", "drop"), ("C1", "text"),
+                              ("DC1", "source")):
+        assert decides(council_id, finding, decision).status_code == 200
+    assert approves(council_id).status_code == 200
+    council = store.get_council(council_id)
+    code = json.loads(repository_map(council.streams[0]))
+    assert [(finding["id"], finding["status"]) for finding in code["findings"]] == [
+        ("R1", "verified")]
+    assert code["unknowns"] == []
+    assert [conflict["human_decision"] for conflict in code["conflicts"]] == [
+        "the text is right"]
+    design = json.loads(design_map(council.streams[1]))["design"]
+    assert [(finding["id"], finding["status"]) for finding in design["findings"]] == [
+        ("D1", "verified"), ("D2", "unknown")]
+    assert [conflict["human_decision"] for conflict in design["conflicts"]] == [
+        "the design is right"]
+    assert json.loads(repository_map(council.research)) == code
+
+
+def test_a_map_for_the_streams_follows_the_decisions():
+    """«Верно» — факт; «Неверно» и «Не важно» — ни находки, ни ссылок на неё; противоречия
+    строками (скан прежней версии) — по номеру после противоречий со сторонами."""
+    shown = {"findings": [{"id": "R1", "status": "inferred"}, {"id": "R2", "status": "inferred"},
+                          {"id": "R3", "status": "unknown"}],
+             "flows": [{"name": "Поток", "steps": [{"description": "Шаг.",
+                                                    "finding_ids": ["R1", "R2"]}]}],
+             "coverage": [{"area": "API", "evidence_ids": ["R2", "R3"]}],
+             "unknowns": [{"question": "Первое?"}, {"question": "Второе?"}],
+             "conflicts": [{"by": "docs", "subject": "Одно."},
+                           {"by": "text", "subject": "Другое."}],
+             "documentation_conflicts": ["a.md — есть — нет", "b.md — да — нет"]}
+    decisions = {"R1": "accept", "R2": "reject", "R3": "question", "U2": "drop", "C1": "text",
+                 "C2": "question", "C3": "source"}
+    assert decided(shown, decisions, "code") == {
+        "findings": [{"id": "R1", "status": "verified"}, {"id": "R3", "status": "unknown"}],
+        "flows": [{"name": "Поток", "steps": [{"description": "Шаг.", "finding_ids": ["R1"]}]}],
+        "coverage": [{"area": "API", "evidence_ids": ["R3"]}],
+        "unknowns": [{"question": "Первое?"}],
+        "conflicts": [{"by": "docs", "subject": "Одно.",
+                       "human_decision": "the documentation is right"},
+                      {"by": "text", "subject": "Другое.", "human_decision": QUESTION}],
+        "documentation_conflicts": ["a.md — есть — нет (human_decision: the code is right)",
+                                    "b.md — да — нет"]}
+    assert decided(shown, {}, "code") is shown
 
 
 def test_a_group_renamed_after_the_approval_leaves_its_stream_title(store, projects):

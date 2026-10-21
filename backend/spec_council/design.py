@@ -7,7 +7,7 @@ import itertools
 import json
 import re
 from collections import Counter
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 
 from .figma import node_id_of
@@ -23,9 +23,11 @@ from .models import (
     DesignState,
     DesignUnknown,
     FigmaSource,
+    FindingDecision,
     FlowStep,
 )
 from .repository import conflicts_of, contradictions_of, group_of, strings, text_of
+from .research import decided
 from .slicing import BadAnswer
 
 FINDING_ID = re.compile(r"D?(\d+)", re.IGNORECASE)
@@ -216,10 +218,12 @@ def as_prompt(result: DesignMap) -> dict:
 
 
 def context_prompt(result: DesignMap | None, source: FigmaSource | None = None, *,
-                   complete: bool = True, follow_up: Sequence[DesignFollowUp] = ()) -> str:
-    """Что о макете знают следующие шаги: проверенное описание или честное «не смотрели».
-    Какой файл и версия; complete — судья счёл исследование достаточным, а
-    remaining_follow_up — что доисследовать не успели: недоисследованное — не установленное."""
+                   complete: bool = True, follow_up: Sequence[DesignFollowUp] = (),
+                   decisions: Mapping[str, FindingDecision] | None = None) -> str:
+    """Что о макете знают следующие шаги: проверенное описание — с решениями человека по его
+    находкам (decisions, research.decided) — или честное «не смотрели». Какой файл и версия;
+    complete — судья счёл исследование достаточным, а remaining_follow_up — что доисследовать
+    не успели: недоисследованное — не установленное."""
     if result is None:
         return "Макет не исследовался: шаг «Дизайн» пропущен."
     source = source or FigmaSource()
@@ -229,4 +233,5 @@ def context_prompt(result: DesignMap | None, source: FigmaSource | None = None, 
                        "complete": complete,
                        "remaining_follow_up": [item.model_dump(mode="json")
                                                for item in follow_up],
-                       "design": as_prompt(result)}, ensure_ascii=False, indent=2)
+                       "design": decided(as_prompt(result), decisions or {}, "design")},
+                      ensure_ascii=False, indent=2)

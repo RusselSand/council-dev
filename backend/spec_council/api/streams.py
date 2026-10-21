@@ -333,12 +333,14 @@ def map_scan(council: Council) -> RepositoryScan | None:
 
 def taken(council: Council, stream: Stream, edit: StartStream) -> Stream:
     """Поток с копией исследования совета, с которой его начинают: идея утверждена и та, что
-    человек видел, исследование пройдено."""
+    человек видел, исследование утверждено («К потокам →», web/research.py). Пропущенное после
+    «Вернуть исследование» — ещё не утверждено, хоть оба шага и пройдены."""
     if stream.idea is None:
         raise HTTPException(409, NO_IDEA)
     seen_idea(stream, edit)
     research = council.research
-    if research is None or research.repository is None or research.design is None:
+    if research is None or not research.approved or research.repository is None \
+            or research.design is None:
         raise HTTPException(409, NO_RESEARCH)
     return stream.model_copy(update={
         "scan": research.scan if research.repository.by == "scan" else None,
