@@ -9,7 +9,7 @@ interface OptionEditorProps {
   /** id варианта — для подписи поля. */
   option: string;
   text: string;
-  /** Правка уходит или правки не действуют: кнопки недоступны. */
+  /** Правка уходит или правки не действуют: поле не правится, кнопки недоступны. */
   disabled: boolean;
   error: ApiError | undefined;
   onChange: (text: string) => void;
@@ -30,6 +30,7 @@ export function OptionEditor({ option, text, disabled, error, onChange, onSave, 
         rows={2}
         value={text}
         onChange={onChange}
+        readOnly={disabled}
         aria-label={t('options.edit.label', { id: option })}
         autoFocus
       />

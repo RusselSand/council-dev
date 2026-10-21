@@ -12,13 +12,14 @@ interface Draft {
   session: number;
 }
 
-/** Что известно о поле на сервере: вариант, созданный из него, его текст и надо ли его выбирать. */
+/** Что известно о поле на сервере: у какого вопроса, вариант, созданный из него, его текст и надо ли его выбирать. */
 interface Session {
+  question: string;
   /** Вариант, созданный из поля; не создан — null. */
   option: string | null;
   /** Последний сохранённый текст. */
   saved: string;
-  /** Поле закрыли, выбрав другой вариант: сохранённое из него больше не выбирается — выбор за последним щелчком. */
+  /** У вопроса выбрали другое: сохранённое из поля больше не выбирается — выбор за последним щелчком. */
   unselect: boolean;
 }
 
@@ -30,13 +31,18 @@ export interface OwnOption {
   option: string | null;
   /** Не вышло сохранить набранное в открытом поле. */
   error: ApiError | undefined;
-  /** Набранное уходит на сервер. */
+  /** Набранное ждёт паузы в наборе или уходит на сервер. */
   saving: boolean;
   /** Открыть поле у вопроса: прежнее поле закрывается, набранное в нём уходит сразу. */
   open: (question: string) => void;
   edit: (text: string) => void;
-  /** Закрыть поле, набранное уходит сразу. unselect — закрыли, выбрав другой вариант: набранное не выбирается. */
-  close: (unselect?: boolean) => void;
+  /** Закрыть поле, набранное уходит сразу. */
+  close: () => void;
+  /**
+   * У вопроса выбрали другое: поле закрывается, набранное уходит сразу, но ни оно, ни прежние поля этого вопроса, которые
+   * ещё сохраняются, выбором не становятся.
+   */
+  unselect: (question: string) => void;
   /** Сохранить набранное в открытом поле сейчас. Ответ — сохранилось ли; поле закрыто — true, когда из него всё ушло. */
   flush: () => Promise<boolean>;
 }
@@ -44,8 +50,8 @@ export interface OwnOption {
 /**
  * Поле «Свой вариант», как в макете: набранное сохраняется само, после паузы в наборе, — сначала создаёт свой вариант
  * (useAddOption()), дальше правит его (useUpdateOption()); запросы идут по одному, каждый — с тем, что набрано к его
- * отправке. Сохранённое становится выбором вопроса (onSaved), если поле не закрыли, выбрав другой вариант. Закрыли поле
- * или экран — набранное уходит сразу. Пустое поле не сохраняется и выбор не меняет.
+ * отправке. Сохранённое становится выбором вопроса (onSaved), если с открытия поля у вопроса не выбрали другое. Закрыли
+ * поле или экран — набранное уходит сразу. Пустое поле не сохраняется и выбор не меняет.
  */
 export function useOwnOption(
   councilId: string,
@@ -64,6 +70,8 @@ export function useOwnOption(
   /** Поле, у которого не вышло сохранить; вышло — null. */
   const [failed, setFailed] = useState<number | null>(null);
   const [sending, setSending] = useState(0);
+  /** Набранное ждёт паузы в наборе: сохранение отложено. */
+  const [scheduled, setScheduled] = useState(false);
   /** Очередь сохранений: следующее уходит, когда ответило предыдущее. */
   const queue = useRef<Promise<boolean>>(Promise.resolve(true));
   const timer = useRef<ReturnType<typeof setTimeout>>();
@@ -107,6 +115,7 @@ export function useOwnOption(
 
   const flush = useCallback(() => {
     clearTimeout(timer.current);
+    setScheduled(false);
     const snapshot = draftRef.current;
     // Поле закрыто — дождаться того, что из него ещё уходит; не сохранилось — его уже не видно, оно не мешает.
     if (!snapshot) return queue.current.then(() => true);
@@ -118,7 +127,7 @@ export function useOwnOption(
     if (draftRef.current?.question === question) return;
     if (draftRef.current) void flush();
     const session = nextSession.current++;
-    sessions.current.set(session, { option: null, saved: '', unselect: false });
+    sessions.current.set(session, { question, option: null, saved: '', unselect: false });
     put({ question, text: '', session });
   };
 
@@ -128,15 +137,19 @@ export function useOwnOption(
     put({ ...current, text });
     clearTimeout(timer.current);
     timer.current = setTimeout(() => void flush(), DELAY);
+    setScheduled(true);
   };
 
-  const close = (unselect = false) => {
-    const current = draftRef.current;
-    if (!current) return;
-    const session = sessions.current.get(current.session);
-    if (session && unselect) session.unselect = true;
+  const close = () => {
+    if (!draftRef.current) return;
     void flush();
     put(null);
+  };
+
+  const unselect = (question: string) => {
+    // Поле этого вопроса могли закрыть раньше, уйдя к другому вопросу, а сохранение из него ещё идёт.
+    for (const session of sessions.current.values()) if (session.question === question) session.unselect = true;
+    close();
   };
 
   // Экран закрыли — набранное уходит сразу.
@@ -148,10 +161,11 @@ export function useOwnOption(
     text: draft?.text ?? '',
     option: session === undefined ? null : (created[session] ?? null),
     error: session !== undefined && failed === session ? (updateOption.error ?? addOption.error) : undefined,
-    saving: sending > 0,
+    saving: scheduled || sending > 0,
     open,
     edit,
     close,
+    unselect,
     flush,
   };
 }
