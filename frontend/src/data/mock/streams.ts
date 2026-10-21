@@ -414,6 +414,22 @@ export const optionsApproved = (
   now: string,
 ): Stream => stepApproved(stream, 'options', optionsNote(total, total), participants, judge, now);
 
+/** «решено 3 из 4» — строка «Решений» в цепочке: сколько решений зафиксировано из всех; пишет сервер. */
+export const decisionsNote = (fixed: number, total: number) => `решено ${fixed} из ${total}`;
+
+/**
+ * Поток после «Зафиксировать решения → к итогам»: «Решения» готовы — со строкой, сколько зафиксировано; модели собирают
+ * итоги. Где решения, переход не меняет, как в макете.
+ */
+export const decisionsStepApproved = (
+  stream: Stream,
+  fixed: number,
+  total: number,
+  participants: string[],
+  judge: string,
+  now: string,
+): Stream => stepApproved(stream, 'decisions', decisionsNote(fixed, total), participants, judge, now);
+
 /**
  * «Запустить снова» — шаг, который остановился, запускается снова: модели, которые уже ответили, заново не работают —
  * их ответы сохранены и второй раз не оплачиваются, как в макете. Шаг идёт снова с первой части, где ответили не все

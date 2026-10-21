@@ -1,4 +1,4 @@
-/* Шрифты макета — пакетами, без запросов к Google Fonts: Manrope 400–800, JetBrains Mono 400–500. */
+/* Шрифты макета — пакетами, без запросов к Google Fonts: Manrope 400–800, JetBrains Mono 400, 500 и 700. */
 @import '@fontsource/manrope/400.css';
 @import '@fontsource/manrope/500.css';
 @import '@fontsource/manrope/600.css';
@@ -6,3 +6,4 @@
 @import '@fontsource/manrope/800.css';
 @import '@fontsource/jetbrains-mono/400.css';
 @import '@fontsource/jetbrains-mono/500.css';
+@import '@fontsource/jetbrains-mono/700.css';

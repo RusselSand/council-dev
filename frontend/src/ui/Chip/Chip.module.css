@@ -4,7 +4,6 @@
   gap: var(--space-7);
   min-width: 0;
   border: var(--border-thin) solid transparent;
-  border-radius: var(--radius-pill);
   font-size: var(--text-sm);
   font-weight: var(--weight-semibold);
   color: var(--color-ink);
@@ -14,6 +13,14 @@
 
 .chip:disabled {
   cursor: default;
+}
+
+.pill {
+  border-radius: var(--radius-pill);
+}
+
+.box {
+  border-radius: var(--radius-10);
 }
 
 .glass {

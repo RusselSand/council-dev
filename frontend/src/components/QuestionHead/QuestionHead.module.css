@@ -12,12 +12,13 @@
   color: var(--color-text-faint);
 }
 
-.source {
+.before {
   flex: none;
   margin-top: var(--space-2);
 }
 
 .text {
+  flex: 1;
   min-width: 0;
   margin: 0;
   font-size: var(--text-2xl);
@@ -25,4 +26,10 @@
   line-height: var(--leading-compact);
   text-wrap: pretty;
   overflow-wrap: anywhere;
+}
+
+/* Метка справа — в начале строки текста. */
+.after {
+  flex: none;
+  margin-top: var(--space-2);
 }

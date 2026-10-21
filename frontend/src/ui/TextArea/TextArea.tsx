@@ -4,9 +4,9 @@ import styles from './TextArea.module.css';
 /**
  * tall — высокое серое поле без рамки: текст ввода совета; bare — без поля вовсе, текст как на плашке, где оно стоит:
  * идея группы на жёлтой плашке; field — невысокое серое поле без рамки: «Свой вариант»; framed — белое поле в тёмной
- * рамке, текст жирнее: правка варианта.
+ * рамке, текст жирнее: правка варианта; outlined — светлое поле в светлой рамке, текст мельче: «почему» решения.
  */
-export type TextAreaVariant = 'tall' | 'bare' | 'field' | 'framed';
+export type TextAreaVariant = 'tall' | 'bare' | 'field' | 'framed' | 'outlined';
 
 type TextAreaProps = Omit<TextareaHTMLAttributes<HTMLTextAreaElement>, 'onChange'> & {
   variant?: TextAreaVariant;

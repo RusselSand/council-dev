@@ -33,6 +33,15 @@
   font-weight: var(--weight-semibold);
 }
 
+.outlined {
+  padding: var(--space-10) var(--space-12);
+  border: var(--border-thin) solid var(--color-line);
+  border-radius: var(--radius-12);
+  background: var(--color-surface);
+  font-size: var(--text-md);
+  line-height: var(--leading-loose);
+}
+
 .bare {
   padding: 0;
   background: transparent;

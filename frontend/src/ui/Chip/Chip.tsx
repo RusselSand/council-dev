@@ -15,6 +15,9 @@ export type ChipTone = 'glass' | 'paper' | 'outline' | 'green' | 'yellow';
  */
 export type ChipSize = 'md' | 'sm' | 'xs';
 
+/** pill — «таблетка»; box — прямоугольник со скруглёнными углами: «Решение: P12» и «Оставить открытым» на «Решениях». */
+export type ChipShape = 'pill' | 'box';
+
 interface ChipProps {
   /** Выбранный чип — тёмный (у outline — в тёмной рамке); по умолчанию — не выбран. */
   selected?: boolean;
@@ -24,6 +27,7 @@ interface ChipProps {
   dot?: DotTone;
   tone?: ChipTone;
   size?: ChipSize;
+  shape?: ChipShape;
   /** Щёлкнуть нельзя: чип не откликается. */
   disabled?: boolean;
   onClick: () => void;
@@ -37,11 +41,14 @@ export function Chip({
   dot,
   tone = 'glass',
   size = 'md',
+  shape = 'pill',
   disabled = false,
   onClick,
   children,
 }: ChipProps) {
-  const classes = [styles.chip, styles[tone], styles[size], selected && styles.selected].filter(Boolean).join(' ');
+  const classes = [styles.chip, styles[tone], styles[size], styles[shape], selected && styles.selected]
+    .filter(Boolean)
+    .join(' ');
   return (
     <button type="button" className={classes} aria-pressed={selected} disabled={disabled} onClick={onClick}>
       {dot && <Dot tone={dot} />}

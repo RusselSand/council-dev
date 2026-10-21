@@ -1,4 +1,5 @@
 import type { CouncilSummary, State } from '../../domain/council';
+import type { DecisionsRound } from '../../domain/decisions';
 import type { Model } from '../../domain/model';
 import type { OptionsRound } from '../../domain/options';
 import type { Project } from '../../domain/project';
@@ -64,6 +65,16 @@ export interface StreamOptions extends OptionsRound {
   state: State;
 }
 
+/**
+ * Решения потока и чьи они — совет и поток, а ещё в каком состоянии был шаг «Решения», когда их запросили:
+ * запрошенные до того, как модели закончили или шаг запустили снова, — другие решения, экран их не показывает.
+ */
+export interface StreamDecisions extends DecisionsRound {
+  council: string;
+  stream: string;
+  state: State;
+}
+
 /** Данные, которые может изменить действие, и их вид: после действия их запросы перезапрашиваются. */
 export interface Topics {
   councils: CouncilSummary[];
@@ -86,6 +97,8 @@ export interface Topics {
   questions: StreamQuestions;
   /** Варианты открытого потока. */
   options: StreamOptions;
+  /** Решения открытого потока. */
+  decisions: StreamDecisions;
 }
 export type Topic = keyof Topics;
 
