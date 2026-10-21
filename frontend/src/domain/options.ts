@@ -43,6 +43,16 @@ export interface OptionSet {
   choice: Choice | null;
 }
 
+/** Варианты потока и от какого запуска шага «Варианты» они. */
+export interface OptionsRound {
+  /**
+   * Номер запуска шага «Варианты»: растёт с каждым запуском моделей на шаге — первым и каждым «Запустить снова»; шаг не
+   * начат — 0. Номер другой — варианты от другой работы моделей, хоть id у них те же.
+   */
+  run: number;
+  optionSets: OptionSet[];
+}
+
 /** Состояние вопроса, от которого зависит вариант: «зависит от Q2 · решён». */
 export type DependencyState = 'resolved' | 'open' | 'unresolved' | 'removed';
 

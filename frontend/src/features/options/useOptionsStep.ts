@@ -86,7 +86,8 @@ export interface OptionsStep {
   done: string;
   /**
    * Уйти к другому вопросу нельзя — чипы, «←» / «→» и зависимости не действуют: выбор утверждается или шаг запускают
-   * снова, а уход от вопроса отправил бы набранное в поле «Свой вариант» вместе с ними.
+   * снова, а уход от вопроса отправил бы набранное в поле «Свой вариант» вместе с ними; или правка уходит, и уход закрыл
+   * бы её раньше, чем станет видно, сохранилась ли она.
    */
   navLocked: boolean;
   /** Открыть вопрос. */
@@ -156,7 +157,8 @@ const NOT_SAVED = new ApiError('not_saved', 'Не всё сохранилось 
  * Правки и «Утвердить» не уходят вместе с «Запустить снова» шага: retrying — шаг запускают снова, и они не действуют;
  * пока выбор утверждается или что-то из правок ждёт паузы в наборе или ответа, onBusy(true) — не действует «Запустить
  * снова». Пока выбор утверждается или шаг запускают снова, к другому вопросу не уйти: уход отправил бы набранное в поле
- * «Свой вариант» вместе с ними.
+ * «Свой вариант» вместе с ними; пока правка уходит — тоже: уход закрыл бы её, и ошибку, если не сохранилась, было бы не
+ * видно, а «Утвердить» утвердил бы без неё.
  * judge — судья совета. Другой поток — другой экран: ставьте с key по совету и потоку.
  */
 export function useOptionsStep(
@@ -169,7 +171,10 @@ export function useOptionsStep(
 ): OptionsStep {
   const { t } = useI18n();
   const query = useStreamOptions(councilId, streamId, state);
-  const choices = useOptionChoices(councilId, streamId, state);
+  // Набор вариантов: шаг сменил состояние или пришли варианты другого его запуска (шаг запустили снова в другой вкладке,
+  // и он успел кончиться, пока экран не видел, что он шёл), — варианты другие, хоть id те же.
+  const round = query.data && `${query.data.state}/${query.data.run}`;
+  const choices = useOptionChoices(councilId, streamId, round);
   const approveAction = useApproveOptions();
   const [current, setCurrent] = useState<string>();
   const [droppedOpen, setDroppedOpen] = useState(false);
@@ -198,10 +203,10 @@ export function useOptionsStep(
   const set = index >= 0 ? sets[index] : undefined;
 
   const select = (question: string, option: string) => choices.change(question, { kind: 'option', option });
-  // Шаг сменил состояние — варианты другие: поле «Свой вариант» и правка прежних забываются, как и выбор. Вопрос убрали,
-  // а шаг тот же, — забываются его поле и правка.
-  const own = useOwnOption(councilId, streamId, currentId, state, query.data?.optionSets, select);
-  const editor = useOptionEditor(councilId, streamId, state, query.data?.optionSets, select);
+  // Набор вариантов другой: поле «Свой вариант» и правка прежних забываются, как и выбор. Вопрос убрали, а шаг тот же, —
+  // забываются его поле и правка.
+  const own = useOwnOption(councilId, streamId, currentId, round, query.data?.optionSets, select);
+  const editor = useOptionEditor(councilId, streamId, round, query.data?.optionSets, select);
 
   // Пока ответа ждут утверждение, выбор, свой вариант (и пока он ждёт паузы в наборе) или правка, «Запустить снова» не
   // действует; ответили или ушли с шага — снова действует.
@@ -214,8 +219,9 @@ export function useOptionsStep(
 
   const locked = approving || retrying || !stepEditable(state);
   // Пока выбор утверждается или шаг запускают снова, от вопроса не уходят: набранное в поле «Свой вариант» ушло бы
-  // вместе с ними. На готовом шаге вопросы смотрят, хоть выбирать и нельзя.
-  const navLocked = approving || retrying;
+  // вместе с ними. Пока правка уходит — тоже: не сохранится — её ошибка останется у вопроса на экране, и «Утвердить» не
+  // утвердит без неё. На готовом шаге вопросы смотрят, хоть выбирать и нельзя.
+  const navLocked = approving || retrying || editor.saving;
   // «Поправить»: пока правка уходит, другую не открыть; вариант ещё сохраняется из поля «Свой вариант» — правка ушла бы
   // раньше набранного в поле, и оно бы её затёрло.
   const editable = (id: string) => !locked && !editor.saving && !own.saves(id);

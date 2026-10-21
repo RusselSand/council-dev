@@ -1,7 +1,7 @@
 import type { Brief } from '../../domain/brief';
 import type { CouncilSummary } from '../../domain/council';
 import type { Model } from '../../domain/model';
-import type { Option, OptionSet } from '../../domain/options';
+import type { Option, OptionSet, OptionsRound } from '../../domain/options';
 import type { Project } from '../../domain/project';
 import type { Question } from '../../domain/questions';
 import type { Finding, Research } from '../../domain/research';
@@ -162,8 +162,8 @@ export const httpSource: DataSource = {
     return stream;
   },
   async listOptions(id, streamId) {
-    const { optionSets } = await request<{ optionSets: OptionSet[] }>('GET', `${streamPath(id, streamId)}/options`);
-    return optionSets;
+    const { run, optionSets } = await request<OptionsRound>('GET', `${streamPath(id, streamId)}/options`);
+    return { run, optionSets };
   },
   async setChoice(id, streamId, questionId, choice) {
     const path = `${optionsPath(id, streamId, questionId)}/choice`;

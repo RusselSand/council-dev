@@ -1,6 +1,6 @@
 import type { CouncilSummary, State } from '../../domain/council';
 import type { Model } from '../../domain/model';
-import type { OptionSet } from '../../domain/options';
+import type { OptionsRound } from '../../domain/options';
 import type { Project } from '../../domain/project';
 import type { Question } from '../../domain/questions';
 import type { Research } from '../../domain/research';
@@ -58,11 +58,10 @@ export interface StreamQuestions {
  * Варианты потока и чьи они — совет и поток, а ещё в каком состоянии был шаг «Варианты», когда их запросили:
  * запрошенные до того, как модели закончили или шаг запустили снова, — другие варианты, экран их не показывает.
  */
-export interface StreamOptions {
+export interface StreamOptions extends OptionsRound {
   council: string;
   stream: string;
   state: State;
-  optionSets: OptionSet[];
 }
 
 /** Данные, которые может изменить действие, и их вид: после действия их запросы перезапрашиваются. */

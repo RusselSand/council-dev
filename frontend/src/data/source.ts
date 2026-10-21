@@ -1,7 +1,7 @@
 import type { Brief } from '../domain/brief';
 import type { CouncilFields, CouncilSummary } from '../domain/council';
 import type { Model } from '../domain/model';
-import type { Choice, Option, OptionSet } from '../domain/options';
+import type { Choice, Option, OptionSet, OptionsRound } from '../domain/options';
 import type { Project, ProjectFields } from '../domain/project';
 import type { Question } from '../domain/questions';
 import type { Decision, Finding, Research, ResearchKind } from '../domain/research';
@@ -82,8 +82,11 @@ export interface DataSource {
   addQuestion(id: string, streamId: string, text: string, key: string): Promise<Question>;
   /** POST /api/councils/<id>/streams/<streamId>/questions/approve — «Утвердить вопросы → к вариантам»; ответ — поток. */
   approveQuestions(id: string, streamId: string): Promise<Stream>;
-  /** GET /api/councils/<id>/streams/<streamId>/options — варианты по неубранным вопросам потока, по порядку. */
-  listOptions(id: string, streamId: string): Promise<OptionSet[]>;
+  /**
+   * GET /api/councils/<id>/streams/<streamId>/options — варианты по неубранным вопросам потока, по порядку, и номер
+   * запуска шага «Варианты».
+   */
+  listOptions(id: string, streamId: string): Promise<OptionsRound>;
   /** PUT /api/councils/<id>/streams/<streamId>/options/<questionId>/choice — выбор по вопросу; ответ — его варианты. */
   setChoice(id: string, streamId: string, questionId: string, choice: Choice): Promise<OptionSet>;
   /**

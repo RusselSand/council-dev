@@ -14,11 +14,12 @@ import { replaceStream } from './useStreams';
 /**
  * Варианты потока — GET /api/councils/<id>/streams/<streamId>/options. state — состояние шага «Варианты» сейчас: оно
  * сменилось (модели закончили или остановились, шаг запустили снова) — варианты перезапрашиваются, а до ответа их нет
- * (data — undefined, loading): прежние — от другой работы моделей. Перезапрашиваются и после правок выбора.
+ * (data — undefined, loading): прежние — от другой работы моделей. Перезапрашиваются и после правок выбора; run в
+ * ответе — номер запуска шага: по нему видно, что варианты от другой работы моделей, и когда состояние шага то же.
  */
 export function useStreamOptions(id: string, streamId: string, state: State): Query<StreamOptions> {
   const query = useQuery(
-    async () => ({ council: id, stream: streamId, state, optionSets: await source.listOptions(id, streamId) }),
+    async () => ({ council: id, stream: streamId, state, ...(await source.listOptions(id, streamId)) }),
     [id, streamId, state],
     'options',
   );
@@ -69,15 +70,38 @@ function staleOnRefused(error: unknown) {
 export type OptionChoices = QueuedSaves<Choice>;
 
 /**
+ * Выборы, которые ушли на сервер или ждут, пока ответят на прежний, — по совету, потоку и вопросу. Общие для всех
+ * экранов «Варианты», а не у каждого свои: ушли с экрана, пока выбор уходил, вернулись и выбрали другое — новый выбор
+ * уходит после ответа на прежний и не обгоняет его.
+ */
+const choiceWrites = new Map<string, Promise<unknown>>();
+
+/** Отправить выбор по вопросу после тех, что уже ушли по нему с любого экрана. */
+function writeChoice(councilId: string, streamId: string, questionId: string, choice: Choice): Promise<OptionSet> {
+  const key = JSON.stringify([councilId, streamId, questionId]);
+  const written = (choiceWrites.get(key) ?? Promise.resolve()).then(() =>
+    source.setChoice(councilId, streamId, questionId, choice),
+  );
+  const settled = written.catch(() => undefined);
+  choiceWrites.set(key, settled);
+  void settled.then(() => {
+    if (choiceWrites.get(key) === settled) choiceWrites.delete(key);
+  });
+  return written;
+}
+
+/**
  * Выбор по вопросу — PUT /api/councils/<id>/streams/<streamId>/options/<questionId>/choice, сразу по щелчку; у каждого
- * вопроса своя очередь, на сервере остаётся последний выбор (см. useQueuedSaves()). Ответ встаёт в варианты сразу;
+ * вопроса своя очередь, на сервере остаётся последний выбор (см. useQueuedSaves()), — и между экранами: выбор уходит
+ * после тех, что ещё идут по вопросу с экрана, с которого ушли (writeChoice()). Ответ встаёт в варианты сразу;
  * варианты, потоки (строка шага в цепочке) и список советов перезапрашиваются. round — набор вариантов: шаг сменил
- * состояние — варианты другие, хоть id вопросов те же, и выборы прежних забываются.
+ * состояние или пришли варианты другого его запуска — варианты другие, хоть id вопросов те же, и выборы прежних
+ * забываются.
  */
 export function useOptionChoices(councilId: string, streamId: string, round: unknown): OptionChoices {
   return useQueuedSaves<Choice>(async (questionId, choice, fresh) => {
     try {
-      const set = await source.setChoice(councilId, streamId, questionId, choice);
+      const set = await writeChoice(councilId, streamId, questionId, choice);
       markStale('options', fresh() ? putSet(councilId, streamId, set) : undefined);
       markStale('streams');
       markStale('councils');

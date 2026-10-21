@@ -79,6 +79,8 @@ const questionByKey = new Map<string, { stream: string; id: string }>();
 const options = new Map(Object.entries(OPTIONS).map(([key, sets]) => [key, copy(sets)]));
 /** Idempotency-Key → ключ потока, вопрос и id созданного по нему варианта. */
 const optionByKey = new Map<string, { stream: string; question: string; id: string }>();
+/** Номер запуска шага «Варианты» по совету и потоку (streamKey): утверждение вопросов и «Запустить снова» растят его. */
+const optionRuns = new Map<string, number>();
 /** Проекты моков: создание, правка и удаление меняют их здесь; живут, пока открыта вкладка. */
 const projects = copy(PROJECT_LIST);
 /** Idempotency-Key → id созданного по нему проекта. */
@@ -189,6 +191,17 @@ function optionSetsOf(id: string, streamId: string): OptionSet[] {
       sets[question.id] ??= noOptions();
       return { question, ...sets[question.id] };
     });
+}
+
+/** Номер запуска шага «Варианты»: шаг не начат — 0; начат в данных моков и с тех пор не запускался — 1. */
+function optionsRun(id: string, streamId: string): number {
+  const step = stepOf((streams.get(id) ?? [])[streamAt(id, streamId)], 'options');
+  return optionRuns.get(streamKey(id, streamId)) ?? (step.state === 'idle' ? 0 : 1);
+}
+
+/** Модели снова начали искать варианты: новый запуск шага «Варианты». */
+function optionsStarted(id: string, streamId: string) {
+  optionRuns.set(streamKey(id, streamId), optionsRun(id, streamId) + 1);
 }
 
 /** Варианты вопроса на «Вариантах»; вопроса нет или он убран — not_found, как у сервера. */
@@ -501,6 +514,7 @@ export const mockSource: DataSource = {
     // Шаг не останавливался — не перезапускаем, отвечаем потоком как есть.
     if (list[at].steps.some((step) => step.state === 'failed')) {
       const now = new Date().toISOString();
+      if (stepOf(list[at], 'options').state === 'failed') optionsStarted(id, streamId);
       list[at] = streamRetried(list[at], now);
       councils[index] = streamsChanged(councils[index], list, streamId, now);
     }
@@ -570,6 +584,8 @@ export const mockSource: DataSource = {
       const now = new Date().toISOString();
       const { participants, judge } = councils[index];
       const kept = questionsOf(id, streamId).filter((q) => !q.removed).length;
+      // Модели начинают искать варианты: первый запуск «Вариантов».
+      optionsStarted(id, streamId);
       list[at] = questionsApproved(list[at], kept, participants, judge, now);
       councils[index] = streamsChanged(councils[index], list, streamId, now);
     }
@@ -578,9 +594,10 @@ export const mockSource: DataSource = {
   async listOptions(id, streamId) {
     councilAt(id);
     const at = streamAt(id, streamId);
+    const run = optionsRun(id, streamId);
     // «Варианты» не начаты — вариантов нет.
-    if (stepOf((streams.get(id) ?? [])[at], 'options').state === 'idle') return [];
-    return copy(optionSetsOf(id, streamId));
+    if (stepOf((streams.get(id) ?? [])[at], 'options').state === 'idle') return { run, optionSets: [] };
+    return { run, optionSets: copy(optionSetsOf(id, streamId)) };
   },
   async setChoice(id, streamId, questionId, choice) {
     const index = councilAt(id);
