@@ -241,9 +241,15 @@ export function useOptionsStep(
         ? t('options.why.edit', { id: option.basedOn })
         : t('options.why.own'));
 
+  // Вариант, который правка нашла по своему ключу, а поправить не вышло, — в правке: выбран он — выбрана карточка, на
+  // которой правка открыта.
+  const chosenHere = (id: string) =>
+    isChosen(choice, id) || (id === editor.option && editor.created !== null && isChosen(choice, editor.created));
+
   const options: OptionView[] = (set?.options ?? [])
-    // Пока поле «Свой вариант» открыто, созданный из него вариант — в поле, а не карточкой.
-    .filter((option) => !(ownOpen && option.id === own.option))
+    // Пока поле «Свой вариант» открыто, созданный из него вариант — в поле, а не карточкой; пока открыта правка,
+    // созданный ею вариант — в правке: карточкой со старым текстом рядом с ней он не встаёт.
+    .filter((option) => !(ownOpen && option.id === own.option) && option.id !== editor.created)
     .map((option) => ({
       id: option.id,
       text: option.text,
@@ -261,7 +267,7 @@ export function useOptionsStep(
           openable: dependency !== 'removed' && !navLocked,
         };
       }),
-      selected: !ownSelected && isChosen(choice, option.id),
+      selected: !ownSelected && chosenHere(option.id),
       editing: editor.option === option.id,
       editable: editable(option.id),
     }));
