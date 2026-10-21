@@ -1,4 +1,5 @@
 import { useEffect, useId, useRef, type MouseEvent, type ReactNode, type SyntheticEvent } from 'react';
+import { IconButton } from '../IconButton';
 import styles from './Dialog.module.css';
 
 interface DialogProps {
@@ -55,9 +56,9 @@ export function Dialog({ title, closeLabel, onClose, actions, children }: Dialog
           <h2 id={titleId} className={styles.title}>
             {title}
           </h2>
-          <button type="button" className={styles.close} aria-label={closeLabel} onClick={onClose}>
+          <IconButton label={closeLabel} onClick={onClose}>
             ×
-          </button>
+          </IconButton>
         </div>
         {children}
         <div className={styles.actions}>{actions}</div>

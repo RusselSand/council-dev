@@ -13,13 +13,17 @@ export type TagTone = 'green' | 'yellow' | 'red' | 'gray' | 'dark' | 'ghost' | '
  */
 export type TagSize = 'xs' | 'sm' | 'md' | 'lg';
 
+/** pill — «таблетка»; box — прямоугольник со скруглёнными углами: откуда вопрос и вариант на «Вариантах». */
+export type TagShape = 'pill' | 'box';
+
 interface TagProps {
   tone: TagTone;
   size?: TagSize;
+  shape?: TagShape;
   children: ReactNode;
 }
 
-/** Короткая метка-«таблетка»: состояние, роль. */
-export function Tag({ tone, size = 'sm', children }: TagProps) {
-  return <span className={`${styles.tag} ${styles[tone]} ${styles[size]}`}>{children}</span>;
+/** Короткая метка: состояние, роль, откуда что взялось. */
+export function Tag({ tone, size = 'sm', shape = 'pill', children }: TagProps) {
+  return <span className={`${styles.tag} ${styles[tone]} ${styles[size]} ${styles[shape]}`}>{children}</span>;
 }

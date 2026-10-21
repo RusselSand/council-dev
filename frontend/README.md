@@ -57,7 +57,7 @@ src/
 Экраны: `features/home` — Сводка, `features/projects` — Проекты, `features/council` — совет, `features/brief` — его
 этап «Ввод», `features/slices` — этап «Нарезка», `features/structure` — этап «Группы», `features/research` — этап
 «Исследование», `features/stream` — шаг потока (общее для всех шагов), `features/projectDecisions` — шаг «Решения
-проекта», `features/questions` — шаг «Вопросы».
+проекта», `features/questions` — шаг «Вопросы», `features/options` — шаг «Варианты».
 
 Экран совета (`features/council`, `<Council route>`) — общий для всех этапов и шагов потока: под шапкой рамки вкладки
 шести этапов, под ними — этап, который `app/Screen.tsx` выбирает по адресу и получает совет из списка
@@ -116,8 +116,8 @@ src/
 
 Шаг потока (`features/stream`, `<Stream council route>`) — общий для всех шагов, как совет для этапов: под вкладками
 этапов — вкладки потоков (`parts/StreamTabs`), слева цепочка шагов (`parts/StepChain`), плашка состояния открытого шага
-с «Запустить снова» (`parts/StepBanner`) и «Ход работы» вида «grouped» (`parts/RunPanel`: у шага с ошибкой и у шага, где
-работают модели), справа — карточка шага (`parts/StepCard`: подпись капсом, название, пояснение). Внутри карточки —
+с «Запустить снова» (`parts/StepBanner`) и «Ход работы» вида «grouped» (`parts/RunPanel`: у шага с ошибкой, у шага, где
+работают модели, и у «Вариантов» — всегда, как в макете), справа — карточка шага (`parts/StepCard`: подпись капсом, название, пояснение). Внутри карточки —
 шаг, который `app/Screen.tsx` выбирает по адресу и получает поток, все потоки совета и шаг (`{({ stream, streams, step,
 retrying, onBusy }) => …}`); шаг не начат — «Шаг откроется, когда пройдены предыдущие.» вместо него. «Запустить снова»
 и переход или правки шага не уходят вместе: пока запуск ждёт ответа (`retrying`), переход и правки шага не действуют;
@@ -142,7 +142,23 @@ retrying, onBusy }) => …}`); шаг не начат — «Шаг открое�
 свой вопрос — по «Добавить» (`useAddQuestion()`: повтор с тем же текстом, без пробелов по краям, — с прежним
 Idempotency-Key, текст поправили — с новым), «Утвердить» сначала дожидается «Убрать» / «Вернуть», потом
 утверждает (`useApproveQuestions()`) и открывает «Варианты». Поле и действия — `useQuestionsStep()` рядом с экраном;
-когда вопросы правят и утверждают — `domain/questions.ts`. Экран ставится с `key` по совету и потоку.
+когда вопросы правят и утверждают — `domain/questions.ts` (на общих `stepEditable()` и `stepApprovable()` из
+`domain/stream.ts`). Экран ставится с `key` по совету и потоку.
+
+«Варианты» (`features/options`) — вопросы по одному: чипы вопросов, «готово 2 из 4», «←» / «→» (`parts/QuestionNav`),
+вопрос (`parts/QuestionHead`), серая плашка «Выбор за вами · судья …» с отброшенными (`parts/JudgeNote`), варианты
+карточками с кружком выбора (`parts/OptionCard` на `ui/RadioCard`: «почему», «цена», «зависит от Q2 · решён»,
+«Поправить» → `parts/OptionEditor`), «Свой вариант» (`parts/OwnOption`) и «Пока не решаю» (`RadioCard
+variant="dashed"`); шаг ждёт вас или остановился — внизу «Выбрано 2 из 4» и «Утвердить выбор → к решениям». Пока на шаге
+работают модели — серые строки. Варианты даёт `useStreamOptions(id, streamId, state)`, как вопросы — по состоянию шага.
+Выбор уходит сразу по щелчку (`useOptionChoices()` на `useQueuedSaves()`). Поле «Свой вариант» — `useOwnOption()` рядом
+с экраном: набранное уходит после паузы, сначала создаёт свой вариант (`useAddOption()`), дальше правит его
+(`useUpdateOption()`), и экран выбирает его; закрыли поле, выбрав другой вариант, — сохранённое не выбирается; пока поле
+открыто, созданный вариант — в нём, а не карточкой. Правка — `useOptionEditor()`: у варианта совета создаёт свой
+вариант на его основе, у своего — правит его, и выбирает сохранённое. Открытый вопрос, плашка, правка и «Утвердить» —
+`useOptionsStep()`: открывается первый вопрос без выбора; «Утвердить» сначала дожидается поля, правки и выбора, потом
+утверждает (`useApproveOptions()`) и открывает «Решения». Расчёты — сколько выбрано, состояние зависимости, какой
+вопрос открыть — `domain/options.ts`. Экран ставится с `key` по совету и потоку.
 
 «Новый совет» — одно действие на все его кнопки (шапка, меню, колонка «Ввод» на Сводке): `useNewCouncil()` из
 `components/NewCouncil` создаёт совет и открывает его «Ввод». `NewCouncilProvider` ставит `app/App.tsx`; ошибку
@@ -155,19 +171,27 @@ Idempotency-Key, текст поправили — с новым), «Утвер�
 `domain/project.ts`.
 
 Готовое в `ui/`: `Shell` — стеклянная рамка страницы с местом под меню, `Button` (`primary`, `outline`, `text` —
-только текст, `subtle` — только текст, под курсором серая подложка, `inverse` — белая на тёмной плашке; размер `md` —
-в шапке и окнах, `sm` — на карточке, `xs` — на серой плашке внутри карточки; `tone="danger"` — красная; недоступная
-`primary` — серая), `Dialog` — окно поверх страницы с заголовком, «×» и кнопками внизу (закрывается «×», кликом мимо и Esc),
+только текст, `subtle` — только текст, под курсором серая подложка, `inverse` — белая на тёмной плашке, `plain` — текст
+без отступов, под курсором темнеет («Отброшено вариантов: 2 — почему»), `link` — подчёркнутый текст («Поправить»);
+размер `md` — в шапке и окнах, `sm` — на карточке, `xs` — на серой плашке внутри карточки; `tone="danger"` — красная;
+недоступная `primary` — серая), `IconButton` — круглая серая кнопка со значком и подписью для читалок (`md` — «×» в
+окне, `sm` — «←» / «→» на карточке), `Dialog` — окно поверх страницы с заголовком, «×» и кнопками внизу (закрывается «×», кликом мимо и Esc),
 `Field` — подпись поля, поле и пояснение (`hintPosition`: под подписью или под полем), `TextInput` — поле ввода
 (`text`, `mono` — путь, `title` — название карточки, которое правят на месте), `TextArea` — поле для длинного текста
-(`tall` — высокое, текст ввода; `bare` — без поля, идея группы на плашке), `CheckTile` — галочка с подписью
+(`tall` — высокое, текст ввода; `bare` — без поля, идея группы на плашке; `field` — невысокое серое, «Свой вариант»;
+`framed` — белое в тёмной рамке, правка варианта), `RadioCard` — карточка с кружком выбора: щёлкают строку с кружком,
+под ней — содержимое с отступом под кружок (`solid`, `dashed` — пунктир без заливки; `md`, `sm` — теснее; выбранная —
+белая в тёмной рамке), `CheckTile` — галочка с подписью
 на плитке (`mono` — подпись моноширинным, `meta` — пояснение мелко справа; `variant`: `tile` — серая плитка в строку,
 `card` — карточка с содержимым в несколько строк, отмеченная — в тёмной рамке), `Switch` — переключатель «вкл / выкл»,
 `Dot` — цветная точка (цвета состояний и `ink` — тёмная; `pulse` — пульсирует: модель думает), `Tag` —
 метка-«таблетка» (`green`, `yellow`, `red`, `gray`, `dark`, `ghost`, `glass` — белая полупрозрачная на цветной плашке;
-размер `xs` — в строке текста, `sm`, `md`, `lg` — в начале главного блока этапа), `Chip` — чип-выбор с числом
-(`glass` — на фоне страницы, `paper` — белый с рамкой на карточке; размер
-`sm` — теснее, тип фрагмента; `dot` — цветная точка перед подписью, фильтр находок), `Segmented` — переключатель из
+размер `xs` — в строке текста, `sm`, `md`, `lg` — в начале главного блока этапа; `shape="box"` — прямоугольник со
+скруглёнными углами, откуда вопрос и вариант на «Вариантах»), `Chip` — чип-выбор с числом
+(`glass` — на фоне страницы, `paper` — белый с рамкой на карточке, `outline` — белый, выбранный в тёмной рамке, вопрос
+на «Вариантах», `green` / `yellow` — заливка цвета состояния, зависимость варианта; размер
+`sm` — теснее, тип фрагмента, `xs` — самый мелкий, зависимость; `dot` — цветная точка перед подписью, фильтр находок),
+`Segmented` — переключатель из
 нескольких кнопок
 (`glass` — в шапке, `solid` — на карточке), `Card` — белая карточка (`sm` — в колонке канбана, `row` — строка списка
 на этапе, `md` — в сетке, `lg` — карточка проекта, `xl` — главный блок этапа), `CardGrid` — сетка карточек (`md` —
@@ -212,23 +236,26 @@ Idempotency-Key, текст поправили — с новым), «Утвер�
 Экран не ходит в `fetch` сам — только через хуки из `data/`.
 
 - `data/source.ts` — интерфейс источника `DataSource`: по методу на ручку контракта.
-- `data/mock/` — моки. Совет `g1`, его нарезка, группы, исследование, поток и вопросы — из `data-1.json` макета,
-  остальные советы, их фрагменты, группы, находки, потоки, прошлые решения, вопросы и проекты — из `prototype.js`.
+- `data/mock/` — моки. Совет `g1`, его нарезка, группы, исследование, поток, вопросы и варианты — из `data-1.json`
+  макета, остальные советы, их фрагменты, группы, находки, потоки, прошлые решения, вопросы, варианты и проекты — из
+  `prototype.js`.
   «К потокам →» в моках создаёт потоки из групп.
   Моки отдают копию данных: экран не может их испортить.
 - `data/http/` — настоящий сервер: `request()` разбирает ответ и ошибку по контракту.
 - `data/config.ts` — какой источник взять, по `VITE_DATA_SOURCE`.
 - `data/hooks/` — хуки запросов: `useCouncils()`, `useCouncilBrief(id)`, `useCouncilSlicing(id, running)`,
   `useCouncilStructure(id, running)`, `useCouncilResearch(id, running)`, `useCouncilStreams(id, running)`,
-  `useProjectDecisions(id, streamId)`, `useStreamQuestions(id, streamId, state)`, `useModels()`, `useProjects()`,
-  `useRepos()` → `{ data, error, loading, reload }`; хуки действий: `useCreateCouncil()`, `useUpdateCouncil()`,
-  `useSaveBrief()`, `useStartSlicing()`, `useStartStructure()`, `useConfirmStructure()`, `useRetryStructure()`,
-  `useResearchAction()` (`run(id, { action: 'start' | 'skip' | 'stop' | 'reset', kind, … })`), `useApproveResearch()`,
-  `useRetryStream()`, `useApproveProjectDecisions()`, `useAddQuestion()`, `useApproveQuestions()`, `useCreateProject()`,
+  `useProjectDecisions(id, streamId)`, `useStreamQuestions(id, streamId, state)`, `useStreamOptions(id, streamId,
+  state)`, `useModels()`, `useProjects()`, `useRepos()` → `{ data, error, loading, reload }`; хуки действий:
+  `useCreateCouncil()`, `useUpdateCouncil()`, `useSaveBrief()`, `useStartSlicing()`, `useStartStructure()`,
+  `useConfirmStructure()`, `useRetryStructure()`, `useResearchAction()` (`run(id, { action: 'start' | 'skip' | 'stop' |
+  'reset', kind, … })`), `useApproveResearch()`, `useRetryStream()`, `useApproveProjectDecisions()`, `useAddQuestion()`,
+  `useApproveQuestions()`, `useAddOption()`, `useUpdateOption()`, `useApproveOptions()`, `useCreateProject()`,
   `useUpdateProject()`, `useDeleteProject()` → `{ run, pending, error }`.
   `run()` отвечает изменённым объектом (удаление — id удалённого) или `undefined`, если не вышло (причина — в `error`).
   `useFragmentLabels(id, running)` — смена типа фрагмента по щелчку, `useFindingDecisions(id, round)` — решение по
-  находке по щелчку, `useQuestionRemovals(id, streamId, round)` — «Убрать» / «Вернуть» вопрос: все — на `useQueuedSaves()` (у каждого ключа своя очередь, на сервере — последний выбор; `pending`
+  находке по щелчку, `useQuestionRemovals(id, streamId, round)` — «Убрать» / «Вернуть» вопрос,
+  `useOptionChoices(id, streamId, round)` — выбор по вопросу на «Вариантах»: все — на `useQueuedSaves()` (у каждого ключа своя очередь, на сервере — последний выбор; `pending`
   и `errors` по ключу, `change()`, `settle()`; сменился набор `round` — выборы прежних забываются).
   `useGroupEdits(id, running)` — правки групп: `change()` (название, идея), `merge()`, `split()`, `pending` и `errors`
   по id группы, `reshaping`, `settle()`.
@@ -248,8 +275,9 @@ Idempotency-Key, текст поправили — с новым), «Утвер�
   видно, что хоть одно исследование идёт.
 - Действие, которое создаёт объект, шлёт `Idempotency-Key` (`data/hooks/idempotency.ts`): пока объект не создан, все
   попытки идут с одним ключом, и повтор после оборванного ответа не создаёт второй (`useCreateCouncil()`,
-  `useCreateProject()`, `useAddQuestion()`). Ключ живёт столько же, сколько хук: у проекта — пока открыто окно «Новый
-  проект»; у вопроса — пока он не создан.
+  `useCreateProject()`, `useAddQuestion()`, `useAddOption()`). Ключ живёт столько же, сколько хук: у проекта — пока
+  открыто окно «Новый проект»; у вопроса — пока он не создан; у своего варианта — пока он не создан из этого поля
+  (`field` — поле «Свой вариант» или правка варианта), даже если текст между попытками поправили.
 - `data/errors.ts` — `ApiError` с `code`; текст ошибки — `t(errorKey(error.code))`, а не `message`.
 
 Новая ручка: описать в `docs/api-contract.md` → тип в `domain/` → метод в `DataSource` → мок → http → хук.
@@ -443,6 +471,19 @@ Idempotency-Key, текст поправили — с новым), «Утвер�
 | В тексте уже есть ответ | The text already has an answer |
 | вариант «из группы» | “from the group” option |
 | Утвердить вопросы | Approve questions |
+| вариант, Варианты | option, Options |
+| из группы       | from the group    |
+| рекомендация судьи | judge’s pick   |
+| Выбор за вами   | Your choice       |
+| отброшенный вариант | dropped option |
+| почему, цена    | why, cost         |
+| зависит от      | depends on        |
+| решён / не решён | resolved / not resolved |
+| убран (вопрос)  | removed           |
+| Поправить       | Edit              |
+| Свой вариант    | Your own option   |
+| Пока не решаю   | Not deciding yet  |
+| Утвердить выбор | Approve choices   |
 
 ## Токены
 
@@ -468,7 +509,9 @@ Idempotency-Key, текст поправили — с новым), «Утвер�
   (кружок с номером шага сценария в коде), `--stage-side-max` (боковая колонка слева: цепочка шагов потока),
   `--badge-sm` (буква потока на вкладке), `--step-num`, `--chain-line`, `--chain-line-min` (кружок шага и черта в
   цепочке), `--hint-width` (пояснение шага потока), `--pulse-spread` (кольцо вокруг точки модели, которая думает),
-  `--question-id-width` (колонка с id вопроса потока);
+  `--question-id-width` (колонка с id вопроса потока), `--icon-button-sm` (круглая кнопка «←» / «→» на карточке),
+  `--radio-size` и `--radio-dot` (кружок выбора варианта и точка в нём), `--option-label-min` (колонка «почему» /
+  «цена» на карточке варианта);
 - прозрачность — `--opacity-count` (число на чипе), `--opacity-disabled` (недоступный переключатель), `--opacity-idle`
   (не начатый шаг в цепочке), `--opacity-removed` (убранный вопрос потока);
 - тени — `--shadow-card`, `--shadow-modal`, `--shadow-knob`; фон страницы — `--page-background`; затемнение под
@@ -511,6 +554,14 @@ npm --prefix frontend run shot -- --name failed --proto "#/c/c1/streams/C/questi
 
 ```
 npm --prefix frontend run shot -- --name questions --proto "#/c/c1/streams/C/questions" --click "Убрать" --click "fill:input[placeholder]=Свой" --click "Добавить" --app "/c/c1/streams/C/questions" --app-click "Убрать" --app-click "fill:input[placeholder]=Свой" --app-click "Добавить"
+```
+
+«Варианты»: у `g1` шаг готов (у Q2, Q7, Q8 — своя правка, у Q10 — свой вариант, Q12 — unresolved); у `c1` поток B
+ждёт вас — выбран только Q1, открыт Q3. Отброшенные и правка у Q1, свой вариант у Q3 (пауза в наборе — `key:Shift`):
+
+```
+npm --prefix frontend run shot -- --name options --proto "#/c/c1/streams/B/options" --click "←" --click "Отброшено вариантов: 2 — почему" --click "Поправить" --app "/c/c1/streams/B/options" --app-click "←" --app-click "Отброшено вариантов: 2 — почему" --app-click "Поправить" --full
+npm --prefix frontend run shot -- --name own --proto "#/c/c1/streams/B/options" --click "Свой вариант" --click "fill:textarea[placeholder]=Свой" --app "/c/c1/streams/B/options" --app-click "Свой вариант" --app-click "fill:textarea[placeholder]=Свой" --app-click "key:Shift" --full
 ```
 
 Для снимков нужен браузер: один раз `npx playwright install chromium` в `frontend/`. Если его нет, скрипт снимает в

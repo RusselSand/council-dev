@@ -3,9 +3,10 @@ import styles from './Button.module.css';
 
 /**
  * primary — тёмная заливка, главное действие; outline — тёмная рамка без заливки; text — только текст;
- * subtle — только текст, под курсором — серая подложка; inverse — белая заливка, главное действие на тёмной плашке.
+ * subtle — только текст, под курсором — серая подложка; inverse — белая заливка, главное действие на тёмной плашке;
+ * plain — только текст без отступов, под курсором темнеет; link — подчёркнутый текст, под курсором темнеет.
  */
-export type ButtonVariant = 'primary' | 'outline' | 'text' | 'subtle' | 'inverse';
+export type ButtonVariant = 'primary' | 'outline' | 'text' | 'subtle' | 'inverse' | 'plain' | 'link';
 
 /** md — в шапке и окнах; sm — на карточке; xs — на серой плашке внутри карточки («Объединить с», «Разделить»). */
 export type ButtonSize = 'md' | 'sm' | 'xs';

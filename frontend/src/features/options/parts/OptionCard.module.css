@@ -1,0 +1,54 @@
+.meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-8);
+}
+
+.id {
+  font-family: var(--font-mono);
+  font-size: var(--text-sm);
+  color: var(--color-text-faint);
+}
+
+.text {
+  font-size: var(--text-lg);
+  font-weight: var(--weight-bold);
+  line-height: var(--leading-normal);
+  text-wrap: pretty;
+  overflow-wrap: anywhere;
+}
+
+/* «почему» и «цена» — подписи слева, текст справа. */
+.facts {
+  display: grid;
+  grid-template-columns: minmax(var(--option-label-min), max-content) minmax(0, 1fr);
+  gap: var(--space-6) var(--space-10);
+  margin: 0;
+  font-size: var(--text-md);
+  line-height: var(--leading-loose);
+}
+
+.label {
+  font-size: var(--text-sm);
+  color: var(--color-text-faint);
+}
+
+.value {
+  margin: 0;
+  color: var(--color-text-body);
+  text-wrap: pretty;
+  overflow-wrap: anywhere;
+}
+
+/* Зависимости и «Поправить» справа. */
+.foot {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-6);
+}
+
+.edit {
+  margin-left: auto;
+}

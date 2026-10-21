@@ -3,6 +3,7 @@ import { unexported } from '../domain/stream';
 import { Brief } from '../features/brief';
 import { Council } from '../features/council';
 import { Home } from '../features/home';
+import { Options } from '../features/options';
 import { ProjectDecisions } from '../features/projectDecisions';
 import { Projects } from '../features/projects';
 import { Questions } from '../features/questions';
@@ -54,6 +55,16 @@ export function Screen() {
                   councilId={council.id}
                   streamId={stream.id}
                   state={step.state}
+                  retrying={retrying}
+                  onBusy={onBusy}
+                />
+              ) : route.step === 'options' ? (
+                <Options
+                  key={`${council.id}/${stream.id}`}
+                  councilId={council.id}
+                  streamId={stream.id}
+                  state={step.state}
+                  judge={council.judge}
                   retrying={retrying}
                   onBusy={onBusy}
                 />

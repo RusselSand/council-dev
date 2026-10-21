@@ -1,6 +1,13 @@
 .tag {
-  border-radius: var(--radius-pill);
   white-space: nowrap;
+}
+
+.pill {
+  border-radius: var(--radius-pill);
+}
+
+.box {
+  border-radius: var(--radius-6);
 }
 
 /* Тип фрагмента в группе, «из текста» у идеи группы. */
