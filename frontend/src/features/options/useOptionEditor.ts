@@ -29,8 +29,8 @@ export interface OptionEditor {
   /** «Поправить»: открыть правку варианта; прежняя правка закрывается без сохранения. */
   start: (question: string, option: Option) => void;
   edit: (text: string) => void;
-  /** «Сохранить». */
-  save: () => void;
+  /** «Сохранить». Ответ — ушла ли правка на сервер: текст пустой, не меняли или правка уже уходит — нет. */
+  save: () => boolean;
   /** «Отмена»: закрыть без сохранения. */
   cancel: () => void;
   /** У вопроса выбрали другое: правка этого вопроса, которая уходит, сохранится, но выбором не станет. */
@@ -73,11 +73,11 @@ export function useOptionEditor(
   };
 
   const save = () => {
-    if (!editing || inFlight.current || !canSaveOption(editing.text)) return;
+    if (!editing || inFlight.current || !canSaveOption(editing.text)) return false;
     const { question, option, text, created } = editing;
     if (!created && sameText(text, option.text)) {
       setEditing(null);
-      return;
+      return false;
     }
     const current: Sending = { question, select: true };
     sending.current = current;
@@ -95,6 +95,7 @@ export function useOptionEditor(
       if (current.select) onSaved(question, saved.id);
       return true;
     })();
+    return true;
   };
 
   return {

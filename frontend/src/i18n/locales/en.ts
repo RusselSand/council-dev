@@ -403,6 +403,7 @@ export const en = translation({
   'error.not_own_option': 'Council options aren’t edited — an edit becomes your own option.',
   'error.network': 'No connection to the server. Check your network and try again.',
   'error.unknown': 'Something went wrong. Please try again.',
+  'error.not_saved': 'Not everything was saved, so the choice wasn’t approved. Check the questions and try again.',
 
   'load.loading': 'Loading…',
   'load.retry': 'Try again',

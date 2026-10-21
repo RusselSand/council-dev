@@ -2,7 +2,8 @@ import type { MessageKey } from '../i18n';
 
 /**
  * Коды ошибок, у которых есть текст в словаре (error.<код>). Серверные — в docs/api-contract.md;
- * network и unknown ставит сам фронтенд: сервер не ответил / ответ не разобрать.
+ * network, unknown и not_saved ставит сам фронтенд: сервер не ответил / ответ не разобрать / действие не ушло, потому что
+ * не сохранились правки перед ним.
  */
 export const ERROR_CODES = [
   'not_found',
@@ -31,6 +32,7 @@ export const ERROR_CODES = [
   'not_own_option',
   'network',
   'unknown',
+  'not_saved',
 ] as const;
 export type ErrorCode = (typeof ERROR_CODES)[number];
 

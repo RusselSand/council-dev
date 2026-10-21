@@ -5,11 +5,13 @@ import { canSaveOption, sameText } from '../../domain/options';
 /** Через сколько после последней правки поле «Свой вариант» сохраняется, мс. */
 const DELAY = 600;
 
-/** Открытое поле «Свой вариант»: у какого вопроса, что в нём набрано; session — номер поля, у каждого открытия свой. */
-interface Draft {
+/** Поле «Свой вариант» у вопроса: что в нём набрано; session — номер поля, у каждого открытия свой. */
+interface Field {
   question: string;
   text: string;
   session: number;
+  /** От вопроса ушли: набранное сохранится — поле закроется; не сохранится — поле ждёт у вопроса с ошибкой. */
+  left: boolean;
 }
 
 /** Что известно о поле на сервере: у какого вопроса, вариант, созданный из него, его текст и надо ли его выбирать. */
@@ -24,51 +26,54 @@ interface Session {
 }
 
 export interface OwnOption {
-  /** Вопрос, у которого открыто поле; закрыто — null. */
-  question: string | null;
+  /** Поле открыто у вопроса на экране: его кружок выбран. */
+  shown: boolean;
   text: string;
-  /** Вариант, уже созданный из открытого поля: пока поле открыто, он — в поле, а не карточкой. Не создан — null. */
+  /** Вариант, уже созданный из поля у вопроса на экране: пока поле открыто, он — в поле, а не карточкой. Нет — null. */
   option: string | null;
-  /** Не вышло сохранить набранное в открытом поле. */
+  /** Не вышло сохранить набранное в поле у вопроса на экране. */
   error: ApiError | undefined;
   /** Набранное ждёт паузы в наборе или уходит на сервер. */
   saving: boolean;
-  /** Открыть поле у вопроса: прежнее поле закрывается, набранное в нём уходит сразу. */
-  open: (question: string) => void;
+  /** Открыть поле у вопроса на экране. */
+  open: () => void;
   edit: (text: string) => void;
-  /** Закрыть поле, набранное уходит сразу. */
+  /** Уходят от вопроса на экране: набранное в его поле уходит сразу; сохранилось — поле закрывается. */
   close: () => void;
   /**
    * У вопроса выбрали другое: поле закрывается, набранное уходит сразу, но ни оно, ни прежние поля этого вопроса, которые
    * ещё сохраняются, выбором не становятся.
    */
   unselect: (question: string) => void;
-  /** Сохранить набранное в открытом поле сейчас. Ответ — сохранилось ли; поле закрыто — true, когда из него всё ушло. */
+  /** Сохранить сейчас набранное во всех полях, и там, где не вышло. Ответ — сохранилось ли всё. */
   flush: () => Promise<boolean>;
 }
 
 /**
  * Поле «Свой вариант», как в макете: набранное сохраняется само, после паузы в наборе, — сначала создаёт свой вариант
  * (useAddOption()), дальше правит его (useUpdateOption()); запросы идут по одному, каждый — с тем, что набрано к его
- * отправке. Сохранённое становится выбором вопроса (onSaved), если с открытия поля у вопроса не выбрали другое. Закрыли
- * поле или экран — набранное уходит сразу. Пустое поле не сохраняется и выбор не меняет.
+ * отправке. Сохранённое становится выбором вопроса (onSaved), если с открытия поля у вопроса не выбрали другое. Ушли от
+ * вопроса или закрыли экран — набранное уходит сразу; поле закрывается, когда сохранилось, а не вышло — остаётся у своего
+ * вопроса с набранным и ошибкой. Пустое поле не сохраняется и выбор не меняет. current — вопрос на экране.
  */
 export function useOwnOption(
   councilId: string,
   streamId: string,
+  current: string | undefined,
   onSaved: (question: string, option: string) => void,
 ): OwnOption {
   const addOption = useAddOption();
   const updateOption = useUpdateOption();
-  const [draft, setDraft] = useState<Draft | null>(null);
-  /** То же, что draft, но сразу: сохранение берёт из него то, что набрано к его отправке. */
-  const draftRef = useRef<Draft | null>(null);
+  /** Поля по вопросу: у вопроса на экране и у тех, от которых ушли, пока набранное в их полях не сохранилось. */
+  const [fields, setFields] = useState<Record<string, Field>>({});
+  /** То же, что fields, но сразу: сохранение берёт из него то, что набрано к его отправке. */
+  const fieldsRef = useRef<Record<string, Field>>({});
   const sessions = useRef(new Map<number, Session>());
   const nextSession = useRef(0);
   /** Варианты, созданные из полей, — по номеру поля: чтобы показать его в поле, а не карточкой. */
   const [created, setCreated] = useState<Record<number, string>>({});
-  /** Поле, у которого не вышло сохранить; вышло — null. */
-  const [failed, setFailed] = useState<number | null>(null);
+  /** Поля, у которых не вышло сохранить, — по номеру поля. */
+  const [failed, setFailed] = useState<Record<number, true>>({});
   const [sending, setSending] = useState(0);
   /** Набранное ждёт паузы в наборе: сохранение отложено. */
   const [scheduled, setScheduled] = useState(false);
@@ -78,15 +83,33 @@ export function useOwnOption(
   const onSavedRef = useRef(onSaved);
   onSavedRef.current = onSaved;
 
-  const put = (next: Draft | null) => {
-    draftRef.current = next;
-    setDraft(next);
-  };
+  /** Поставить поле вопроса; null — убрать. */
+  const put = useCallback((question: string, field: Field | null) => {
+    const next = { ...fieldsRef.current };
+    if (field) next[question] = field;
+    else delete next[question];
+    fieldsRef.current = next;
+    setFields(next);
+  }, []);
+
+  const markFailed = (id: number, value: boolean) =>
+    setFailed((known) => {
+      if (Boolean(known[id]) === value) return known;
+      const next = { ...known };
+      if (value) next[id] = true;
+      else delete next[id];
+      return next;
+    });
 
   /** Сохранить то, что было в поле в момент snapshot. */
-  const send = async ({ question, text, session: id }: Draft): Promise<boolean> => {
+  const send = async ({ question, text, session: id }: Field): Promise<boolean> => {
     const session = sessions.current.get(id);
-    if (!session || !canSaveOption(text) || sameText(text, session.saved)) return true;
+    if (!session) return true;
+    if (!canSaveOption(text) || sameText(text, session.saved)) {
+      // Сохранять нечего: прошлая ошибка уже ни о чём.
+      markFailed(id, false);
+      return true;
+    }
     setSending((n) => n + 1);
     let option = session.option
       ? await updateOption.run(councilId, streamId, question, session.option, text)
@@ -98,14 +121,14 @@ export function useOwnOption(
     }
     setSending((n) => n - 1);
     if (!option) {
-      setFailed(id);
+      markFailed(id, true);
       return false;
     }
     const saved = option;
     session.option = saved.id;
     session.saved = saved.text;
-    setCreated((current) => (current[id] === saved.id ? current : { ...current, [id]: saved.id }));
-    setFailed((current) => (current === id ? null : current));
+    setCreated((ids) => (ids[id] === saved.id ? ids : { ...ids, [id]: saved.id }));
+    markFailed(id, false);
     if (!session.unselect) onSavedRef.current(question, saved.id);
     return true;
   };
@@ -113,54 +136,97 @@ export function useOwnOption(
   const sendRef = useRef(send);
   sendRef.current = send;
 
-  const flush = useCallback(() => {
+  /**
+   * Отправить набранное в поле вопроса — за тем, что уже уходит. От вопроса ушли, и всё сохранилось — поле закрывается:
+   * вариант — карточкой.
+   */
+  const flushField = useCallback(
+    (question: string): Promise<boolean> => {
+      const snapshot = fieldsRef.current[question];
+      if (!snapshot) return Promise.resolve(true);
+      const sent = queue.current.then(async () => {
+        const saved = await sendRef.current(snapshot);
+        const field = fieldsRef.current[question];
+        if (saved && field?.session === snapshot.session && field.left && field.text === snapshot.text) {
+          put(question, null);
+        }
+        return saved;
+      });
+      queue.current = sent;
+      return sent;
+    },
+    [put],
+  );
+
+  const flush = useCallback(async () => {
     clearTimeout(timer.current);
     setScheduled(false);
-    const snapshot = draftRef.current;
-    // Поле закрыто — дождаться того, что из него ещё уходит; не сохранилось — его уже не видно, оно не мешает.
-    if (!snapshot) return queue.current.then(() => true);
-    queue.current = queue.current.then(() => sendRef.current(snapshot));
-    return queue.current;
-  }, []);
+    const sent = Object.keys(fieldsRef.current).map((question) => flushField(question));
+    // Дождаться и того, что уходит из полей, которые закрыл выбор другого: не сохранилось — оно уже не выбор и не мешает.
+    await queue.current;
+    return (await Promise.all(sent)).every(Boolean);
+  }, [flushField]);
 
-  const open = (question: string) => {
-    if (draftRef.current?.question === question) return;
-    if (draftRef.current) void flush();
+  /** Поле у вопроса на экране. */
+  const shown = () => (current === undefined ? undefined : fieldsRef.current[current]);
+
+  const open = () => {
+    if (current === undefined) return;
+    const field = fieldsRef.current[current];
+    // Поле осталось с тех пор, как ушли от вопроса, — снова открытое.
+    if (field) {
+      if (field.left) put(current, { ...field, left: false });
+      return;
+    }
     const session = nextSession.current++;
-    sessions.current.set(session, { question, option: null, saved: '', unselect: false });
-    put({ question, text: '', session });
+    sessions.current.set(session, { question: current, option: null, saved: '', unselect: false });
+    put(current, { question: current, text: '', session, left: false });
   };
 
   const edit = (text: string) => {
-    const current = draftRef.current;
-    if (!current) return;
-    put({ ...current, text });
+    const field = shown();
+    if (!field) return;
+    const { question } = field;
+    put(question, { ...field, text, left: false });
     clearTimeout(timer.current);
-    timer.current = setTimeout(() => void flush(), DELAY);
+    timer.current = setTimeout(() => {
+      setScheduled(false);
+      void flushField(question);
+    }, DELAY);
     setScheduled(true);
   };
 
   const close = () => {
-    if (!draftRef.current) return;
-    void flush();
-    put(null);
+    const field = shown();
+    if (!field) return;
+    clearTimeout(timer.current);
+    setScheduled(false);
+    put(field.question, { ...field, left: true });
+    void flushField(field.question);
   };
 
   const unselect = (question: string) => {
     // Поле этого вопроса могли закрыть раньше, уйдя к другому вопросу, а сохранение из него ещё идёт.
     for (const session of sessions.current.values()) if (session.question === question) session.unselect = true;
-    close();
+    const field = fieldsRef.current[question];
+    if (!field) return;
+    if (question === current) {
+      clearTimeout(timer.current);
+      setScheduled(false);
+    }
+    put(question, null);
+    queue.current = queue.current.then(() => sendRef.current(field));
   };
 
   // Экран закрыли — набранное уходит сразу.
   useEffect(() => () => void flush(), [flush]);
 
-  const session = draft?.session;
+  const field = current === undefined ? undefined : fields[current];
   return {
-    question: draft?.question ?? null,
-    text: draft?.text ?? '',
-    option: session === undefined ? null : (created[session] ?? null),
-    error: session !== undefined && failed === session ? (updateOption.error ?? addOption.error) : undefined,
+    shown: field !== undefined,
+    text: field?.text ?? '',
+    option: field ? (created[field.session] ?? null) : null,
+    error: field && failed[field.session] ? (updateOption.error ?? addOption.error) : undefined,
     saving: scheduled || sending > 0,
     open,
     edit,
