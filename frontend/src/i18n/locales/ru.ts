@@ -418,6 +418,45 @@ export const ru = {
   'notes.change.superseded': 'superseded → {id}',
   'notes.approve': 'Записать в каталог',
 
+  'tasks.pending': 'Не все потоки готовы',
+  'tasks.pending.ready': {
+    one: 'Задачи готовы по потоку {streams}.',
+    few: 'Задачи готовы по потокам {streams}.',
+    many: 'Задачи готовы по потокам {streams}.',
+    other: 'Задачи готовы по потокам {streams}.',
+  },
+  'tasks.pending.waiting': {
+    one: 'Поток {streams} ещё не дошёл до итогов — его задачи появятся позже.',
+    few: 'Потоки {streams} ещё не дошли до итогов — их задачи появятся позже.',
+    many: 'Потоки {streams} ещё не дошли до итогов — их задачи появятся позже.',
+    other: 'Потоки {streams} ещё не дошли до итогов — их задачи появятся позже.',
+  },
+  'tasks.caption': 'Задачи',
+  'tasks.title': 'Задачи для coding agents',
+  'tasks.intro':
+    'Итоги всех потоков нарезаны на задачи: зачем, где менять, что сделать, когда готово. Задачи из разных потоков связаны зависимостями.',
+  'tasks.stream': 'поток {stream}',
+  'tasks.tag.free': 'можно брать',
+  'tasks.tag.after': 'после {ids}',
+  'tasks.expand': 'подробнее',
+  'tasks.collapse': 'свернуть',
+  'tasks.entries': 'Где менять',
+  'tasks.current': 'Сейчас',
+  'tasks.scope': 'Сделать',
+  'tasks.questions': 'Открытые вопросы для агента',
+  'tasks.meta': 'итог {outcome} · {decisions}',
+  'tasks.meta.outcome': 'итог {outcome}',
+  'tasks.vanished': 'Уйдут из каталога · {count}',
+  'tasks.vanished.intro': 'Задачи прошлой выгрузки, которых нет в нынешнем плане: при записи их файлы удалятся.',
+  'tasks.write.title': 'Записать задачи',
+  'tasks.write.text': {
+    one: '{count} задача · каталог {path} · язык: {language}',
+    few: '{count} задачи · каталог {path} · язык: {language}',
+    many: '{count} задач · каталог {path} · язык: {language}',
+    other: '{count} задачи · каталог {path} · язык: {language}',
+  },
+  'tasks.write.button': 'Записать в каталог',
+
   'progress.title': 'Ход работы',
   'progress.note': 'Участники работают по отдельности, судья решает там, где они разошлись.',
 
@@ -530,16 +569,11 @@ export const ru = {
     'Итоги сейчас не утвердить: шаг ещё не начат или его запустили снова. Поток и итоги обновлены.',
   'error.outcome_blocked': 'Итог заблокирован — ему не хватает решения, утверждать нечего. Итоги обновлены.',
   'error.notes_not_ready': 'Поток сейчас не записать: шаг «Документация» ещё не начат. Поток обновлён.',
+  'error.tasks_not_ready': 'Записывать пока нечего: ни один поток ещё не дошёл до итогов. Задачи обновлены.',
   'error.network': 'Нет связи с сервером. Проверьте сеть и попробуйте ещё раз.',
   'error.unknown': 'Что-то пошло не так. Попробуйте ещё раз.',
   'error.not_saved': 'Не всё сохранилось — шаг не утверждён. Проверьте правки и попробуйте ещё раз.',
 
   'load.loading': 'Загружаем…',
   'load.retry': 'Повторить',
-
-  'stub.address': 'Адрес',
-  'stub.council': 'Совет',
-  'stub.stage': 'Этап',
-  'stub.stream': 'Поток',
-  'stub.step': 'Шаг',
 } as const satisfies Messages;

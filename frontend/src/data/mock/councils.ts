@@ -429,10 +429,14 @@ function streamsState(streams: Stream[]): State {
   return (['waiting', 'running', 'failed'] as const).find((s) => states.includes(s)) ?? 'waiting';
 }
 
+/** Строка «Задач» на Сводке, пока они ждут записи; текст пишет сервер (в макете у c7 — «Запишите 6 задач в каталог»). */
+const TASKS_WAITING = atStage('tasks', 'waiting', 'Запишите задачи в каталог');
+
 /**
  * Совет после действия с потоком (changed): у потоков — текущие шаги, этап «Потоки» — по шагам потоков, совет встаёт
- * на первый неготовый этап. Строки потока на Сводке — по его шагам с ошибкой, ждущим вас и где работает ИИ: строка
- * того же шага в том же состоянии остаётся, новая — что нужно от человека или что делают модели.
+ * на первый неготовый этап. Все потоки готовы, а задачи не записаны — «Задачи» ждут вас и у них строка на Сводке, как
+ * у c7 в макете. Строки потока на Сводке — по его шагам с ошибкой, ждущим вас и где работает ИИ: строка того же шага в
+ * том же состоянии остаётся, новая — что нужно от человека или что делают модели.
  */
 export const streamsChanged = (
   council: CouncilSummary,
@@ -441,7 +445,13 @@ export const streamsChanged = (
   updatedAt: string,
 ): CouncilSummary => {
   const stream = streams.find((s) => s.id === changed);
-  const stages: Record<Stage, State> = { ...council.stages, streams: streamsState(streams) };
+  const streamsDone = streamsState(streams) === 'done';
+  const tasksWaiting = streamsDone && council.stages.tasks === 'idle';
+  const stages: Record<Stage, State> = {
+    ...council.stages,
+    streams: streamsState(streams),
+    tasks: tasksWaiting ? 'waiting' : council.stages.tasks,
+  };
   const stage = firstOpen(stages, 'brief');
   const own = (stream?.steps ?? []).flatMap((step): Activity[] => {
     if (step.state !== 'failed' && step.state !== 'waiting' && step.state !== 'running') return [];
@@ -458,8 +468,12 @@ export const streamsChanged = (
           : (step.text ?? '');
     return [atStep(changed, step.step, step.state, text)];
   });
-  // Внутри состояния — сначала то, что изменилось позже: строки этого потока.
-  const activity = [...own, ...council.activity.filter((a) => a.stage !== 'streams' || a.stream !== changed)];
+  // Внутри состояния — сначала то, что изменилось позже: строки этого потока и «Задач».
+  const activity = [
+    ...(tasksWaiting ? [TASKS_WAITING] : []),
+    ...own,
+    ...council.activity.filter((a) => a.stage !== 'streams' || a.stream !== changed),
+  ];
   return {
     ...council,
     stage,
@@ -467,6 +481,32 @@ export const streamsChanged = (
     stages,
     streams: streams.map((s) => ({ id: s.id, step: currentStep(s).step })),
     activity: ACTIVITY_ORDER.flatMap((state) => activity.filter((a) => a.state === state)),
+    updatedAt,
+  };
+};
+
+/** «7 задач записаны в каталог» — итог совета, когда всё готово; текст пишет сервер. */
+const TASK_FORMS: Record<string, string> = { one: 'задача записана', few: 'задачи записаны', many: 'задач записаны' };
+const writtenText = (count: number) =>
+  `${count} ${TASK_FORMS[new Intl.PluralRules('ru').select(count)] ?? 'задачи записаны'} в каталог`;
+
+/**
+ * Совет после «Записать в каталог» на «Задачах» — как в макете (prototype.js, writeTasks): «Задачи» готовы, даже если не
+ * все потоки готовы. Совет встаёт на первый неготовый этап; всё готово — итог совета: сколько задач записано. Строка
+ * «Задач» на Сводке уходит. Задачи уже записаны — совет как есть.
+ */
+export const tasksWritten = (council: CouncilSummary, count: number, updatedAt: string): CouncilSummary => {
+  if (council.stages.tasks === 'done') return council;
+  const stages: Record<Stage, State> = { ...council.stages, tasks: 'done' };
+  const stage = firstOpen(stages, 'brief');
+  const done = stages[stage] === 'done';
+  return {
+    ...council,
+    stage,
+    state: stages[stage],
+    stages,
+    activity: council.activity.filter((a) => a.stage !== 'tasks'),
+    summary: done ? writtenText(count) : council.summary,
     updatedAt,
   };
 };

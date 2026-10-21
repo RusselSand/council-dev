@@ -35,6 +35,7 @@ export const ERROR_CODES = [
   'outcomes_not_ready',
   'outcome_blocked',
   'notes_not_ready',
+  'tasks_not_ready',
   'network',
   'unknown',
   'not_saved',

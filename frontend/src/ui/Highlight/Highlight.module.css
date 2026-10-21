@@ -11,6 +11,13 @@
   background: var(--color-attention-bg);
 }
 
+/* Открытые вопросы для агента на задаче: бледнее и теснее. */
+.notice {
+  padding: var(--space-12) var(--space-14);
+  border-radius: var(--radius-14);
+  background: var(--state-waiting-bg);
+}
+
 /* Статус решения проекта меняется: просторнее, строки — через 10. */
 .danger {
   gap: var(--space-10);
@@ -25,7 +32,8 @@
   gap: var(--space-8);
 }
 
-.attention .head {
+.attention .head,
+.notice .head {
   color: var(--state-waiting-ink);
 }
 

@@ -1,4 +1,4 @@
-import type { Note, NotesCatalog, NotesExport, NoteType, StatusChange } from '../../domain/notes';
+import type { Catalog, Note, NotesExport, NoteType, StatusChange } from '../../domain/notes';
 import { streamKey } from './streams';
 
 /**
@@ -208,7 +208,7 @@ const G1: MockNotes = {
 };
 
 /** Каталог советов-примеров — NOTES_CATALOG из prototype.js: папка документации проекта, «язык: русский». */
-const protoCatalog = (path: string): NotesCatalog => ({ path, language: 'русский' });
+const protoCatalog = (path: string): Catalog => ({ path, language: 'русский' });
 
 /**
  * Заметки советов-примеров — NOTES из prototype.js: заголовки и метки как в макете. Вида у них в макете нет (там они

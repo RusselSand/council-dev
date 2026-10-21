@@ -393,6 +393,39 @@ export const en = translation({
   'notes.change.superseded': 'superseded → {id}',
   'notes.approve': 'Write to catalog',
 
+  'tasks.pending': 'Not all streams are ready',
+  'tasks.pending.ready': {
+    one: 'Tasks are ready for stream {streams}.',
+    other: 'Tasks are ready for streams {streams}.',
+  },
+  'tasks.pending.waiting': {
+    one: 'Stream {streams} hasn’t reached its outcomes yet — its tasks will appear later.',
+    other: 'Streams {streams} haven’t reached their outcomes yet — their tasks will appear later.',
+  },
+  'tasks.caption': 'Tasks',
+  'tasks.title': 'Tasks for coding agents',
+  'tasks.intro':
+    'The outcomes of all streams are cut into tasks: why, where to change, what to do, when it’s done. Tasks from different streams are linked by dependencies.',
+  'tasks.stream': 'stream {stream}',
+  'tasks.tag.free': 'ready to take',
+  'tasks.tag.after': 'after {ids}',
+  'tasks.expand': 'more',
+  'tasks.collapse': 'collapse',
+  'tasks.entries': 'Where to change',
+  'tasks.current': 'Now',
+  'tasks.scope': 'To do',
+  'tasks.questions': 'Open questions for the agent',
+  'tasks.meta': 'outcome {outcome} · {decisions}',
+  'tasks.meta.outcome': 'outcome {outcome}',
+  'tasks.vanished': 'Leaving the catalog · {count}',
+  'tasks.vanished.intro': 'Tasks from the previous export that aren’t in the current plan: writing deletes their files.',
+  'tasks.write.title': 'Write tasks',
+  'tasks.write.text': {
+    one: '{count} task · catalog {path} · language: {language}',
+    other: '{count} tasks · catalog {path} · language: {language}',
+  },
+  'tasks.write.button': 'Write to catalog',
+
   'progress.title': 'Progress',
   'progress.note': 'Members work separately; the judge decides where they disagree.',
 
@@ -499,16 +532,11 @@ export const en = translation({
     'Outcomes can’t be approved now: the step hasn’t started or it was run again. The stream and outcomes are updated.',
   'error.outcome_blocked': 'The outcome is blocked — it lacks a decision, so there’s nothing to approve. Outcomes are updated.',
   'error.notes_not_ready': 'The stream can’t be written now: the Documentation step hasn’t started yet. The stream is updated.',
+  'error.tasks_not_ready': 'Nothing to write yet: no stream has reached its outcomes. Tasks are updated.',
   'error.network': 'No connection to the server. Check your network and try again.',
   'error.unknown': 'Something went wrong. Please try again.',
   'error.not_saved': 'Not everything was saved, so the step wasn’t approved. Check your edits and try again.',
 
   'load.loading': 'Loading…',
   'load.retry': 'Try again',
-
-  'stub.address': 'Address',
-  'stub.council': 'Council',
-  'stub.stage': 'Stage',
-  'stub.stream': 'Stream',
-  'stub.step': 'Step',
 });

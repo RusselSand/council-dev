@@ -11,6 +11,7 @@ import type { Decision, Finding, Research, ResearchKind } from '../domain/resear
 import type { Fragment, Label, Slicing } from '../domain/slicing';
 import type { ProjectDecisions, Stream } from '../domain/stream';
 import type { Group, GroupFields, Structure } from '../domain/structure';
+import type { TasksPlan } from '../domain/tasks';
 
 /**
  * Источник данных: всё, что фронтенд просит у бекенда. Ручки — в docs/api-contract.md.
@@ -169,6 +170,13 @@ export interface DataSource {
   getNotes(id: string, streamId: string): Promise<NotesExport>;
   /** POST /api/councils/<id>/streams/<streamId>/notes/approve — «Записать в каталог»; ответ — поток. */
   approveNotes(id: string, streamId: string): Promise<Stream>;
+  /**
+   * GET /api/councils/<id>/tasks — план задач совета: задачи готовых потоков, каталог задач, что уйдёт из каталога и
+   * какие потоки ещё не дошли до итогов.
+   */
+  getTasks(id: string): Promise<TasksPlan>;
+  /** POST /api/councils/<id>/tasks/approve — «Записать в каталог» задачи плана; ответ — совет. */
+  approveTasks(id: string): Promise<CouncilSummary>;
   /** GET /api/models */
   listModels(): Promise<Model[]>;
   /** GET /api/projects */

@@ -58,12 +58,12 @@ src/
 этап «Ввод», `features/slices` — этап «Нарезка», `features/structure` — этап «Группы», `features/research` — этап
 «Исследование», `features/stream` — шаг потока (общее для всех шагов), `features/projectDecisions` — шаг «Решения
 проекта», `features/questions` — шаг «Вопросы», `features/options` — шаг «Варианты», `features/decisions` — шаг
-«Решения», `features/outcomes` — шаг «Итоги», `features/notes` — шаг «Документация».
+«Решения», `features/outcomes` — шаг «Итоги», `features/notes` — шаг «Документация», `features/tasks` — этап
+«Задачи».
 
 Экран совета (`features/council`, `<Council route>`) — общий для всех этапов и шагов потока: под шапкой рамки вкладки
 шести этапов, под ними — этап, который `app/Screen.tsx` выбирает по адресу и получает совет из списка
-(`{(council) => …}`). Совета с таким id нет — Сводка. Этапа ещё нет — под вкладками заглушка `features/stub`: название
-экрана и части адреса.
+(`{(council) => …}`). Совета с таким id нет — Сводка.
 
 «Ввод» (`features/brief`) сохраняет всё сам, кнопки «Сохранить» нет: текст и название — после паузы в наборе
 (`useAutosave()` из `data/`), проект, модели и судья — сразу по щелчку (`useCouncilEdit()` рядом с экраном, по хуку
@@ -118,7 +118,7 @@ src/
 Шаг потока (`features/stream`, `<Stream council route>`) — общий для всех шагов, как совет для этапов: под вкладками
 этапов — вкладки потоков (`parts/StreamTabs`), слева цепочка шагов (`parts/StepChain`), плашка состояния открытого шага
 с «Запустить снова» (`parts/StepBanner`) и «Ход работы» вида «grouped» (`parts/RunPanel`: у шага с ошибкой, у шага, где
-работают модели, и у «Вариантов» — всегда, как в макете), справа — карточка шага (`parts/StepCard`: подпись капсом, название, пояснение). Внутри карточки —
+работают модели, и у «Вариантов» — всегда, как в макете), справа — карточка шага (`ui/TitledCard`: подпись капсом, название, пояснение). Внутри карточки —
 шаг, который `app/Screen.tsx` выбирает по адресу и получает поток, все потоки совета и шаг (`{({ stream, streams, step,
 retrying, onBusy }) => …}`); шаг не начат — «Шаг откроется, когда пройдены предыдущие.» вместо него. «Запустить снова»
 и переход или правки шага не уходят вместе: пока запуск ждёт ответа (`retrying`), переход и правки шага не действуют;
@@ -273,6 +273,17 @@ size="md"`), что меняется, белый блок «Готово, ког
 шага, как итоги. Группы и действия — `useNotesStep()` рядом с экраном; расчёты — группы по виду заметки, какая группа
 открыта, когда можно записать — `domain/notes.ts`. Экран ставится с `key` по совету и потоку.
 
+«Задачи» (`features/tasks`, `<Tasks councilId>`) — не все потоки дошли до итогов — жёлтая плашка «Не все потоки готовы»
+(`parts/PendingStreams`: какие потоки готовы и каких ждут — целыми фразами, потоки — `formatList()`); карточка «Задачи
+для coding agents» (`ui/TitledCard`) с задачами (`parts/TaskCard` на `Panel variant="muted"`: номер — `Tag mono` на
+тёмной метке, «поток A», название, «можно брать» / «после ISS-0023», «подробнее» / «свернуть»; зачем; у открытой — «Где
+менять», «Сейчас», «Сделать» и «Открытые вопросы для агента» на `Highlight tone="notice"`; внизу — итог и решения);
+«Уйдут из каталога» (`parts/VanishedTasks`); внизу — тёмная плашка «Записать задачи» (`ui/NextStep layout="bar"`) с
+«Записать в каталог» — всегда, как в макете. Все задачи сначала свёрнуты; что человек открыл, помнится, пока экран на
+экране. План даёт `useCouncilTasks(id)`, запись — `useApproveTasks()`: после ответа экран остаётся на «Задачах», вкладка
+этапа видит, что «Задачи» готовы. Открытые задачи и действия — `useTasks()` рядом с экраном; номер задачи и номера
+задач, после которых её брать, — `domain/tasks.ts`. Экран ставится с `key` по совету.
+
 «Новый совет» — одно действие на все его кнопки (шапка, меню, колонка «Ввод» на Сводке): `useNewCouncil()` из
 `components/NewCouncil` создаёт совет и открывает его «Ввод». `NewCouncilProvider` ставит `app/App.tsx`; ошибку
 создания рамка показывает под шапкой.
@@ -300,7 +311,8 @@ size="md"`), что меняется, белый блок «Готово, ког
 `Dot` — цветная точка (цвета состояний и `ink` — тёмная; `pulse` — пульсирует: модель думает), `Tag` —
 метка-«таблетка» (`green`, `yellow`, `red`, `gray`, `dark`, `ghost`, `glass` — белая полупрозрачная на цветной плашке;
 размер `xs` — в строке текста, `sm`, `md`, `lg` — в начале главного блока этапа; `shape="box"` — прямоугольник со
-скруглёнными углами, откуда вопрос и вариант на «Вариантах»), `Chip` — чип-выбор с числом
+скруглёнными углами, откуда вопрос и вариант на «Вариантах»; `mono` — подпись моноширинным, номер задачи на «Задачах»),
+`Chip` — чип-выбор с числом
 (`glass` — на фоне страницы, `paper` — белый с рамкой на карточке, `outline` — белый, выбранный в тёмной рамке, вопрос
 на «Вариантах», `green` / `yellow` — заливка цвета состояния, зависимость варианта; размер
 `sm` — теснее, тип фрагмента, `xs` — самый мелкий, зависимость; `dot` — цветная точка перед подписью, фильтр находок;
@@ -322,7 +334,9 @@ size="md"`), что меняется, белый блок «Готово, ког
 `light` — белый на тёмной вкладке; `sm` — на вкладке потока), `CardFooter` — низ карточки под чертой: слева пояснение
 или второе действие, справа главное, `DashedNote` — пояснение на пунктирной плашке на месте того, чего нет
 («Пропущено — …», «Шаг откроется, …», «Без папки: …»), `Highlight` — цветная плашка с подписью капсом (`attention` —
-жёлтая: идея группы, идея потока; `danger` — красная: «Статус решения проекта меняется»),
+жёлтая: идея группы, идея потока; `notice` — бледно-жёлтая, теснее: «Открытые вопросы для агента» на задаче; `danger` —
+красная: «Статус решения проекта меняется»), `TitledCard` — главный блок экрана: подпись капсом, крупный заголовок,
+пояснение и под ними содержимое (карточка шага потока, «Задачи для coding agents»),
 `Callout` — цветная плашка-пояснение внутри строки списка: заголовок мелко и жирно и под ним содержимое (`red` —
 «Пересматривает решение проекта», `green` — «В тексте уже есть ответ»), `Facts` — строки «подпись — значение»
 (`sm` — «почему» и «цена» варианта, `md` — решение: «контекст», «решение», «почему», «последствия», `xs` — подписи —
@@ -364,7 +378,8 @@ id); `QuestionHead` — открытый вопрос крупно, метка �
   заметки — из `data-1.json` макета, остальные советы, их фрагменты, группы, находки, потоки, прошлые решения, вопросы,
   варианты, решения, итоги, заметки и проекты — из `prototype.js`. «Записать в каталог» в моках проставляет решениям и
   итогам потока id в каталоге и меняет статусы прошлых решений того же каталога.
-  «К потокам →» в моках создаёт потоки из групп.
+  «К потокам →» в моках создаёт потоки из групп. План задач в моках — задачи потоков, у которых «Итоги» готовы: у g1 —
+  из `data-1.json`, у c1, c4, c7 — `ISSUES` макета; «Записать в каталог» на «Задачах» делает «Задачи» готовыми.
   Моки отдают копию данных: экран не может их испортить.
 - `data/http/` — настоящий сервер: `request()` разбирает ответ и ошибку по контракту.
 - `data/config.ts` — какой источник взять, по `VITE_DATA_SOURCE`.
@@ -372,12 +387,13 @@ id); `QuestionHead` — открытый вопрос крупно, метка �
   `useCouncilStructure(id, running)`, `useCouncilResearch(id, running)`, `useCouncilStreams(id, running)`,
   `useProjectDecisions(id, streamId)`, `useStreamQuestions(id, streamId, state)`, `useStreamOptions(id, streamId,
   state)`, `useStreamDecisions(id, streamId, state)`, `useStreamOutcomes(id, streamId, state)`, `useStreamNotes(id,
-  streamId, state)`, `useModels()`, `useProjects()`, `useRepos()` → `{ data, error, loading, reload }`; хуки действий:
+  streamId, state)`, `useCouncilTasks(id)`, `useModels()`, `useProjects()`, `useRepos()` → `{ data, error, loading,
+  reload }`; хуки действий:
   `useCreateCouncil()`, `useUpdateCouncil()`, `useSaveBrief()`, `useStartSlicing()`, `useStartStructure()`,
   `useConfirmStructure()`, `useRetryStructure()`, `useResearchAction()` (`run(id, { action: 'start' | 'skip' | 'stop' |
   'reset', kind, … })`), `useApproveResearch()`, `useRetryStream()`, `useApproveProjectDecisions()`, `useAddQuestion()`,
   `useApproveQuestions()`, `useAddOption()`, `useUpdateOption()`, `useApproveOptions()`, `useApproveDecisions()`,
-  `useApproveOutcomes()`, `useApproveNotes()`, `useCreateProject()`, `useUpdateProject()`, `useDeleteProject()` →
+  `useApproveOutcomes()`, `useApproveNotes()`, `useApproveTasks()`, `useCreateProject()`, `useUpdateProject()`, `useDeleteProject()` →
   `{ run, pending, error }`.
   `run()` отвечает изменённым объектом (удаление — id удалённого) или `undefined`, если не вышло (причина — в `error`).
   `attempt()` — то же, но отвечает `{ value }` или `{ error }` этого запуска: когда действие запускают для разных
@@ -469,7 +485,8 @@ id); `QuestionHead` — открытый вопрос крупно, метка �
 
 - `formatDate(value, 'relative')` — «сегодня, 14:20», «вчера, 19:40», «8 окт»; год — если он не текущий;
 - `formatDate(value, 'day')` — «8 окт»; `formatDate(value, 'time')` — «14:20»;
-- `formatNumber(1234)` — «1 234» / «1,234».
+- `formatNumber(1234)` — «1 234» / «1,234»;
+- `formatList(['B', 'C'])` — «B и C» / «B and C»: перечисление через «и», а не склейка через запятую.
 
 **Вёрстка** не рассчитывает на длину русского текста: в других языках подписи длиннее. Ширину под подпись не задаём;
 длинное переносится или обрезается многоточием.
@@ -664,6 +681,19 @@ id); `QuestionHead` — открытый вопрос крупно, метка �
 | Статус решения проекта меняется | Project decision status changes |
 | цепочка         | chain             |
 | Без папки       | No folder         |
+| задача, Задачи  | task, Tasks       |
+| Задачи для coding agents | Tasks for coding agents |
+| Не все потоки готовы | Not all streams are ready |
+| можно брать     | ready to take     |
+| после (задачи)  | after             |
+| подробнее       | more              |
+| Где менять      | Where to change   |
+| Сейчас (в коде) | Now               |
+| Сделать         | To do             |
+| Открытые вопросы для агента | Open questions for the agent |
+| Уйдут из каталога | Leaving the catalog |
+| Записать задачи | Write tasks       |
+| каталог (задач) | catalog           |
 
 ## Токены
 
@@ -694,7 +724,7 @@ id); `QuestionHead` — открытый вопрос крупно, метка �
   «цена» на карточке варианта), `--decision-label-min` (колонка подписей решения: «контекст», «последствия»),
   `--fix-num` (белый кружок с номером в «Что поправить»), `--adr-ref-min` (колонка номеров решений на итоге),
   `--criterion-box` (пустой квадратик перед критерием в «Готово, когда»), `--note-id-min` (колонка с id заметки на
-  «Документации»);
+  «Документации»), `--task-title-min` (название задачи на «Задачах» не уже этого);
 - прозрачность — `--opacity-count` (число на чипе), `--opacity-disabled` (недоступный переключатель), `--opacity-idle`
   (не начатый шаг в цепочке), `--opacity-removed` (убранный вопрос потока);
 - тени — `--shadow-card`, `--shadow-modal`, `--shadow-knob`; фон страницы — `--page-background`; затемнение под
@@ -772,6 +802,15 @@ npm --prefix frontend run shot -- --name approve --proto "#/c/c1/streams/A/outco
 ```
 npm --prefix frontend run shot -- --name notes --proto "#/c/g1/streams/A/notes" --click "показать" --app "/c/g1/streams/A/notes" --app-click "показать" --full
 npm --prefix frontend run shot -- --name write --proto "#/c/c1/streams/A/notes" --click "Записать в каталог" --app "/c/c1/streams/A/notes" --app-click "Записать в каталог"
+```
+
+«Задачи»: у g1 — 7 задач, «Уйдут из каталога», всё записано; у c1 — «Не все потоки готовы», задачи потока A; у c7 —
+задачи ждут записи; у c2 — плана нет. Открыть задачу и записать задачи:
+
+```
+npm --prefix frontend run shot -- --name tasks --proto "#/c/g1/tasks" --click "подробнее" --app "/c/g1/tasks" --app-click "подробнее" --full
+npm --prefix frontend run shot -- --name pending --proto "#/c/c1/tasks" --app "/c/c1/tasks"
+npm --prefix frontend run shot -- --name writetasks --proto "#/c/c7/tasks" --click "Записать в каталог" --app "/c/c7/tasks" --app-click "Записать в каталог"
 ```
 
 Для снимков нужен браузер: один раз `npx playwright install chromium` в `frontend/`. Если его нет, скрипт снимает в

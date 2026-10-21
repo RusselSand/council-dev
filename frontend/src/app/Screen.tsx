@@ -14,7 +14,7 @@ import { Research } from '../features/research';
 import { Slices } from '../features/slices';
 import { Stream } from '../features/stream';
 import { Structure } from '../features/structure';
-import { ScreenStub } from '../features/stub';
+import { Tasks } from '../features/tasks';
 import { navigate, routePath, useRoute } from '../router';
 
 /** Экран по адресу. Незнакомый адрес (и «/») ведёт на Сводку — как в макете. */
@@ -95,8 +95,7 @@ export function Screen() {
             }
           </Stream>
         ) : (
-          // Остальные этапы пока не сделаны — под вкладками заглушка. Этап появится — его ветка встанет здесь.
-          <ScreenStub route={route} />
+          <Tasks key={council.id} councilId={council.id} />
         )
       }
     </Council>
