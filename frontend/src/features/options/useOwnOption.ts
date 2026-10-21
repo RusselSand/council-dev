@@ -40,6 +40,11 @@ export interface OwnOption {
   error: ApiError | undefined;
   /** Набранное ждёт паузы в наборе или уходит на сервер. */
   saving: boolean;
+  /**
+   * Вариант, созданный из поля, ещё сохраняется из него — и когда поле уже закрыто, а вариант стоит карточкой: пока не
+   * сохранился, его не правят, иначе набранное в поле ушло бы после правки и затёрло её.
+   */
+  saves: (option: string) => boolean;
   /** Открыть поле у вопроса на экране. */
   open: () => void;
   edit: (text: string) => void;
@@ -87,6 +92,8 @@ export function useOwnOption(
   /** Почему не вышло сохранить поле — по номеру поля: у каждого своя ошибка, хоть потом сохраняли другие поля. */
   const [failed, setFailed] = useState<Record<number, ApiError>>({});
   const [sending, setSending] = useState(0);
+  /** Сколько сохранений поля ждут очереди или ответа — по номеру поля. */
+  const [queued, setQueued] = useState<Record<number, number>>({});
   /** Набранное ждёт паузы в наборе: сохранение отложено. */
   const [scheduled, setScheduled] = useState(false);
   /** Очередь сохранений: следующее уходит, когда ответило предыдущее. */
@@ -181,26 +188,52 @@ export function useOwnOption(
   const sendRef = useRef(send);
   sendRef.current = send;
 
+  /** Сохранений поля id в очереди и в пути стало больше (1) или меньше (-1). */
+  const count = useCallback(
+    (id: number, delta: number) =>
+      setQueued((known) => {
+        const next = { ...known };
+        const left = (known[id] ?? 0) + delta;
+        if (left > 0) next[id] = left;
+        else delete next[id];
+        return next;
+      }),
+    [],
+  );
+
+  /** Отправить то, что было в поле в момент snapshot, — за тем, что уже уходит. */
+  const enqueue = useCallback(
+    (snapshot: Field): Promise<boolean> => {
+      count(snapshot.session, 1);
+      const sent = queue.current.then(async () => {
+        try {
+          return await sendRef.current(snapshot);
+        } finally {
+          count(snapshot.session, -1);
+        }
+      });
+      queue.current = sent;
+      return sent;
+    },
+    [count],
+  );
+
   /**
-   * Отправить набранное в поле вопроса — за тем, что уже уходит. От вопроса ушли, и всё сохранилось — поле закрывается:
-   * вариант — карточкой.
+   * Отправить набранное в поле вопроса. От вопроса ушли, и всё сохранилось — поле закрывается: вариант — карточкой.
    */
   const flushField = useCallback(
     (question: string): Promise<boolean> => {
       const snapshot = fieldsRef.current[question];
       if (!snapshot) return Promise.resolve(true);
-      const sent = queue.current.then(async () => {
-        const saved = await sendRef.current(snapshot);
+      return enqueue(snapshot).then((saved) => {
         const field = fieldsRef.current[question];
         if (saved && field?.session === snapshot.session && field.left && field.text === snapshot.text) {
           put(question, null);
         }
         return saved;
       });
-      queue.current = sent;
-      return sent;
     },
-    [put],
+    [enqueue, put],
   );
 
   const flush = useCallback(async () => {
@@ -260,7 +293,7 @@ export function useOwnOption(
       setScheduled(false);
     }
     put(question, null);
-    queue.current = queue.current.then(() => sendRef.current(field));
+    void enqueue(field);
   };
 
   // Экран закрыли — набранное уходит сразу.
@@ -275,6 +308,7 @@ export function useOwnOption(
     unsaved: field !== undefined && canSaveOption(field.text) && !sameText(field.text, stored?.text ?? ''),
     error: field ? failed[field.session] : undefined,
     saving: scheduled || sending > 0,
+    saves: (option) => Object.keys(queued).some((id) => created[Number(id)]?.id === option),
     open,
     edit,
     close,

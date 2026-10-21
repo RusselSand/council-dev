@@ -9,7 +9,7 @@ import styles from './OptionCard.module.css';
 
 interface OptionCardProps {
   option: OptionView;
-  /** Выбирать и править нельзя. */
+  /** Выбирать нельзя. Править — по option.editable. */
   disabled: boolean;
   onPick: (id: string) => void;
   /** «Поправить». */
@@ -74,14 +74,20 @@ export function OptionCard({ option, disabled, onPick, onEdit, onShowQuestion, e
               tone={dependency.state === 'resolved' ? 'green' : 'yellow'}
               size="xs"
               dot={dependency.state === 'resolved' ? 'green' : 'yellow'}
-              disabled={dependency.state === 'removed'}
+              disabled={!dependency.openable}
               onClick={() => onShowQuestion(dependency.id)}
             >
               {dependency.label}
             </Chip>
           ))}
           {!option.editing && (
-            <Button variant="link" size="xs" className={styles.edit} disabled={disabled} onClick={() => onEdit(option.id)}>
+            <Button
+              variant="link"
+              size="xs"
+              className={styles.edit}
+              disabled={!option.editable}
+              onClick={() => onEdit(option.id)}
+            >
               {t('options.edit')}
             </Button>
           )}

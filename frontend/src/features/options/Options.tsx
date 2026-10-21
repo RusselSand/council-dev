@@ -44,6 +44,7 @@ export function Options({ councilId, streamId, state, judge, retrying, onBusy }:
           <QuestionNav
             chips={step.chips}
             done={step.done}
+            disabled={step.navLocked}
             onShow={step.show}
             onPrev={step.prev}
             onNext={step.next}

@@ -32,6 +32,8 @@ export interface DependencyView {
   id: string;
   label: string;
   state: DependencyState;
+  /** Щелчок открывает тот вопрос: он не убран, и уйти от открытого вопроса можно. */
+  openable: boolean;
 }
 
 /** Вариант на карточке. */
@@ -51,6 +53,10 @@ export interface OptionView {
   selected: boolean;
   /** Открыта правка этого варианта. */
   editing: boolean;
+  /**
+   * «Поправить» действует: правки не заперты, другая правка не уходит и вариант не сохраняется из поля «Свой вариант».
+   */
+  editable: boolean;
 }
 
 /** Плашка судьи: «Выбор за вами · судья fable», что он думает и отброшенные. */
@@ -77,6 +83,11 @@ export interface OptionsStep {
   chips: QuestionChip[];
   /** «готово 2 из 4». */
   done: string;
+  /**
+   * Уйти к другому вопросу нельзя — чипы, «←» / «→» и зависимости не действуют: выбор утверждается или шаг запускают
+   * снова, а уход от вопроса отправил бы набранное в поле «Свой вариант» вместе с ними.
+   */
+  navLocked: boolean;
   /** Открыть вопрос. */
   show: (id: string) => void;
   prev: () => void;
@@ -142,7 +153,8 @@ const NOT_SAVED = new ApiError('not_saved', 'Не всё сохранилось 
  * сохранилось — не утверждает, под кнопкой — «Не всё сохранилось»; ушли с экрана, пока утверждался, — не открывает.
  * Правки и «Утвердить» не уходят вместе с «Запустить снова» шага: retrying — шаг запускают снова, и они не действуют;
  * пока выбор утверждается или что-то из правок ждёт паузы в наборе или ответа, onBusy(true) — не действует «Запустить
- * снова».
+ * снова». Пока выбор утверждается или шаг запускают снова, к другому вопросу не уйти: уход отправил бы набранное в поле
+ * «Свой вариант» вместе с ними.
  * judge — судья совета. Другой поток — другой экран: ставьте с key по совету и потоку.
  */
 export function useOptionsStep(
@@ -198,6 +210,12 @@ export function useOptionsStep(
   }, [busy, onBusy]);
 
   const locked = approving || retrying || !stepEditable(state);
+  // Пока выбор утверждается или шаг запускают снова, от вопроса не уходят: набранное в поле «Свой вариант» ушло бы
+  // вместе с ними. На готовом шаге вопросы смотрят, хоть выбирать и нельзя.
+  const navLocked = approving || retrying;
+  // «Поправить»: пока правка уходит, другую не открыть; вариант ещё сохраняется из поля «Свой вариант» — правка ушла бы
+  // раньше набранного в поле, и оно бы её затёрло.
+  const editable = (id: string) => !locked && !editor.saving && !own.saves(id);
   const ownOpen = set !== undefined && own.shown;
   const choice: Choice | null = set ? choiceOf(set, pending) : null;
   // Выбором станет вариант из поля (в нём набрано то, чего на сервере ещё нет) или уже стал — выбран его кружок. Поле
@@ -206,7 +224,7 @@ export function useOptionsStep(
   const ownSelected = ownOpen && (own.unsaved || (own.option !== null && isChosen(choice, own.option)));
 
   const show = (id: string) => {
-    if (id === currentId) return;
+    if (id === currentId || navLocked) return;
     // Ушли к другому вопросу: набранное в поле «Свой вариант» уходит и остаётся выбором, поле закрывается (не
     // сохранилось — ждёт у вопроса с ошибкой); правка закрывается без сохранения.
     own.close();
@@ -240,10 +258,12 @@ export function useOptionsStep(
           id,
           state: dependency,
           label: t('options.dependency', { id, state: t(`options.dependency.${dependency}`) }),
+          openable: dependency !== 'removed' && !navLocked,
         };
       }),
       selected: !ownSelected && isChosen(choice, option.id),
       editing: editor.option === option.id,
+      editable: editable(option.id),
     }));
 
   const choose = (next: Choice) => {
@@ -295,6 +315,7 @@ export function useOptionsStep(
       current: s.question.id === currentId,
     })),
     done: t('options.done', { done, total: sets.length }),
+    navLocked,
     show,
     prev: () => {
       if (index > 0) show(sets[index - 1].question.id);
@@ -344,7 +365,7 @@ export function useOptionsStep(
     editError: editor.error,
     startEdit: (id) => {
       const option = set?.options.find((o) => o.id === id);
-      if (set && option && !locked) editor.start(set.question.id, option);
+      if (set && option && editable(id)) editor.start(set.question.id, option);
     },
     changeEdit: editor.edit,
     saveEdit: () => {

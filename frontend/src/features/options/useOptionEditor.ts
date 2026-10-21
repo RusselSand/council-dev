@@ -28,7 +28,10 @@ export interface OptionEditor {
   saving: boolean;
   /** Не вышло сохранить открытую правку. */
   error: ApiError | undefined;
-  /** «Поправить»: открыть правку варианта; прежняя правка закрывается без сохранения. */
+  /**
+   * «Поправить»: открыть правку варианта; прежняя правка закрывается без сохранения. Пока правка уходит, новая не
+   * открывается: ответ на ушедшую закрыл бы её или повесил на неё свою ошибку.
+   */
   start: (question: string, option: Option) => void;
   edit: (text: string) => void;
   /** «Сохранить». Ответ — ушла ли правка на сервер: текст пустой, не меняли или правка уже уходит — нет. */
@@ -147,7 +150,9 @@ export function useOptionEditor(
     text: editing?.text ?? '',
     saving: addOption.pending || updateOption.pending,
     error: editing?.error,
-    start: (question, option) => put({ question, option, text: option.text, created: null, error: undefined }),
+    start: (question, option) => {
+      if (!inFlight.current) put({ question, option, text: option.text, created: null, error: undefined });
+    },
     edit: (text) => {
       const open = editingRef.current;
       if (open) put({ ...open, text });
