@@ -254,7 +254,7 @@ export function useOptionsStep(
     setUnsaved(false);
     void (async () => {
       // Утверждается то, что на экране: сначала — набранное в полях «Свой вариант» (и там, где не вышло), правка и
-      // выбор, которые ещё идут.
+      // выбор, которые ещё идут. Правка открыта с ошибкой — она не сохранилась.
       const ownSaved = await own.flush();
       const edited = await editor.settle();
       const chosen = await choices.settle();

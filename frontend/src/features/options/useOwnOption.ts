@@ -72,8 +72,8 @@ export function useOwnOption(
   const nextSession = useRef(0);
   /** Варианты, созданные из полей, — по номеру поля: чтобы показать его в поле, а не карточкой. */
   const [created, setCreated] = useState<Record<number, string>>({});
-  /** Поля, у которых не вышло сохранить, — по номеру поля. */
-  const [failed, setFailed] = useState<Record<number, true>>({});
+  /** Почему не вышло сохранить поле — по номеру поля: у каждого своя ошибка, хоть потом сохраняли другие поля. */
+  const [failed, setFailed] = useState<Record<number, ApiError>>({});
   const [sending, setSending] = useState(0);
   /** Набранное ждёт паузы в наборе: сохранение отложено. */
   const [scheduled, setScheduled] = useState(false);
@@ -92,11 +92,12 @@ export function useOwnOption(
     setFields(next);
   }, []);
 
-  const markFailed = (id: number, value: boolean) =>
+  /** Ошибка поля; undefined — ошибки нет. */
+  const markFailed = (id: number, error: ApiError | undefined) =>
     setFailed((known) => {
-      if (Boolean(known[id]) === value) return known;
+      if (known[id] === error) return known;
       const next = { ...known };
-      if (value) next[id] = true;
+      if (error) next[id] = error;
       else delete next[id];
       return next;
     });
@@ -107,28 +108,28 @@ export function useOwnOption(
     if (!session) return true;
     if (!canSaveOption(text) || sameText(text, session.saved)) {
       // Сохранять нечего: прошлая ошибка уже ни о чём.
-      markFailed(id, false);
+      markFailed(id, undefined);
       return true;
     }
     setSending((n) => n + 1);
-    let option = session.option
-      ? await updateOption.run(councilId, streamId, question, session.option, text)
-      : await addOption.run(councilId, streamId, question, text, null, `own:${id}`);
+    let outcome = session.option
+      ? await updateOption.attempt(councilId, streamId, question, session.option, text)
+      : await addOption.attempt(councilId, streamId, question, text, null, `own:${id}`);
     // Вариант уже создавали по ключу этого поля, но с другим текстом (ответ на прошлую попытку не дошёл), — правим.
-    if (option && !session.option && !sameText(option.text, text)) {
-      session.option = option.id;
-      option = await updateOption.run(councilId, streamId, question, option.id, text);
+    if (outcome.value && !session.option && !sameText(outcome.value.text, text)) {
+      session.option = outcome.value.id;
+      outcome = await updateOption.attempt(councilId, streamId, question, outcome.value.id, text);
     }
     setSending((n) => n - 1);
-    if (!option) {
-      markFailed(id, true);
+    if (outcome.error) {
+      markFailed(id, outcome.error);
       return false;
     }
-    const saved = option;
+    const saved = outcome.value;
     session.option = saved.id;
     session.saved = saved.text;
     setCreated((ids) => (ids[id] === saved.id ? ids : { ...ids, [id]: saved.id }));
-    markFailed(id, false);
+    markFailed(id, undefined);
     if (!session.unselect) onSavedRef.current(question, saved.id);
     return true;
   };
@@ -226,7 +227,7 @@ export function useOwnOption(
     shown: field !== undefined,
     text: field?.text ?? '',
     option: field ? (created[field.session] ?? null) : null,
-    error: field && failed[field.session] ? (updateOption.error ?? addOption.error) : undefined,
+    error: field ? failed[field.session] : undefined,
     saving: scheduled || sending > 0,
     open,
     edit,

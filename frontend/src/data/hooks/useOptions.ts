@@ -92,27 +92,32 @@ export function useOptionChoices(councilId: string, streamId: string, round: unk
  * Свой вариант — POST /api/councils/<id>/streams/<streamId>/options/<questionId> с Idempotency-Key. field — поле, где
  * пишут вариант («Свой вариант» или правка варианта): пока вариант из него не создан, каждая попытка идёт с одним
  * ключом, даже если текст между ними поправили, — это тот же вариант, и повтор после оборванного ответа не создаёт
- * второй; создан — следующий с новым ключом. Ответ встаёт в конец вариантов вопроса сразу; варианты и список советов
+ * второй; создан — следующий с новым ключом. Ключ у каждого поля свой и держится, пока из поля не создан вариант, хоть
+ * между попытками сохраняли другие поля. Ответ встаёт в конец вариантов вопроса сразу; варианты и список советов
  * перезапрашиваются. Выбор вариант не меняет — выбирают его отдельно (useOptionChoices()).
  */
 export function useAddOption(): Mutation<
   [id: string, streamId: string, questionId: string, text: string, basedOn: string | null, field: string],
   Option
 > {
-  /** Поле, из которого вариант ещё не создан, и его ключ. */
-  const attempt = useRef<{ field: string; key: string }>();
+  /** Ключи полей, из которых вариант ещё не создан, — по полю. */
+  const keys = useRef(new Map<string, string>());
   return useMutation(
     async (id: string, streamId: string, questionId: string, text: string, basedOn: string | null, field: string) => {
-      if (attempt.current?.field !== field) attempt.current = { field, key: newKey() };
+      let key = keys.current.get(field);
+      if (key === undefined) {
+        key = newKey();
+        keys.current.set(field, key);
+      }
       try {
-        return await source.addOption(id, streamId, questionId, text, basedOn, attempt.current.key);
+        return await source.addOption(id, streamId, questionId, text, basedOn, key);
       } catch (error) {
         staleOnRefused(error);
         throw error;
       }
     },
     (option, id, streamId, questionId, _text, _basedOn, field) => {
-      if (attempt.current?.field === field) attempt.current = undefined;
+      keys.current.delete(field);
       markStale('options', putOption(id, streamId, questionId, option));
       markStale('councils');
     },

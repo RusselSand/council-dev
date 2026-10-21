@@ -1,5 +1,5 @@
 import { useRef, useState } from 'react';
-import { useAddOption, useUpdateOption, type ApiError } from '../../data';
+import { useAddOption, useUpdateOption, type ApiError, type Outcome } from '../../data';
 import { canSaveOption, sameText, type Option } from '../../domain/options';
 
 /** Правка, открытая на варианте: у какого вопроса, какой вариант и что набрано. */
@@ -9,6 +9,8 @@ interface Editing {
   text: string;
   /** Свой вариант, который правка уже создала, но не с последним текстом: следующее «Сохранить» правит его. Нет — null. */
   created: string | null;
+  /** Не вышло сохранить: набранного на сервере нет, пока «Сохранить» не выйдет или правку не закроют. */
+  error: ApiError | undefined;
 }
 
 /** Правка, которая уходит на сервер: у какого вопроса и станет ли сохранённое выбором. */
@@ -35,7 +37,10 @@ export interface OptionEditor {
   cancel: () => void;
   /** У вопроса выбрали другое: правка этого вопроса, которая уходит, сохранится, но выбором не станет. */
   unselect: (question: string) => void;
-  /** Дождаться ответа на правку, которая уходит. Ответ — сохранилась ли; правки нет — true. */
+  /**
+   * Дождаться ответа на правку, которая уходит. Ответ — нет ли несохранённой: открыта правка, которую не вышло
+   * сохранить, — false, пока её не сохранят или не закроют; правки нет — true.
+   */
   settle: () => Promise<boolean>;
 }
 
@@ -53,46 +58,66 @@ export function useOptionEditor(
   const addOption = useAddOption();
   const updateOption = useUpdateOption();
   const [editing, setEditing] = useState<Editing | null>(null);
-  /** Правка, у которой не вышло сохранить, — id варианта; вышло — null. */
-  const [failed, setFailed] = useState<string | null>(null);
+  /** То же, что editing, но сразу: settle() узнаёт по нему, открыта ли правка, которую не вышло сохранить. */
+  const editingRef = useRef<Editing | null>(null);
   /** Правка, которая уходит на сервер; не уходит — null. */
   const sending = useRef<Sending | null>(null);
   /** Ответ на правку, которая уходит; не уходит — null. */
   const inFlight = useRef<Promise<boolean> | null>(null);
 
-  /** Сохранить правку; ответ — сохранённый вариант, не вышло — undefined. */
-  const send = async ({ question, option, text, created }: Editing): Promise<Option | undefined> => {
+  /** Поставить открытую правку; null — закрыть. */
+  const put = (next: Editing | null) => {
+    editingRef.current = next;
+    setEditing(next);
+  };
+
+  /** Поменять правку варианта optionId, если она ещё открыта: пока правка уходила, её могли закрыть или открыть другую. */
+  const update = (optionId: string, change: (open: Editing) => Editing | null) => {
+    const open = editingRef.current;
+    if (open?.option.id === optionId) put(change(open));
+  };
+
+  /** Сохранить правку; ответ — сохранённый вариант или ошибка. */
+  const send = async ({ question, option, text, created }: Editing): Promise<Outcome<Option>> => {
     if (option.source === 'user' || created) {
-      return updateOption.run(councilId, streamId, question, created ?? option.id, text);
+      return updateOption.attempt(councilId, streamId, question, created ?? option.id, text);
     }
-    const added = await addOption.run(councilId, streamId, question, text, option.id, `edit:${question}/${option.id}`);
-    if (!added || sameText(added.text, text)) return added;
+    const added = await addOption.attempt(
+      councilId,
+      streamId,
+      question,
+      text,
+      option.id,
+      `edit:${question}/${option.id}`,
+    );
+    if (!added.value || sameText(added.value.text, text)) return added;
     // Вариант уже создавали по ключу этой правки, но с другим текстом (ответ на прошлую попытку не дошёл), — правим его.
-    setEditing((current) => (current?.option.id === option.id ? { ...current, created: added.id } : current));
-    return updateOption.run(councilId, streamId, question, added.id, text);
+    const id = added.value.id;
+    update(option.id, (open) => ({ ...open, created: id }));
+    return updateOption.attempt(councilId, streamId, question, id, text);
   };
 
   const save = () => {
-    if (!editing || inFlight.current || !canSaveOption(editing.text)) return false;
-    const { question, option, text, created } = editing;
+    const open = editingRef.current;
+    if (!open || inFlight.current || !canSaveOption(open.text)) return false;
+    const { question, option, text, created } = open;
     if (!created && sameText(text, option.text)) {
-      setEditing(null);
+      put(null);
       return false;
     }
     const current: Sending = { question, select: true };
     sending.current = current;
     inFlight.current = (async () => {
-      const saved = await send(editing);
+      const outcome = await send(open);
       sending.current = null;
       inFlight.current = null;
-      if (!saved) {
-        setFailed(option.id);
+      if (outcome.error) {
+        const { error } = outcome;
+        update(option.id, (still) => ({ ...still, error }));
         return false;
       }
-      setFailed(null);
-      // Пока правка уходила, её могли закрыть или открыть другую — закрываем только эту.
-      setEditing((open) => (open?.option.id === option.id ? null : open));
-      if (current.select) onSaved(question, saved.id);
+      update(option.id, () => null);
+      if (current.select) onSaved(question, outcome.value.id);
       return true;
     })();
     return true;
@@ -102,17 +127,21 @@ export function useOptionEditor(
     option: editing?.option.id ?? null,
     text: editing?.text ?? '',
     saving: addOption.pending || updateOption.pending,
-    error: editing && failed === editing.option.id ? (updateOption.error ?? addOption.error) : undefined,
-    start: (question, option) => {
-      setFailed(null);
-      setEditing({ question, option, text: option.text, created: null });
+    error: editing?.error,
+    start: (question, option) => put({ question, option, text: option.text, created: null, error: undefined }),
+    edit: (text) => {
+      const open = editingRef.current;
+      if (open) put({ ...open, text });
     },
-    edit: (text) => setEditing((current) => current && { ...current, text }),
     save,
-    cancel: () => setEditing(null),
+    cancel: () => put(null),
     unselect: (question) => {
       if (sending.current?.question === question) sending.current.select = false;
     },
-    settle: () => inFlight.current ?? Promise.resolve(true),
+    settle: async () => {
+      await inFlight.current;
+      // Правка, которую не вышло сохранить, на экране с ошибкой: её текста на сервере нет — утверждать без него нельзя.
+      return !editingRef.current?.error;
+    },
   };
 }
