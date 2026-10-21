@@ -1,6 +1,7 @@
 import { cleanName, type CouncilFields, type CouncilSummary } from '../../domain/council';
 import { hasRationale, type StreamDecision } from '../../domain/decisions';
 import { canSaveOption, type Choice, type OptionSet } from '../../domain/options';
+import { canApproveOutcome, type StreamOutcome } from '../../domain/outcomes';
 import { cleanFields, MAX_PROJECT_REPOS, type Project, type ProjectFields } from '../../domain/project';
 import { canAddQuestion, type Question } from '../../domain/questions';
 import { fitsKind, isFigmaLink, isPending, isSettled, researchStatus, type Research } from '../../domain/research';
@@ -25,6 +26,7 @@ import {
 import { DECISIONS, type MockDecision } from './decisions';
 import { MODELS } from './models';
 import { noOptions, OPTIONS, ownOption, type MockOptionSet } from './options';
+import { OUTCOMES } from './outcomes';
 import { PROJECT_LIST, REPO_LIST, type MockProject } from './projects';
 import { ownQuestion, QUESTIONS } from './questions';
 import { noResearch, RESEARCHES, startedCode, startedDesign, toSetup } from './research';
@@ -37,6 +39,8 @@ import {
   newStreams,
   optionsApproved,
   optionsNote,
+  outcomesNote,
+  outcomesStepApproved,
   PROJECT_DECISIONS,
   questionsApproved,
   STREAMS,
@@ -89,6 +93,10 @@ const optionRuns = new Map<string, number>();
 const decisions = new Map(Object.entries(DECISIONS).map(([key, byQuestion]) => [key, copy(byQuestion)]));
 /** Номер запуска шага «Решения» по совету и потоку (streamKey): утверждение выбора и «Запустить снова» растят его. */
 const decisionRuns = new Map<string, number>();
+/** Итоги по совету и потоку (streamKey): утверждение итогов меняет их здесь. */
+const outcomes = new Map(Object.entries(OUTCOMES).map(([key, list]) => [key, copy(list)]));
+/** Номер запуска шага «Итоги» по совету и потоку (streamKey): «Зафиксировать решения» и «Запустить снова» растят его. */
+const outcomeRuns = new Map<string, number>();
 /** Проекты моков: создание, правка и удаление меняют их здесь; живут, пока открыта вкладка. */
 const projects = copy(PROJECT_LIST);
 /** Idempotency-Key → id созданного по нему проекта. */
@@ -311,6 +319,52 @@ function decisionsChanged(index: number, id: string, streamId: string) {
   const at = streamAt(id, streamId);
   const fixed = list.filter((d) => d.status === 'fixed').length;
   streamList[at] = withNote(streamList[at], 'decisions', decisionsNote(fixed, list.length));
+  touch(index);
+}
+
+/** Итоги потока по порядку; у потока, которому их ещё не собирали, — пусто. */
+function outcomesOf(id: string, streamId: string): StreamOutcome[] {
+  const key = streamKey(id, streamId);
+  const list = outcomes.get(key) ?? [];
+  outcomes.set(key, list);
+  return list;
+}
+
+/** Номер запуска шага «Итоги»: шаг не начат — 0; начат в данных моков и с тех пор не запускался — 1. */
+function outcomesRun(id: string, streamId: string): number {
+  const step = stepOf((streams.get(id) ?? [])[streamAt(id, streamId)], 'outcomes');
+  return outcomeRuns.get(streamKey(id, streamId)) ?? (step.state === 'idle' ? 0 : 1);
+}
+
+/** Модели снова начали собирать итоги: новый запуск шага «Итоги», прежних итогов больше нет. */
+function outcomesStarted(id: string, streamId: string) {
+  outcomeRuns.set(streamKey(id, streamId), outcomesRun(id, streamId) + 1);
+  outcomes.set(streamKey(id, streamId), []);
+}
+
+/**
+ * Итоги утверждают, когда шаг «Итоги» начат и модели на нём не работают, — и только итоги того запуска шага, что на
+ * экране (run): шаг с тех пор запустили снова — итоги другие, хоть id у них те же.
+ */
+function checkOutcomesReady(id: string, streamId: string, at: number, run: number) {
+  const { state } = stepOf((streams.get(id) ?? [])[at], 'outcomes');
+  if (state === 'idle' || state === 'running') {
+    throw new ApiError('outcomes_not_ready', `Шаг «Итоги» не начат или на нём работают модели (${state})`, 409);
+  }
+  const current = outcomesRun(id, streamId);
+  if (run !== current) {
+    throw new ApiError('outcomes_not_ready', `Итоги запуска ${run}, а шаг «Итоги» уже запуска ${current}`, 409);
+  }
+}
+
+/** Итог утвердили: строка «Итогов» в цепочке — сколько утверждено, у совета — новое время изменения. */
+function outcomesChanged(index: number, id: string, streamId: string) {
+  const list = outcomesOf(id, streamId);
+  const streamList = streams.get(id) ?? [];
+  const at = streamAt(id, streamId);
+  const approved = list.filter((o) => o.approved).length;
+  const done = stepOf(streamList[at], 'outcomes').state === 'done';
+  streamList[at] = withNote(streamList[at], 'outcomes', outcomesNote(approved, list.length, done));
   touch(index);
 }
 
@@ -601,6 +655,7 @@ export const mockSource: DataSource = {
       const now = new Date().toISOString();
       if (stepOf(list[at], 'options').state === 'failed') optionsStarted(id, streamId);
       if (stepOf(list[at], 'decisions').state === 'failed') decisionsStarted(id, streamId);
+      if (stepOf(list[at], 'outcomes').state === 'failed') outcomesStarted(id, streamId);
       list[at] = streamRetried(list[at], now);
       councils[index] = streamsChanged(councils[index], list, streamId, now);
     }
@@ -806,7 +861,54 @@ export const mockSource: DataSource = {
       const fixed = all.filter((d) => d.status === 'fixed').length;
       const now = new Date().toISOString();
       const { participants, judge } = councils[index];
+      // Модели начинают собирать итоги: первый запуск «Итогов».
+      outcomesStarted(id, streamId);
       list[at] = decisionsStepApproved(list[at], fixed, all.length, participants, judge, now);
+      councils[index] = streamsChanged(councils[index], list, streamId, now);
+    }
+    return copy(list[at]);
+  },
+  async listOutcomes(id, streamId) {
+    councilAt(id);
+    const at = streamAt(id, streamId);
+    const run = outcomesRun(id, streamId);
+    // «Итоги» не начаты или модели их собирают — итогов не показывают.
+    const { state } = stepOf((streams.get(id) ?? [])[at], 'outcomes');
+    if (state === 'idle' || state === 'running') return { run, outcomes: [] };
+    return { run, outcomes: copy(outcomesOf(id, streamId)) };
+  },
+  async approveOutcome(id, streamId, run, outcomeId) {
+    const index = councilAt(id);
+    const at = streamAt(id, streamId);
+    checkOutcomesReady(id, streamId, at, run);
+    const list = outcomesOf(id, streamId);
+    const found = list.findIndex((o) => o.id === outcomeId);
+    if (found < 0) throw new ApiError('not_found', `Итога ${outcomeId} у потока ${streamId} нет`, 404);
+    // Заблокированный итог не утверждают: решения не хватает, и итог не додумывается.
+    if (!canApproveOutcome(list[found])) {
+      throw new ApiError('outcome_blocked', `Итог ${outcomeId} заблокирован: не хватает решений`, 409);
+    }
+    // Уже утверждён — ничего не меняем, отвечаем итогом как есть.
+    if (!list[found].approved) {
+      list[found] = { ...list[found], approved: true };
+      // Шаги потока утверждение итога не меняет, как в макете; меняются строка «Итогов» в цепочке и совет.
+      outcomesChanged(index, id, streamId);
+    }
+    return copy(list[found]);
+  },
+  async approveOutcomes(id, streamId, run) {
+    const index = councilAt(id);
+    const at = streamAt(id, streamId);
+    checkOutcomesReady(id, streamId, at, run);
+    const list = streams.get(id) ?? [];
+    // Шаг уже готов — ничего не меняем, отвечаем потоком как есть.
+    if (stepOf(list[at], 'outcomes').state !== 'done') {
+      // Какие итоги утверждены, переход не меняет, как в макете: в задачи уходят утверждённые.
+      const all = outcomesOf(id, streamId);
+      const approved = all.filter((o) => o.approved).length;
+      const now = new Date().toISOString();
+      const { participants, judge } = councils[index];
+      list[at] = outcomesStepApproved(list[at], approved, all.length, participants, judge, now);
       councils[index] = streamsChanged(councils[index], list, streamId, now);
     }
     return copy(list[at]);

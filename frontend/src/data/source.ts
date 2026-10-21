@@ -3,6 +3,7 @@ import type { CouncilFields, CouncilSummary } from '../domain/council';
 import type { DecisionEdit, DecisionsRound, StreamDecision } from '../domain/decisions';
 import type { Model } from '../domain/model';
 import type { Choice, Option, OptionSet, OptionsRound } from '../domain/options';
+import type { OutcomesRound, StreamOutcome } from '../domain/outcomes';
 import type { Project, ProjectFields } from '../domain/project';
 import type { Question } from '../domain/questions';
 import type { Decision, Finding, Research, ResearchKind } from '../domain/research';
@@ -147,6 +148,19 @@ export interface DataSource {
    * run; ответ — поток.
    */
   approveDecisions(id: string, streamId: string, run: number): Promise<Stream>;
+  /** GET /api/councils/<id>/streams/<streamId>/outcomes — итоги потока по порядку и номер запуска шага «Итоги». */
+  listOutcomes(id: string, streamId: string): Promise<OutcomesRound>;
+  /**
+   * POST /api/councils/<id>/streams/<streamId>/outcomes/<outcomeId>/approve — утвердить итог; ответ — итог после этого.
+   * run — номер запуска шага, итоги которого на экране: шаг с тех пор запустили снова — сервер не меняет новые итоги и
+   * отвечает outcomes_not_ready.
+   */
+  approveOutcome(id: string, streamId: string, run: number, outcomeId: string): Promise<StreamOutcome>;
+  /**
+   * POST /api/councils/<id>/streams/<streamId>/outcomes/approve — «Утвердить итоги → к документации» итогов запуска run;
+   * ответ — поток.
+   */
+  approveOutcomes(id: string, streamId: string, run: number): Promise<Stream>;
   /** GET /api/models */
   listModels(): Promise<Model[]>;
   /** GET /api/projects */

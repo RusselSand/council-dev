@@ -5,6 +5,7 @@ import { Council } from '../features/council';
 import { Decisions } from '../features/decisions';
 import { Home } from '../features/home';
 import { Options } from '../features/options';
+import { Outcomes } from '../features/outcomes';
 import { ProjectDecisions } from '../features/projectDecisions';
 import { Projects } from '../features/projects';
 import { Questions } from '../features/questions';
@@ -71,6 +72,15 @@ export function Screen() {
                 />
               ) : route.step === 'decisions' ? (
                 <Decisions
+                  key={`${council.id}/${stream.id}`}
+                  councilId={council.id}
+                  streamId={stream.id}
+                  state={step.state}
+                  retrying={retrying}
+                  onBusy={onBusy}
+                />
+              ) : route.step === 'outcomes' ? (
+                <Outcomes
                   key={`${council.id}/${stream.id}`}
                   councilId={council.id}
                   streamId={stream.id}

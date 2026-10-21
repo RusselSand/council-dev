@@ -1,9 +1,9 @@
-import { useCallback, useSyncExternalStore } from 'react';
 import type { State } from '../../domain/council';
 import type { DecisionEdit, StreamDecision } from '../../domain/decisions';
 import type { Stream } from '../../domain/stream';
 import { source } from '../config';
 import { ApiError, toApiError } from '../errors';
+import { runLanes, updateLane, useLaneState, type RunLane } from './runLanes';
 import { markStale, type StreamDecisions } from './stale';
 import { useMutation, type Mutation } from './useMutation';
 import { useQuery, type Query } from './useQuery';
@@ -60,9 +60,7 @@ interface EditsState {
 }
 
 /** Правки решений одного запуска шага в одном потоке — общие для всех экранов «Решения». */
-interface Lane {
-  state: EditsState;
-  listeners: Set<() => void>;
+interface Lane extends RunLane<EditsState> {
   /** Правка, которую сделали последней и которая ещё не ушла, — по вопросу: её шлёт тот запрос, до которого дойдёт черёд. */
   wanted: Map<string, DecisionEdit>;
   /** Очереди запросов по вопросу: следующий уходит после ответа на прежний и отвечает, сохранилась ли правка. */
@@ -70,32 +68,21 @@ interface Lane {
 }
 
 /**
- * Правки решений — по совету, потоку и запуску шага. Общие для всех экранов «Решения», а не у каждого свои: ушли с
- * экрана, пока правка уходила, вернулись и поправили снова — новая уходит после ответа на прежнюю и не обгоняет её;
- * набранное, которое не сохранилось, ждёт на экране, открытом снова, с ошибкой. У другого запуска шага правки свои:
- * правку в прежнем сервер всё равно не примет, и новая её не ждёт.
+ * Правки решений — по совету, потоку и запуску шага (runLanes()). Ушли с экрана, пока правка уходила, вернулись и
+ * поправили снова — новая уходит после ответа на прежнюю и не обгоняет её; набранное, которое не сохранилось, ждёт на
+ * экране, открытом снова, с ошибкой. Правку в прежнем запуске шага новая не ждёт.
  */
-const lanes = new Map<string, Lane>();
-
-function laneOf(councilId: string, streamId: string, run: number): Lane {
-  const key = JSON.stringify([councilId, streamId, run]);
-  let lane = lanes.get(key);
-  if (!lane) {
-    lane = { state: { drafts: {}, pending: {}, errors: {} }, listeners: new Set(), wanted: new Map(), queues: new Map() };
-    lanes.set(key, lane);
-  }
-  return lane;
-}
-
-function update(lane: Lane, next: Partial<EditsState>) {
-  lane.state = { ...lane.state, ...next };
-  lane.listeners.forEach((listener) => listener());
-}
+const laneOf = runLanes<Lane>(() => ({
+  state: { drafts: {}, pending: {}, errors: {} },
+  listeners: new Set(),
+  wanted: new Map(),
+  queues: new Map(),
+}));
 
 /** Набрали «почему»; saved — что будет на сервере без набранного: набранное с ним совпало — набирать нечего. */
 function typeIn(lane: Lane, question: string, text: string, saved: string) {
   const { drafts } = lane.state;
-  update(lane, { drafts: text === saved ? without(drafts, question) : { ...drafts, [question]: text } });
+  updateLane(lane, { drafts: text === saved ? without(drafts, question) : { ...drafts, [question]: text } });
 }
 
 function save(
@@ -107,7 +94,7 @@ function save(
   edit: DecisionEdit,
 ): Promise<boolean> {
   lane.wanted.set(question, edit);
-  update(lane, { pending: { ...lane.state.pending, [question]: edit }, errors: without(lane.state.errors, question) });
+  updateLane(lane, { pending: { ...lane.state.pending, [question]: edit }, errors: without(lane.state.errors, question) });
   const previous = lane.queues.get(question) ?? Promise.resolve(true);
   const turn = previous.then(async (saved) => {
     // Черёд пришёл: шлём то, что сделали последним; это уже ушло с прежним запросом — его ответ и про эту правку.
@@ -127,7 +114,7 @@ function save(
     // Пока шёл запрос, поправили снова — экран показывает новую правку, и ошибка прежней — уже не про неё.
     const newer = lane.wanted.has(question);
     const { drafts, pending, errors } = lane.state;
-    update(lane, {
+    updateLane(lane, {
       pending: newer ? pending : without(pending, question),
       // Набранное сохранилось — ждать ему больше нечего; набрали другое, пока шёл запрос, — оно ждёт своего.
       drafts: !error && drafts[question] === sent.rationale ? without(drafts, question) : drafts,
@@ -171,16 +158,7 @@ export interface DecisionEdits extends EditsState {
  */
 export function useDecisionEdits(councilId: string, streamId: string, run: number): DecisionEdits {
   const lane = laneOf(councilId, streamId, run);
-  const subscribe = useCallback(
-    (listener: () => void) => {
-      lane.listeners.add(listener);
-      return () => {
-        lane.listeners.delete(listener);
-      };
-    },
-    [lane],
-  );
-  const state = useSyncExternalStore(subscribe, () => lane.state);
+  const state = useLaneState(lane);
   return {
     ...state,
     type: (question, text, saved) => typeIn(lane, question, text, saved),
