@@ -234,6 +234,28 @@ def test_links_go_only_to_known_findings():
     assert result.documentation_conflicts == ["README — иначе", "строкой"]   # 3 — не текст
 
 
+def test_findings_name_their_group_and_contradictions_have_both_sides():
+    """Находка — к идее одной из групп совета: чужая буква — не группа. Противоречие — о чём,
+    чья сторона (текст человека или документация), что она говорит, что на деле и где; без
+    того, о чём, или без стороны — не противоречие."""
+    context = Context(files=CONTEXT.files, groups=frozenset({"A", "B"}))
+    result = map_of({
+        "findings": [finding(group=" b "), finding("R2", group="Z"), finding("R3")],
+        "unknowns": [{"question": "Есть ли прокси?", "group": "A"}],
+        "conflicts": [{"by": "docs", "subject": "Кто запускает скан.", "claim": "Любой.",
+                       "found": "Только worker.", "where": "api/routes.py:40", "group": "B"},
+                      {"by": "text", "subject": "Поиск.", "group": "Q"},
+                      {"by": "чей-то", "subject": "Без стороны."},
+                      {"by": "text", "subject": "  "}, "строкой"]}, context)
+    assert [f.group for f in result.findings] == ["B", "", ""]
+    assert result.unknowns[0].group == "A"
+    assert [(c.by, c.subject, c.claim, c.found, c.where, c.group) for c in result.conflicts] == [
+        ("docs", "Кто запускает скан.", "Любой.", "Только worker.", "api/routes.py:40", "B"),
+        ("text", "Поиск.", "", "", "", "")]
+    # Без групп совета — и букв нет.
+    assert map_of({"findings": [finding(group="A")]}, CONTEXT).findings[0].group == ""
+
+
 def test_no_findings_list_is_a_bad_answer_but_an_empty_one_is_honest():
     assert map_of({"findings": []}, CONTEXT).findings == []
     with pytest.raises(BadAnswer, match="findings"):

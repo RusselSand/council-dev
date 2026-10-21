@@ -135,14 +135,20 @@ class AgentRunner:
             answers = pool.map(lambda alias: self.available(alias, fresh=fresh), unique)
             return dict(zip(unique, answers, strict=True))
 
-    def ask(self, model: str, prompt: str, key: str, workspace: Path | None = None) -> str:
+    def ask(self, model: str, prompt: str, key: str, workspace: Path | None = None,
+            stop: Callable[[], bool] | None = None) -> str:
         # Вход проверяет сам run (ensure_login): нет его — LoginRequired ниже. С каталогом
-        # ход идёт в нём, и модель его только читает (agent-workers: workspace).
+        # ход идёт в нём, и модель его только читает (agent-workers: workspace). Ход обрывают
+        # остановка приложения и человек, остановивший ход (stop).
         request = {"user": prompt, **({"workspace": str(workspace)} if workspace else {})}
+
+        def stopped() -> bool:
+            return STOP.is_set() or (stop is not None and stop())
+
         with self._locks[model]:
             try:
                 result = self._worker(model).run(request, key=key,
-                                                  stop=STOP.is_set, ensure_login=True)
+                                                  stop=stopped, ensure_login=True)
             except LoginRequired as exc:
                 login = f"python -m agent_workers login с AGENT_HOME={self.home(model)}"
                 raise ModelFailed(f"нет входа в подписку ({exc}): войдите: {login}") from exc

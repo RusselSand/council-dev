@@ -65,7 +65,7 @@ class FakeRunner:
         self.identities: dict[str, str] = {}
         self.workspaces: dict[tuple[str, str], object] = {}
 
-    def ask(self, model, prompt, key, workspace=None):
+    def ask(self, model, prompt, key, workspace=None, stop=None):
         step = next(s for s in STEPS if f"-{s}-{model}-" in key)
         self.asked[step, model] = prompt
         self.workspaces[step, model] = workspace

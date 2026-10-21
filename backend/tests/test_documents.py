@@ -393,7 +393,7 @@ class Translating(Agents):
         self.turns = []
         self.forgotten = []
 
-    def ask(self, model, prompt, key, workspace=None):
+    def ask(self, model, prompt, key, workspace=None, stop=None):
         if "-notes_translation-" in key:
             self.prompts["notes_translation"] = prompt
             notes = json.loads(prompt.split("## NOTES\n")[1])

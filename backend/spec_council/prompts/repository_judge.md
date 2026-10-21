@@ -88,7 +88,13 @@ Check coverage for the idea of each group separately: an idea whose code was not
 
 If the agents investigated different parts of the system, merge the results, but do not consider the merge automatically complete.
 
-## 5. Targeted follow-up
+## 5. Groups and contradictions
+
+Every finding, unknown area and contradiction names the group whose idea it concerns: the letter from the IDEA lines (`A`, `B` …). If it concerns several ideas, take the one it matters most for. Correct a wrong letter.
+
+A contradiction is where the fragments (`by`: `text`) or the project documentation (`by`: `docs`) say one thing and the code shows another. Check the side of the code yourself: keep the contradiction only if the code confirms it, merge identical ones. Do not decide which side is right.
+
+## 6. Targeted follow-up
 
 If significant gaps are found, formulate specific requests for additional investigation.
 
@@ -102,7 +108,7 @@ Do not send the agents to investigate the whole repository again.
 
 Do not formulate requests to search for new architectural decisions.
 
-## 6. Completion criterion
+## 7. Completion criterion
 
 Repository Discovery can be considered sufficient to proceed if:
 
@@ -118,7 +124,7 @@ Do not declare the investigation complete if significant dependencies remain unc
 
 If unknown areas remain after repeated passes, keep them and state which next stages they may block.
 
-## 7. Restrictions
+## 8. Restrictions
 
 - Do not change the repository.
 - Do not implement functionality.
@@ -155,7 +161,8 @@ Return only JSON:
           "symbol": "get_context"
         }
       ],
-      "relevance": "The entry point for the context of HTTP requests."
+      "relevance": "The entry point for the context of HTTP requests.",
+      "group": "A"
     }
   ],
   "flows": [
@@ -188,7 +195,8 @@ Return only JSON:
     {
       "question": "Are there additional access checks in the reverse proxy?",
       "reason": "The existing authorization boundaries need to be established.",
-      "investigate": ["Reverse proxy configuration"]
+      "investigate": ["Reverse proxy configuration"],
+      "group": "A"
     }
   ],
   "follow_up": [
@@ -202,7 +210,16 @@ Return only JSON:
       "related_finding_ids": []
     }
   ],
-  "documentation_conflicts": []
+  "conflicts": [
+    {
+      "by": "text",
+      "subject": "Who may edit a request while its author is offline.",
+      "claim": "The fragments say that the dispatcher edits the request while the author is offline.",
+      "found": "The API lets only the author of a request edit it.",
+      "where": "api/requests/permissions.py:18",
+      "group": "B"
+    }
+  ]
 }
 
 Allowed values of status:
@@ -213,7 +230,7 @@ With `complete`, the `follow_up` array must be empty.
 
 With `needs_investigation`, the `follow_up` array must contain specific tasks.
 
-Keep the same format of findings, flows, coverage and unknowns as in Repository Discovery.
+Keep the same format of findings, flows, coverage, unknowns and conflicts as in Repository Discovery.
 
 ## Final check
 
@@ -224,6 +241,8 @@ Before answering, check:
 - All significant execution flows are investigated.
 - Coverage matches the actual scope of the investigation.
 - Unknown areas are not hidden.
+- Every contradiction is confirmed by the code.
+- Every finding, unknown area and contradiction has the letter of its group.
 - Follow-up contains specific, checkable tasks.
 - Repeated investigation is limited to the gaps found.
 - No new architectural decisions are proposed.

@@ -62,6 +62,24 @@ def test_screens_flows_and_unknowns_keep_only_known_nodes_and_findings():
     assert result.design_conflicts == ["Макет и текст расходятся", "поиск — бот"]
 
 
+def test_findings_name_their_group_and_contradictions_are_with_the_text():
+    """Находка — к идее одной из групп совета. Документации проекта модели макета не видят:
+    противоречие у них — всегда текста человека с макетом, как бы его ни назвала модель."""
+    context = Context(nodes=CONTEXT.nodes, pages=CONTEXT.pages, groups=frozenset({"A", "B"}))
+    result = map_of({
+        "findings": [finding(group="a"), finding("D2", group="C")],
+        "unknowns": [{"question": "Что при пустом результате?", "group": "B"}],
+        "conflicts": [{"subject": "Что находит поиск.", "claim": "Поиск по автору.",
+                       "found": "Только по названию.", "where": "Catalog / Desktop",
+                       "group": "A"},
+                      {"by": "docs", "subject": "Цвета.", "group": "B"}, {"claim": "без темы"}]},
+        context)
+    assert [f.group for f in result.findings] == ["A", ""]
+    assert result.unknowns[0].group == "B"
+    assert [(c.by, c.subject, c.where, c.group) for c in result.conflicts] == [
+        ("text", "Что находит поиск.", "Catalog / Desktop", "A"), ("text", "Цвета.", "", "B")]
+
+
 def test_no_findings_list_is_a_bad_answer_but_an_empty_one_is_honest():
     with pytest.raises(BadAnswer, match="findings"):
         map_of({"screens": []}, CONTEXT)

@@ -262,8 +262,8 @@ def test_research_passed_again_after_the_plan_makes_it_stale(agents, folders):
     и его не выгрузить, пока не сбросят."""
     council_id = ready()
     plans(council_id)
-    body = {"run": "g1", "revision": 0}
-    assert client.post(f"/api/councils/{council_id}/research/reset", json=body).status_code == 200
+    assert client.post(f"/api/councils/{council_id}/research/code/reset",
+                       json={}).status_code == 200
     res = drafts(council_id)
     assert res.status_code == 409 and "План устарел" in res.json()["detail"]
     assert council(council_id).tasks is not None                       # сам план не сброшен
@@ -416,8 +416,8 @@ def test_research_changed_while_the_code_was_read_refuses_the_plan(agents, folde
 
     def meanwhile(*args):
         found = reading(*args)
-        assert client.post(f"/api/councils/{council_id}/research/reset",
-                           json={"run": "g1", "revision": 0}).status_code == 200
+        assert client.post(f"/api/councils/{council_id}/research/code/reset",
+                           json={}).status_code == 200
         return found
 
     monkeypatch.setattr(tasks_api, "code_of", meanwhile)
@@ -549,7 +549,7 @@ class Translating(Agents):
         super().__init__()
         self.turn = 0
 
-    def ask(self, model, prompt, key, workspace=None):
+    def ask(self, model, prompt, key, workspace=None, stop=None):
         if "-notes_translation-" in key:
             self.turn += 1
             notes = json.loads(prompt.split("## NOTES\n")[1])

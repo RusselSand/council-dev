@@ -139,7 +139,24 @@ For each unknown area, explain:
 
 Do not replace the unknown with an assumption.
 
-## 6. Restrictions
+## 6. Groups
+
+The IDEA has one line per group: `A. title: idea`. Every finding, unknown area and contradiction concerns the idea of some group: put the letter of that group into `group` (`A`, `B` …). If it concerns several ideas, take the one it matters most for.
+
+## 7. Contradictions
+
+Record a contradiction where the fragments (the request of the human) or the project documentation say one thing and the code shows another:
+
+- `by` — `text` if the fragments say it, `docs` if the documentation says it;
+- `subject` — what it is about, in one sentence;
+- `claim` — what the fragments or the documentation say;
+- `found` — what the code actually does;
+- `where` — the file and lines in the code;
+- `group` — the letter of the group.
+
+A contradiction is an observation: do not decide which side is right.
+
+## 8. Restrictions
 
 - Do not change the repository.
 - Do not create new files in the project.
@@ -174,7 +191,8 @@ Return only JSON:
           "symbol": "get_context"
         }
       ],
-      "relevance": "This is the existing entry point for handling the request context."
+      "relevance": "This is the existing entry point for handling the request context.",
+      "group": "A"
     }
   ],
   "flows": [
@@ -210,10 +228,20 @@ Return only JSON:
       "investigate": [
         "Reverse proxy configuration",
         "Deployment configuration"
-      ]
+      ],
+      "group": "A"
     }
   ],
-  "documentation_conflicts": []
+  "conflicts": [
+    {
+      "by": "docs",
+      "subject": "Who may start a scan.",
+      "claim": "The README says that any signed-in user may start a scan.",
+      "found": "The route requires the worker role.",
+      "where": "api/routes/scans.py:40-52",
+      "group": "A"
+    }
+  ]
 }
 
 Allowed values of coverage.status:
@@ -236,8 +264,9 @@ Before answering, check:
 - Every verified fact has evidence.
 - Inferred facts are explicitly marked.
 - The absence of functionality is not claimed without sufficient checking.
-- Contradictions between the documentation and the implementation are recorded.
+- Contradictions of the fragments and of the documentation with the code are recorded.
 - Unknown areas are listed.
+- Every finding, unknown area and contradiction has the letter of its group.
 - No new architectural decisions are proposed.
 - The repository is not changed.
 

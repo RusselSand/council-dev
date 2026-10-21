@@ -98,7 +98,13 @@ But do not declare the investigation complete if known relevant pages or states 
 
 Check coverage for the idea of each group separately: an idea whose screens were not investigated is a gap, even if the other ideas are covered well.
 
-## 6. Targeted follow-up
+## 6. Groups and contradictions
+
+Every finding, unknown and contradiction names the group whose idea it concerns: the letter from the IDEA lines (`A`, `B` …). If it concerns several ideas, take the one it matters most for. Correct a wrong letter.
+
+A contradiction is where the fragments say one thing and the design shows another. Check the side of the design yourself: keep the contradiction only if the design confirms it, merge identical ones. Do not decide which side is right.
+
+## 7. Targeted follow-up
 
 If significant gaps are found, formulate specific tasks for additional investigation.
 
@@ -112,7 +118,7 @@ Do not send the agents to investigate the whole design again.
 
 If the needed information is not in Figma, or not in the snapshot, record unknown instead of repeating endlessly.
 
-## 7. Completion criterion
+## 8. Completion criterion
 
 Design Discovery is sufficient to proceed if:
 
@@ -127,7 +133,7 @@ Do not require the design to contain answers to all product questions.
 
 Missing product decisions will be addressed at the next council stages.
 
-## 8. Restrictions
+## 9. Restrictions
 
 - Do not change Figma.
 - Do not propose a redesign.
@@ -165,7 +171,8 @@ Return only JSON:
           "name": "Catalog / Desktop"
         }
       ],
-      "relevance": "Search concerns the IDEA."
+      "relevance": "Search concerns the IDEA.",
+      "group": "A"
     }
   ],
   "screens": [
@@ -205,7 +212,15 @@ Return only JSON:
       "related_finding_ids": ["D1"]
     }
   ],
-  "design_conflicts": []
+  "conflicts": [
+    {
+      "subject": "What the search finds.",
+      "claim": "The fragments say that the search finds works by their author.",
+      "found": "The search field of the catalog only filters by title.",
+      "where": "Catalog / Desktop",
+      "group": "A"
+    }
+  ]
 }
 
 Allowed values of status:
@@ -216,7 +231,7 @@ With `complete`, the `follow_up` array must be empty.
 
 With `needs_investigation`, the `follow_up` array must contain specific tasks.
 
-Keep the same format of findings, screens, flows, coverage and unknowns as in Design Discovery.
+Keep the same format of findings, screens, flows, coverage, unknowns and conflicts as in Design Discovery.
 
 ## Final check
 
@@ -228,6 +243,8 @@ Before answering, check:
 - Prototype transitions are not made up.
 - Coverage matches the actual scope of the investigation.
 - Unknowns are not hidden.
+- Every contradiction is confirmed by the design.
+- Every finding, unknown and contradiction has the letter of its group.
 - Follow-up contains specific, checkable tasks.
 - Information that is missing from the snapshot does not cause endless repeats.
 - No new product or architectural decisions are proposed.

@@ -58,7 +58,7 @@ class Agents:
     def availability(self, aliases, *, fresh=False):
         raise AssertionError("группы вход в подписку заранее не проверяют")
 
-    def ask(self, model, prompt, key, workspace=None):
+    def ask(self, model, prompt, key, workspace=None, stop=None):
         self.asked.append(key)
         if model in self.offline:
             raise ModelFailed("нет входа в подписку")
