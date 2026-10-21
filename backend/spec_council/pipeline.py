@@ -506,8 +506,13 @@ class CouncilRun[S: (Slicing, Structure, IdeaDiscovery, RepositoryScan, DesignSc
     # --- вызовы моделей
 
     def _ask_all[T](self, step: StepName, prompt: str, parse: Callable[[dict], T]) -> dict[str, T]:
-        """Все участники параллельно. Упавший выбывает из шага, остальные идут дальше."""
+        """Все участники параллельно. Упавший выбывает из шага, остальные идут дальше. Моделей
+        в совете нет (на «Вводе» их можно снять все) — шаг делать некому: он останавливается,
+        как если бы не справились все, и судья за участников не работает."""
         self._set_step(step, "running")
+        if not self.participants:
+            self._set_step(step, "failed")
+            raise StageFailed(f"в совете нет моделей — шаг {step} делать некому")
         with ThreadPoolExecutor(max_workers=len(self.participants)) as pool:
             futures = {m: pool.submit(self._ask, step, m, prompt, parse) for m in self.participants}
         answers = {m: f.result() for m, f in futures.items() if f.result() is not None}

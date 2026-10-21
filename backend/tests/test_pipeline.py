@@ -194,6 +194,15 @@ def test_a_council_of_one_has_every_answer_checked_by_the_judge():
     assert '"variant": 1' in runner.asked["slice_judge", "sol"]          # вариант один
 
 
+def test_a_council_without_models_stops_with_a_reason():
+    result, runner, _ = run({}, participants=())
+    assert result.state == "failed"
+    assert result.error == "в совете нет моделей — шаг slice делать некому"
+    assert steps(result) == {"slice": "failed", "slice_judge": "waiting", "label": "waiting",
+                             "label_judge": "waiting"}
+    assert runner.asked == {}                                # судья за участников не режет
+
+
 def test_unreadable_answer_is_a_failed_run_and_leaves_the_outbox():
     replies = {**AGREED, ("slice", "sol"): "не знаю, как это нарезать"}
     result, runner, _ = run(replies)
