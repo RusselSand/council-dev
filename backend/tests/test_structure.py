@@ -679,11 +679,38 @@ def test_edits_after_the_confirmation_keep_it(store, pool):
     confirms(council_id)
     pool.run()
     splits(council_id, "B", {"fragmentIds": ["F3"], "title": "Новая"})
+    pool.run()                                          # поиск идеи новой группы
     merges(council_id, "C", {"into": "A"})
     edits(council_id, "A", {"title": "Очередь"})
     council = listed(council_id)
     assert (council["stage"], council["stages"]["structure"]) == ("research", "done")
     assert proposes(council_id).json()["council"]["stages"]["structure"] == "done"
+    assert pool.jobs == []
+
+
+def test_a_group_split_after_the_confirmation_gets_its_idea_sought(store, pool, agents):
+    # Подтверждение, которое ищет идеи, новую группу не застало, а ИИ обещает её идею.
+    council_id = grouped(store, pool)
+    confirms(council_id)
+    pool.run()
+    agents.asked.clear()
+    stages = listed(council_id)["stages"]
+    res = splits(council_id, "B", {"fragmentIds": ["F4"], "title": "Новая"})
+    assert res.status_code == 200
+    new = res.json()["structure"]["groups"][2]
+    assert (new["id"], new["idea"], new["ideaBy"]) == ("C", "", "ai")
+    assert len(pool.jobs) == 1
+    assert listed(council_id)["stages"] == stages
+    pool.run()
+    assert sorted(key.split("-")[1:3] for key in agents.asked) == [
+        ["idea_discovery", "fable"], ["idea_discovery", "sol"]]
+    groups = groups_of(council_id)
+    assert (groups["C"]["idea"], groups["C"]["ideaBy"]) == (IDEA_B, "ai")
+    assert (groups["B"]["idea"], groups["B"]["ideaBy"]) == (IDEA_B, "ai")
+
+    # Не подтверждены — идею ищет подтверждение, а не разделение.
+    other = grouped(store, pool)
+    splits(other, "B", {"fragmentIds": ["F4"], "title": "Новая"})
     assert pool.jobs == []
 
 
@@ -693,8 +720,12 @@ def test_streams_are_not_changed_by_edits_of_the_groups(store):
                              streams=[Stream(group="A"), Stream(group="B")])
     merges(council_id, "B", {"into": "A"})
     splits(council_id, "A", {"fragmentIds": ["F5"], "title": "Новая"})
-    assert [stream.group for stream in store.get_council(council_id).streams] == ["A", "B"]
+    council = store.get_council(council_id)
+    assert [stream.group for stream in council.streams] == ["A", "B"]
     assert [group["id"] for group in structure_of(council_id)["groups"]] == ["A", "C"]
+    # Группы потоков — какими они были до правок.
+    assert {gid: group.fragment_ids for gid, group in council.structure.stream_groups.items()} == {
+        "A": [1, 2], "B": [3, 4, 5]}
 
 
 def test_a_stopped_or_not_started_structure_can_be_confirmed(store, pool, agents):

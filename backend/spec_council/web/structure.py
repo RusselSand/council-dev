@@ -11,9 +11,11 @@
 контракту «Предложить группы →» запускает раскладку, если её ещё не было, — модели без входа не
 справляются в самом ходе, — а правки идут к тому, что сейчас на сервере. Подтверждение, как и
 раньше, сразу ищет идею групп, у которых её нет ни в тексте, ни от человека (docs/old/arch.md,
-«Идеи групп»): ход идёт в фоне, этапов не меняет, а найденная идея — идея группы от ИИ.
+«Идеи групп»): ход идёт в фоне, этапов не меняет, а найденная идея — идея группы от ИИ. Группе,
+которую выделили уже после подтверждения, идею так же сразу ищет разделение.
 """
 
+from collections.abc import Iterable
 from typing import Literal
 
 from fastapi import APIRouter
@@ -24,6 +26,7 @@ from ..groups import (
     EditRefused,
     IdeaBy,
     LinkKind,
+    confirmed,
     fragments_of,
     group_in,
     idea_of,
@@ -34,6 +37,7 @@ from ..groups import (
 )
 from ..models import Council, CouncilStatus, IdeaDiscovery, Slicing, StepName
 from ..models import Group as StoredGroup
+from ..models import Structure as StoredStructure
 from ..pipeline import GroupingRun, IdeaRun
 from ..standing import structure_of as stage_of
 from ..store import council_lock
@@ -165,7 +169,7 @@ def confirm_structure(council_id: str, store: StoreDep, agents: AgentsDep, launc
     """Подтверждает группы — и разложенные, и остановившиеся, и не начатые; пока модели
     раскладывают фрагменты, нельзя. У групп без идеи совет сразу её ищет, в фоне. Уже
     подтверждены — в ответ совет как есть."""
-    runs: list[IdeaRun] = []
+    runs: dict[str, IdeaRun] = {}
     with council_lock:
         council = council_of(store, council_id)
         state = stage_of(council)
@@ -175,17 +179,10 @@ def confirm_structure(council_id: str, store: StoreDep, agents: AgentsDep, launc
             changes: dict = {"groups_confirmed": True, "status": CouncilStatus.review}
             structure = council.structure
             if structure is not None:
-                seeking = {group.id: IdeaRun(council.id, fragments_of(council, group),
-                                             council.participants, council.judge, agents,
-                                             reporter(store, council_id, idea_slot(group.id)))
-                           for group in structure.groups if seeks_idea(council, group)}
-                runs = list(seeking.values())
-                changes["structure"] = structure.model_copy(update={"groups": [
-                    group.model_copy(update={
-                        "discovery": seeking[group.id].state.model_copy(deep=True)})
-                    if group.id in seeking else group for group in structure.groups]})
+                runs = idea_runs(store, council, structure.groups, agents)
+                changes["structure"] = sought(structure, runs)
             council = store.update_council(council_id, changes) or council
-    for run in runs:
+    for run in runs.values():
         launched(launch, run, run.report)
     return CouncilAnswer(council=shown(council, projects, repositories))
 
@@ -226,8 +223,11 @@ def merge_group(council_id: str, group_id: str, body: Merge,
 
 
 @router.post("/councils/{council_id}/groups/{group_id}/split")
-def split_group(council_id: str, group_id: str, body: Split,
-                store: StoreDep) -> StructureAnswer:
+def split_group(council_id: str, group_id: str, body: Split, store: StoreDep,
+                agents: AgentsDep, launch: LauncherDep) -> StructureAnswer:
+    """Группы уже подтверждены — у новой группы совет сразу ищет идею, в фоне: подтверждение,
+    которое ищет идеи, её не застало. Этапов поиск не меняет."""
+    runs: dict[str, IdeaRun] = {}
     with council_lock:
         council = editable(store, council_id)
         source = group_of(council, group_id)
@@ -240,7 +240,14 @@ def split_group(council_id: str, group_id: str, body: Split,
                               body.title)
         except EditRefused as exc:
             raise ApiError(422, "bad_split", str(exc)) from None
-        council = store.update_council(council_id, {"structure": structure}) or council
+        if confirmed(council):
+            before = {group.id for group in council.structure.groups}
+            runs = idea_runs(store, council, [group for group in structure.groups
+                                              if group.id not in before], agents)
+        council = store.update_council(
+            council_id, {"structure": sought(structure, runs)}) or council
+    for run in runs.values():
+        launched(launch, run, run.report)
     return StructureAnswer(structure=structure_of(council))
 
 
@@ -282,6 +289,22 @@ def answered(pipeline: GroupingRun, council: Council) -> None:
             for run in step.runs:
                 if run.model in done:
                     run.state = "done"
+
+
+def idea_runs(store: StoreDep, council: Council, groups: Iterable[StoredGroup],
+              agents: AgentsDep) -> dict[str, IdeaRun]:
+    """Поиск идеи у тех из групп, где её нет ни в тексте, ни от человека, — по группам."""
+    return {group.id: IdeaRun(council.id, fragments_of(council, group), council.participants,
+                              council.judge, agents,
+                              reporter(store, council.id, idea_slot(group.id)))
+            for group in groups if seeks_idea(council, group)}
+
+
+def sought(structure: StoredStructure, runs: dict[str, IdeaRun]) -> StoredStructure:
+    """Раскладка, где у групп из runs идёт их поиск идеи."""
+    return structure.model_copy(update={"groups": [
+        group.model_copy(update={"discovery": runs[group.id].state.model_copy(deep=True)})
+        if group.id in runs else group for group in structure.groups]})
 
 
 def idea_slot(group_id: str) -> Slot:

@@ -35,6 +35,7 @@ from ..deps import (
     StoreDep,
 )
 from ..export import design_map, export_in, repository_map
+from ..groups import stream_group
 from ..ideas import IDEA_MAX
 from ..models import (
     SKIPPED,
@@ -1463,8 +1464,12 @@ def stream_in(council: Council, group: str) -> Stream:
 
 
 def group_of(council: Council, group: str) -> Group:
-    """Группа потока. Поток есть — есть и группа: состав меняют только со снятием подтверждения."""
-    return next(g for g in council.structure.groups if g.id == group)
+    """Группа потока — какой она была до объединения и разделения групп: правки групп потоки
+    не меняют (решение q-002)."""
+    found = stream_group(council, stream_in(council, group))
+    if found is None:
+        raise HTTPException(409, f"Группы {group} нет — группы уже другие")
+    return found
 
 
 def fragments_of(council: Council, group: Group) -> list[LabeledFragment]:

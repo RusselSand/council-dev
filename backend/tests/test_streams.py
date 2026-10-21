@@ -324,6 +324,24 @@ def test_a_search_whose_stream_is_gone_does_not_write_it_back(agents):
     assert get_store().get_council(council_id).streams is None
 
 
+def test_streams_keep_their_groups_when_the_groups_are_merged_or_split(agents):
+    # Решение q-002: правки групп потоки не меняют — поток работает со своей группой, какой
+    # она была: B — и когда её объединили с C, C — и когда к ней добавили B и вынесли из неё F4.
+    council_id = grouped()
+    agents.online = set()
+    confirm(council_id)
+    assert client.post(f"/api/councils/{council_id}/groups/B/merge",
+                       json={"into": "C"}).status_code == 200
+    assert client.post(f"/api/councils/{council_id}/groups/C/split",
+                       json={"fragmentIds": ["F4"], "title": "Новая"}).status_code == 200
+    agents.online = {"sol", "fable"}
+    assert seek(council_id, "B").status_code == 202
+    assert seek(council_id, "C").status_code == 202
+    streams = streams_of(council_id)
+    assert streams["B"].discovery.proposal.idea == IDEA_B
+    assert streams["C"].discovery.proposal.idea == IDEA_C
+
+
 # --- вопросы
 
 def asks(council_id, group):

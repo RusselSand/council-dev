@@ -26,6 +26,7 @@ from .export import (
     stream_texts,
     terms_of,
 )
+from .groups import stream_group
 from .models import Council, Issue, LabeledFragment, Outcome, Research, Stream
 from .slicing import BadAnswer
 
@@ -182,8 +183,7 @@ def own_fragments(council: Council, stream: Stream,
                   fragments: Mapping[int, LabeledFragment]) -> dict[int, LabeledFragment]:
     """Фрагменты группы потока: по ним шли его вопросы, варианты и итоги — и выгрузка его
     заметок. Термин другой группы — не термин этого потока."""
-    groups = council.structure.groups if council.structure else []
-    group = next((group for group in groups if group.id == stream.group), None)
+    group = stream_group(council, stream)
     return {i: fragment for i, fragment in fragments.items()
             if group is None or i in group.fragment_ids}
 

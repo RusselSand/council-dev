@@ -4,7 +4,8 @@
 Правки — как в контракте (docs/api-contract.md, «Группы» совета): буквы и порядок групп они не
 меняют, новая группа встаёт за той, из которой её выделили, под первой свободной буквой. У
 объединённой группы — её название и идея, а нет идеи — идея той, что к ней присоединили; связи
-пропавшей группы переходят к ней. У групп остаётся след правки — связи merged и split.
+пропавшей группы переходят к ней. У групп остаётся след правки — связи merged и split. Потоки,
+которые уже есть, держат свои группы, какими они были до правок (решение q-002).
 """
 
 from collections import Counter
@@ -21,6 +22,7 @@ from .models import (
     GroupRelation,
     IdeaDiscovery,
     LabeledFragment,
+    Stream,
     Structure,
 )
 
@@ -182,7 +184,8 @@ def merged(council: Council, source: Group, target: Group) -> Structure:
     ordered = sorted(structure.relations, key=lambda r: source.id in (r.source, r.target))
     relations = one_per_pair(relation.model_copy(update={
         "source": swap(relation.source), "target": swap(relation.target)}) for relation in ordered)
-    return structure.model_copy(update={"groups": marked(groups), "relations": relations})
+    return structure.model_copy(update={"groups": marked(groups), "relations": relations,
+                                        "stream_groups": kept(council)})
 
 
 def split(council: Council, source: Group, fragment_ids: Collection[int], title: str) -> Structure:
@@ -211,7 +214,27 @@ def split(council: Council, source: Group, fragment_ids: Collection[int], title:
                 origins=[GroupOrigin(kind="split", group=source.id)])
     groups = [one for group in structure.groups
               for one in ((rest, new) if group.id == source.id else (group,))]
-    return structure.model_copy(update={"groups": marked(groups)})
+    return structure.model_copy(update={"groups": marked(groups),
+                                        "stream_groups": kept(council)})
+
+
+def kept(council: Council) -> dict[str, Group]:
+    """Группы потоков совета перед объединением или разделением групп — какими они были:
+    правки групп потоки не меняют (решение q-002)."""
+    groups: dict[str, Group] = {}
+    for stream in council.streams or []:
+        group = stream_group(council, stream)
+        if group is not None:
+            groups[stream.group] = group
+    return groups
+
+
+def stream_group(council: Council, stream: Stream) -> Group | None:
+    """Группа потока: какой она была до правок состава групп, а их не было — из раскладки."""
+    structure = council.structure
+    if structure is None:
+        return None
+    return structure.stream_groups.get(stream.group) or group_in(structure, stream.group)
 
 
 def moved(origins: list[GroupOrigin], old: str, new: str, own: str) -> list[GroupOrigin]:
