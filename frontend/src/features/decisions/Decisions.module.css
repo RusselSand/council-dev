@@ -1,0 +1,13 @@
+/* «Ваш выбор: P12 · …» под вопросом. */
+.choice {
+  margin: 0;
+  font-size: var(--text-md);
+  line-height: var(--leading-loose);
+  color: var(--color-text-secondary);
+  overflow-wrap: anywhere;
+}
+
+.chosen {
+  font-weight: var(--weight-bold);
+  color: var(--color-ink);
+}

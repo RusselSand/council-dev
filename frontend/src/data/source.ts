@@ -1,5 +1,6 @@
 import type { Brief } from '../domain/brief';
 import type { CouncilFields, CouncilSummary } from '../domain/council';
+import type { DecisionEdit, DecisionsRound, StreamDecision } from '../domain/decisions';
 import type { Model } from '../domain/model';
 import type { Choice, Option, OptionSet, OptionsRound } from '../domain/options';
 import type { Project, ProjectFields } from '../domain/project';
@@ -124,6 +125,28 @@ export interface DataSource {
    * ответ — поток.
    */
   approveOptions(id: string, streamId: string, run: number): Promise<Stream>;
+  /**
+   * GET /api/councils/<id>/streams/<streamId>/decisions — решения по неубранным вопросам потока, по порядку, и номер
+   * запуска шага «Решения».
+   */
+  listDecisions(id: string, streamId: string): Promise<DecisionsRound>;
+  /**
+   * PATCH /api/councils/<id>/streams/<streamId>/decisions/<questionId> — «почему» и где решение (черновик,
+   * зафиксировано, открыт); ответ — решение после правки. run — номер запуска шага, решения которого на экране: шаг с
+   * тех пор запустили снова — сервер не меняет новые решения и отвечает decisions_not_ready.
+   */
+  updateDecision(
+    id: string,
+    streamId: string,
+    run: number,
+    questionId: string,
+    edit: DecisionEdit,
+  ): Promise<StreamDecision>;
+  /**
+   * POST /api/councils/<id>/streams/<streamId>/decisions/approve — «Зафиксировать решения → к итогам» решений запуска
+   * run; ответ — поток.
+   */
+  approveDecisions(id: string, streamId: string, run: number): Promise<Stream>;
   /** GET /api/models */
   listModels(): Promise<Model[]>;
   /** GET /api/projects */

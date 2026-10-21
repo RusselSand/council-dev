@@ -1,8 +1,17 @@
-import { useI18n } from '../../../i18n';
-import { Chip } from '../../../ui/Chip';
-import { IconButton } from '../../../ui/IconButton';
-import type { QuestionChip } from '../useOptionsStep';
+import { useI18n } from '../../i18n';
+import { Chip } from '../../ui/Chip';
+import type { DotTone } from '../../ui/Dot';
+import { IconButton } from '../../ui/IconButton';
 import styles from './QuestionNav.module.css';
+
+/** Вопрос в ряду чипов. */
+export interface QuestionChip {
+  id: string;
+  /** Точка перед id — что с вопросом: на «Вариантах» выбор есть — зелёная, нет — жёлтая. */
+  dot: DotTone;
+  /** Этот вопрос открыт. */
+  current: boolean;
+}
 
 interface QuestionNavProps {
   chips: QuestionChip[];
@@ -16,8 +25,8 @@ interface QuestionNavProps {
 }
 
 /**
- * Вопросы шага по одному, как в макете: чипы вопросов — точка зелёная, если выбор есть, жёлтая — если нет; открытый —
- * в тёмной рамке. Справа — «готово 2 из 4» и «←» / «→».
+ * Вопросы шага по одному, как в макете «Вариантов» и «Решений»: чипы вопросов с цветной точкой, открытый — в тёмной
+ * рамке. Справа — «готово 2 из 4» и «←» / «→».
  */
 export function QuestionNav({ chips, done, disabled, onShow, onPrev, onNext }: QuestionNavProps) {
   const { t } = useI18n();
@@ -29,7 +38,7 @@ export function QuestionNav({ chips, done, disabled, onShow, onPrev, onNext }: Q
             key={chip.id}
             tone="outline"
             selected={chip.current}
-            dot={chip.chosen ? 'green' : 'yellow'}
+            dot={chip.dot}
             disabled={disabled}
             onClick={() => onShow(chip.id)}
           >
@@ -39,10 +48,10 @@ export function QuestionNav({ chips, done, disabled, onShow, onPrev, onNext }: Q
       </div>
       <div className={styles.end}>
         <span className={styles.done}>{done}</span>
-        <IconButton size="sm" label={t('options.prev')} disabled={disabled} onClick={onPrev}>
+        <IconButton size="sm" label={t('questions.prev')} disabled={disabled} onClick={onPrev}>
           ←
         </IconButton>
-        <IconButton size="sm" label={t('options.next')} disabled={disabled} onClick={onNext}>
+        <IconButton size="sm" label={t('questions.next')} disabled={disabled} onClick={onNext}>
           →
         </IconButton>
       </div>

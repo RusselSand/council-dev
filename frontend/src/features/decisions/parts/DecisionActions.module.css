@@ -1,0 +1,30 @@
+.actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-8);
+}
+
+.choices {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-8);
+  min-width: 0;
+}
+
+.label {
+  font-size: var(--text-md);
+  color: var(--color-text-secondary);
+}
+
+/* id варианта — моноширинным и жирно, как в макете. */
+.option {
+  font-family: var(--font-mono);
+  font-weight: var(--weight-bold);
+}
+
+/* «Зафиксировать →» — справа; не влезает в строку — уходит на следующую, тоже справа. */
+.accept {
+  margin-left: auto;
+}

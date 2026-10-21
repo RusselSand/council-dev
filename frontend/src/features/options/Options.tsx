@@ -1,16 +1,17 @@
 import { LoadState } from '../../components/LoadState';
+import { QuestionHead } from '../../components/QuestionHead';
+import { QuestionNav } from '../../components/QuestionNav';
 import type { State } from '../../domain/council';
 import { useI18n } from '../../i18n';
 import { Button } from '../../ui/Button';
 import { CardFooter } from '../../ui/CardFooter';
 import { RadioCard } from '../../ui/RadioCard';
 import { Skeleton } from '../../ui/Skeleton';
+import { Tag } from '../../ui/Tag';
 import { JudgeNote } from './parts/JudgeNote';
 import { OptionCard } from './parts/OptionCard';
 import { OptionEditor } from './parts/OptionEditor';
 import { OwnOption } from './parts/OwnOption';
-import { QuestionHead } from './parts/QuestionHead';
-import { QuestionNav } from './parts/QuestionNav';
 import styles from './Options.module.css';
 import { useOptionsStep } from './useOptionsStep';
 
@@ -49,7 +50,15 @@ export function Options({ councilId, streamId, state, judge, retrying, onBusy }:
             onPrev={step.prev}
             onNext={step.next}
           />
-          <QuestionHead id={step.question.id} source={step.question.source} text={step.question.text} />
+          <QuestionHead
+            id={step.question.id}
+            text={step.question.text}
+            before={
+              <Tag tone="dark" size="md" shape="box">
+                {step.question.source}
+              </Tag>
+            }
+          />
           <JudgeNote judge={step.judge} onToggle={step.toggleDropped} />
           <div className={styles.options} role="radiogroup" aria-label={step.question.text}>
             {step.options.map((option) => (

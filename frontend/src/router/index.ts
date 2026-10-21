@@ -1,7 +1,7 @@
 import { usePathname } from './history';
 import { parseRoute, type Route } from './routes';
 
-export { navigate, usePathname } from './history';
+export { navigate, navigationFocus, usePathname } from './history';
 export { Link } from './Link';
 export { councilRoute, parseRoute, placeRoute, routePath, type Route, type StagePage } from './routes';
 

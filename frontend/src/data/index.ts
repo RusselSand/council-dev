@@ -11,6 +11,12 @@ export {
   useStartStructure,
   useUpdateCouncil,
 } from './hooks/useCouncils';
+export {
+  useApproveDecisions,
+  useDecisionEdits,
+  useStreamDecisions,
+  type DecisionEdits,
+} from './hooks/useDecisions';
 export { useModels } from './hooks/useModels';
 export {
   useAddOption,

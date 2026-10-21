@@ -2,6 +2,7 @@ import { useEffect } from 'react';
 import { unexported } from '../domain/stream';
 import { Brief } from '../features/brief';
 import { Council } from '../features/council';
+import { Decisions } from '../features/decisions';
 import { Home } from '../features/home';
 import { Options } from '../features/options';
 import { ProjectDecisions } from '../features/projectDecisions';
@@ -65,6 +66,15 @@ export function Screen() {
                   streamId={stream.id}
                   state={step.state}
                   judge={council.judge}
+                  retrying={retrying}
+                  onBusy={onBusy}
+                />
+              ) : route.step === 'decisions' ? (
+                <Decisions
+                  key={`${council.id}/${stream.id}`}
+                  councilId={council.id}
+                  streamId={stream.id}
+                  state={step.state}
                   retrying={retrying}
                   onBusy={onBusy}
                 />

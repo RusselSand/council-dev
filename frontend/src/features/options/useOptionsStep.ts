@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
+import type { QuestionChip } from '../../components/QuestionNav';
 import { ApiError, useApproveOptions, useOptionChoices, useRound, useStreamOptions } from '../../data';
 import type { State } from '../../domain/council';
 import {
@@ -14,20 +15,11 @@ import {
 } from '../../domain/options';
 import { stepApprovable, stepEditable } from '../../domain/stream';
 import { useI18n } from '../../i18n';
-import { navigate, routePath } from '../../router';
+import { navigate, navigationFocus, routePath } from '../../router';
 import { claimChoice } from './choiceClaims';
 import { failedChoicesOf, settleWrites, trackChoice, useFailedChoices } from './pendingWrites';
 import { useOptionEditor } from './useOptionEditor';
 import { useOwnOption } from './useOwnOption';
-
-/** Вопрос в ряду чипов. */
-export interface QuestionChip {
-  id: string;
-  /** По вопросу есть выбор: точка зелёная; нет — жёлтая. */
-  chosen: boolean;
-  /** Этот вопрос открыт. */
-  current: boolean;
-}
 
 /** Зависимость варианта: «зависит от Q2 · решён». */
 export interface DependencyView {
@@ -198,10 +190,17 @@ export function useOptionsStep(
   const [approving, setApproving] = useState(false);
   /** «Утвердить» не утвердил в этом наборе вариантов: не вышло утвердить или что-то из правок не сохранилось. */
   const [approveError, setApproveError] = useState<ApiError>();
+  /**
+   * Вопрос, который просили открыть, когда шли сюда («Поправить в «Вариантах»» на «Решениях»): в наборе вариантов, с
+   * которым открылся экран, он открывается вместо первого без выбора; в другом наборе — снова первый без выбора.
+   */
+  const asked = useRef(navigationFocus());
   // Набор вариантов другой — открывается его первый вопрос без выбора, как на только что открытом шаге, а не тот, что
   // был открыт в прежнем. Ошибка «Утвердить» — про прежний набор, правки и выбор которого уже забыты: она забывается.
   // Утверждение прежнего, которое ещё ждёт ответа, новый набор не запирает: шаг запустили снова — сервер его не примет.
   const generation = useRound(round, () => {
+    // Первый набор — тот, с которым открылся экран: вопрос, который просили открыть, — про него.
+    if (generation.current > 1) asked.current = undefined;
     setCurrent(undefined);
     setApproveError(undefined);
     setApproving(false);
@@ -218,9 +217,9 @@ export function useOptionsStep(
 
   const sets = query.data?.optionSets ?? [];
   const { pending } = choices;
-  // Открытый вопрос: выбранный человеком в этом наборе вариантов; не выбирал или его больше нет — первый без выбора, как
-  // пришли варианты.
-  const first = firstOpenQuestion(sets);
+  // Открытый вопрос: выбранный человеком в этом наборе вариантов; не выбирал или его больше нет — тот, что просили
+  // открыть, или первый без выбора, как пришли варианты.
+  const first = sets.some((s) => s.question.id === asked.current) ? asked.current : firstOpenQuestion(sets);
   const currentId = sets.some((s) => s.question.id === current) ? current : first;
   useEffect(() => {
     if (current === undefined && first !== undefined) setCurrent(first);
@@ -377,9 +376,10 @@ export function useOptionsStep(
     error: query.error,
     reload: query.reload,
 
+    // По вопросу есть выбор — точка зелёная; нет — жёлтая.
     chips: sets.map((s) => ({
       id: s.question.id,
-      chosen: choiceOf(s, pending) !== null,
+      dot: choiceOf(s, pending) !== null ? 'green' : 'yellow',
       current: s.question.id === currentId,
     })),
     done: t('options.done', { done, total: sets.length }),

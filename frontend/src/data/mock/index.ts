@@ -1,4 +1,5 @@
 import { cleanName, type CouncilFields, type CouncilSummary } from '../../domain/council';
+import { hasRationale, type StreamDecision } from '../../domain/decisions';
 import { canSaveOption, type Choice, type OptionSet } from '../../domain/options';
 import { cleanFields, MAX_PROJECT_REPOS, type Project, type ProjectFields } from '../../domain/project';
 import { canAddQuestion, type Question } from '../../domain/questions';
@@ -21,6 +22,7 @@ import {
   structureRetried,
   structureStarted,
 } from './councils';
+import { DECISIONS, type MockDecision } from './decisions';
 import { MODELS } from './models';
 import { noOptions, OPTIONS, ownOption, type MockOptionSet } from './options';
 import { PROJECT_LIST, REPO_LIST, type MockProject } from './projects';
@@ -29,6 +31,8 @@ import { noResearch, RESEARCHES, startedCode, startedDesign, toSetup } from './r
 import { noSlicing, SLICINGS, startedSlicing } from './slicings';
 import {
   decisionsApproved,
+  decisionsNote,
+  decisionsStepApproved,
   newDecisions,
   newStreams,
   optionsApproved,
@@ -81,6 +85,10 @@ const options = new Map(Object.entries(OPTIONS).map(([key, sets]) => [key, copy(
 const optionByKey = new Map<string, { stream: string; question: string; id: string }>();
 /** Номер запуска шага «Варианты» по совету и потоку (streamKey): утверждение вопросов и «Запустить снова» растят его. */
 const optionRuns = new Map<string, number>();
+/** Решения по совету и потоку (streamKey), по id вопроса: правки решений меняют их здесь. */
+const decisions = new Map(Object.entries(DECISIONS).map(([key, byQuestion]) => [key, copy(byQuestion)]));
+/** Номер запуска шага «Решения» по совету и потоку (streamKey): утверждение выбора и «Запустить снова» растят его. */
+const decisionRuns = new Map<string, number>();
 /** Проекты моков: создание, правка и удаление меняют их здесь; живут, пока открыта вкладка. */
 const projects = copy(PROJECT_LIST);
 /** Idempotency-Key → id созданного по нему проекта. */
@@ -234,6 +242,76 @@ function choicesChanged(index: number, id: string, streamId: string) {
   const at = streamAt(id, streamId);
   list[at] = withNote(list[at], 'options', optionsNote(chosen, sets.length));
   councils[index] = choiceChanged(councils[index], streamId, sets.length - chosen, sets.length, new Date().toISOString());
+}
+
+/** Решения потока по id вопроса; у потока, решения которого ещё не проверяли, — пусто. */
+function storedDecisions(id: string, streamId: string): Record<string, MockDecision> {
+  const key = streamKey(id, streamId);
+  const byQuestion = decisions.get(key) ?? {};
+  decisions.set(key, byQuestion);
+  return byQuestion;
+}
+
+/**
+ * Решения на «Решениях» — по неубранным вопросам потока, по порядку, у которых решение есть. Вопрос, вариант и «в
+ * контексте» — из вопросов, вариантов и решений других вопросов потока: решения нет или вопрос убран — варианта нет.
+ */
+function decisionListOf(id: string, streamId: string): StreamDecision[] {
+  const stored = storedDecisions(id, streamId);
+  const sets = optionsOf(id, streamId);
+  const kept = questionsOf(id, streamId).filter((q) => !q.removed && stored[q.id]);
+  const optionOf = (question: string, option: string | null) =>
+    option === null ? null : (sets[question]?.options.find((o) => o.id === option) ?? null);
+  return kept.map((question) => {
+    const { option, dependsOn, ...rest } = stored[question.id];
+    return {
+      ...rest,
+      question,
+      option: optionOf(question.id, option),
+      context: dependsOn.map((other) => {
+        const found = kept.some((q) => q.id === other) ? stored[other] : undefined;
+        const chosen = found ? optionOf(other, found.option) : null;
+        return { question: other, option: chosen?.id ?? null, text: chosen?.source === 'user' ? chosen.text : null };
+      }),
+    };
+  });
+}
+
+/** Номер запуска шага «Решения»: шаг не начат — 0; начат в данных моков и с тех пор не запускался — 1. */
+function decisionsRun(id: string, streamId: string): number {
+  const step = stepOf((streams.get(id) ?? [])[streamAt(id, streamId)], 'decisions');
+  return decisionRuns.get(streamKey(id, streamId)) ?? (step.state === 'idle' ? 0 : 1);
+}
+
+/** Модели снова начали проверять решения: новый запуск шага «Решения», прежних решений больше нет. */
+function decisionsStarted(id: string, streamId: string) {
+  decisionRuns.set(streamKey(id, streamId), decisionsRun(id, streamId) + 1);
+  decisions.set(streamKey(id, streamId), {});
+}
+
+/**
+ * Решения правят и фиксируют, когда шаг «Решения» начат и модели на нём не работают, — и только решения того запуска
+ * шага, что на экране (run): шаг с тех пор запустили снова — решения другие, хоть id у них те же.
+ */
+function checkDecisionsReady(id: string, streamId: string, at: number, run: number) {
+  const { state } = stepOf((streams.get(id) ?? [])[at], 'decisions');
+  if (state === 'idle' || state === 'running') {
+    throw new ApiError('decisions_not_ready', `Шаг «Решения» не начат или на нём работают модели (${state})`, 409);
+  }
+  const current = decisionsRun(id, streamId);
+  if (run !== current) {
+    throw new ApiError('decisions_not_ready', `Решения запуска ${run}, а шаг «Решения» уже запуска ${current}`, 409);
+  }
+}
+
+/** Решение поменялось: строка «Решений» в цепочке — сколько зафиксировано, у совета — новое время изменения. */
+function decisionsChanged(index: number, id: string, streamId: string) {
+  const list = decisionListOf(id, streamId);
+  const streamList = streams.get(id) ?? [];
+  const at = streamAt(id, streamId);
+  const fixed = list.filter((d) => d.status === 'fixed').length;
+  streamList[at] = withNote(streamList[at], 'decisions', decisionsNote(fixed, list.length));
+  touch(index);
 }
 
 /** Совет поменяли: новое время изменения. */
@@ -522,6 +600,7 @@ export const mockSource: DataSource = {
     if (list[at].steps.some((step) => step.state === 'failed')) {
       const now = new Date().toISOString();
       if (stepOf(list[at], 'options').state === 'failed') optionsStarted(id, streamId);
+      if (stepOf(list[at], 'decisions').state === 'failed') decisionsStarted(id, streamId);
       list[at] = streamRetried(list[at], now);
       councils[index] = streamsChanged(councils[index], list, streamId, now);
     }
@@ -677,7 +756,57 @@ export const mockSource: DataSource = {
       }
       const now = new Date().toISOString();
       const { participants, judge } = councils[index];
+      // Модели начинают проверять решения: первый запуск «Решений».
+      decisionsStarted(id, streamId);
       list[at] = optionsApproved(list[at], sets.length, participants, judge, now);
+      councils[index] = streamsChanged(councils[index], list, streamId, now);
+    }
+    return copy(list[at]);
+  },
+  async listDecisions(id, streamId) {
+    councilAt(id);
+    const at = streamAt(id, streamId);
+    const run = decisionsRun(id, streamId);
+    // «Решения» не начаты или модели их проверяют — решений не показывают.
+    const { state } = stepOf((streams.get(id) ?? [])[at], 'decisions');
+    if (state === 'idle' || state === 'running') return { run, decisions: [] };
+    return { run, decisions: copy(decisionListOf(id, streamId)) };
+  },
+  async updateDecision(id, streamId, run, questionId, edit) {
+    const index = councilAt(id);
+    const at = streamAt(id, streamId);
+    checkDecisionsReady(id, streamId, at, run);
+    if (!decisionListOf(id, streamId).some((d) => d.question.id === questionId)) {
+      throw new ApiError('not_found', `Решения по вопросу ${questionId} у потока ${streamId} нет`, 404);
+    }
+    // Без «почему» решение не фиксируется — ничего не меняем.
+    if (edit.status === 'fixed' && !hasRationale(edit.rationale)) {
+      throw new ApiError('rationale_required', `Решение по ${questionId} без обоснования не зафиксировать`, 422);
+    }
+    const stored = storedDecisions(id, streamId)[questionId];
+    // «почему» поменяли — теперь оно человека, как в макете («вы»).
+    if (edit.rationale !== stored.rationale) {
+      stored.rationale = edit.rationale;
+      stored.rationaleBy = 'user';
+    }
+    stored.status = edit.status;
+    // Шаги потока правка не меняет, как в макете; меняются строка «Решений» в цепочке и совет.
+    decisionsChanged(index, id, streamId);
+    return copy(decisionListOf(id, streamId).find((d) => d.question.id === questionId) as StreamDecision);
+  },
+  async approveDecisions(id, streamId, run) {
+    const index = councilAt(id);
+    const at = streamAt(id, streamId);
+    checkDecisionsReady(id, streamId, at, run);
+    const list = streams.get(id) ?? [];
+    // Шаг уже готов — ничего не меняем, отвечаем потоком как есть.
+    if (stepOf(list[at], 'decisions').state !== 'done') {
+      // Где решения, переход не меняет, как в макете: черновики и открытые остаются такими.
+      const all = decisionListOf(id, streamId);
+      const fixed = all.filter((d) => d.status === 'fixed').length;
+      const now = new Date().toISOString();
+      const { participants, judge } = councils[index];
+      list[at] = decisionsStepApproved(list[at], fixed, all.length, participants, judge, now);
       councils[index] = streamsChanged(councils[index], list, streamId, now);
     }
     return copy(list[at]);

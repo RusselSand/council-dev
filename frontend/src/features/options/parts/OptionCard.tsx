@@ -2,6 +2,7 @@ import type { ReactNode } from 'react';
 import { useI18n } from '../../../i18n';
 import { Button } from '../../../ui/Button';
 import { Chip } from '../../../ui/Chip';
+import { Facts, type Fact } from '../../../ui/Facts';
 import { RadioCard } from '../../../ui/RadioCard';
 import { Tag } from '../../../ui/Tag';
 import type { OptionView } from '../useOptionsStep';
@@ -27,6 +28,10 @@ interface OptionCardProps {
  */
 export function OptionCard({ option, disabled, onPick, onEdit, onShowQuestion, editor }: OptionCardProps) {
   const { t } = useI18n();
+  const facts: Fact[] = [
+    ...(option.why ? [{ label: t('options.why'), value: option.why }] : []),
+    ...(option.cost ? [{ label: t('options.cost'), value: option.cost }] : []),
+  ];
   return (
     <RadioCard
       selected={option.selected}
@@ -50,22 +55,7 @@ export function OptionCard({ option, disabled, onPick, onEdit, onShowQuestion, e
       }
     >
       {option.editing && editor}
-      {(option.why || option.cost) && (
-        <dl className={styles.facts}>
-          {option.why && (
-            <>
-              <dt className={styles.label}>{t('options.why')}</dt>
-              <dd className={styles.value}>{option.why}</dd>
-            </>
-          )}
-          {option.cost && (
-            <>
-              <dt className={styles.label}>{t('options.cost')}</dt>
-              <dd className={styles.value}>{option.cost}</dd>
-            </>
-          )}
-        </dl>
-      )}
+      {facts.length > 0 && <Facts facts={facts} />}
       {(option.dependencies.length > 0 || !option.editing) && (
         <div className={styles.foot}>
           {option.dependencies.map((dependency) => (

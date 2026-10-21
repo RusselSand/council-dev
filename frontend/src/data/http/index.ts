@@ -1,5 +1,6 @@
 import type { Brief } from '../../domain/brief';
 import type { CouncilSummary } from '../../domain/council';
+import type { DecisionsRound, StreamDecision } from '../../domain/decisions';
 import type { Model } from '../../domain/model';
 import type { Option, OptionSet, OptionsRound } from '../../domain/options';
 import type { Project } from '../../domain/project';
@@ -183,6 +184,20 @@ export const httpSource: DataSource = {
   },
   async approveOptions(id, streamId, run) {
     const path = `${streamPath(id, streamId)}/options/approve`;
+    const { stream } = await request<{ stream: Stream }>('POST', path, { run });
+    return stream;
+  },
+  async listDecisions(id, streamId) {
+    const { run, decisions } = await request<DecisionsRound>('GET', `${streamPath(id, streamId)}/decisions`);
+    return { run, decisions };
+  },
+  async updateDecision(id, streamId, run, questionId, { rationale, status }) {
+    const path = `${streamPath(id, streamId)}/decisions/${encodeURIComponent(questionId)}`;
+    const { decision } = await request<{ decision: StreamDecision }>('PATCH', path, { run, rationale, status });
+    return decision;
+  },
+  async approveDecisions(id, streamId, run) {
+    const path = `${streamPath(id, streamId)}/decisions/approve`;
     const { stream } = await request<{ stream: Stream }>('POST', path, { run });
     return stream;
   },

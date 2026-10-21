@@ -1,0 +1,16 @@
+.note {
+  margin: 0;
+  padding: var(--space-12) var(--space-14);
+  border-radius: var(--radius-14);
+  background: var(--color-surface-muted);
+  font-size: var(--text-md);
+  line-height: var(--leading-text);
+  color: var(--color-text-secondary);
+  text-wrap: pretty;
+  overflow-wrap: anywhere;
+}
+
+.label {
+  font-weight: var(--weight-bold);
+  color: var(--color-ink);
+}
