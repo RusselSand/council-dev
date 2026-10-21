@@ -38,13 +38,13 @@ const putOutcome = (councilId: string, streamId: string, run: number, outcome: S
       : current;
 
 /**
- * Итоги сейчас не утверждают (шаг запустили снова в другой вкладке: модели ещё работают или итоги уже другого запуска) —
- * потоки и итоги на экране устарели; итога или потока уже нет, итог заблокирован — на экране не то, что на сервере:
- * итоги устарели.
+ * Итоги сейчас не утверждают (шаг запустили снова в другой вкладке: модели ещё работают или итоги уже другого запуска),
+ * итога или потока уже нет — потоки и итоги на экране устарели: потока нет — экран потока уводит на другой; итог
+ * заблокирован — на экране не то, что на сервере: итоги устарели.
  */
 function staleOnRefused(error: unknown) {
   if (!(error instanceof ApiError)) return;
-  if (error.code === 'outcomes_not_ready') markStale('streams');
+  if (['outcomes_not_ready', 'not_found'].includes(error.code)) markStale('streams');
   if (['outcomes_not_ready', 'not_found', 'outcome_blocked'].includes(error.code)) markStale('outcomes');
 }
 
