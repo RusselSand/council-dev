@@ -43,12 +43,6 @@ def test_new_council_gets_default_participants_and_judge():
     assert council["brief"] == ""
 
 
-def test_settings_list_models_with_their_cli():
-    settings = client.get("/api/settings").json()
-    assert {model["cli"] for model in settings["models"]} == {"codex", "claude", "gemini"}
-    assert settings["min_participants"] == 1
-
-
 def test_patch_changes_only_what_was_sent():
     council_id = new_council()
     res = client.patch(f"/api/councils/{council_id}", json={"brief": "текст", "judge": "sol"})
@@ -199,12 +193,6 @@ def test_running_slicing_is_not_started_twice(agents):
 
 def test_slicing_of_unknown_council_is_404(agents):
     assert client.post("/api/councils/missing/slicing").status_code == 404
-
-
-def test_settings_tell_which_models_can_run(agents):
-    models = client.get("/api/settings").json()["models"]
-    available = {m["alias"]: m["available"] for m in models}
-    assert available == {"sol": True, "fable": True, "astra": False}
 
 
 def sliced_council(agents):

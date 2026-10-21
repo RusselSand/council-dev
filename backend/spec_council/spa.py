@@ -6,9 +6,11 @@
 
 from pathlib import Path
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
+
+from .web.errors import not_found
 
 # В репозитории сборку кладёт vite, в образ — докер, рядом с пакетом. Свежая сборка
 # из dist идёт первой: в чекаутах, где собирали по-старому, рядом с пакетом мог остаться
@@ -38,5 +40,5 @@ def mount_spa(app: FastAPI, *, api_prefix: str) -> None:
     def spa(path: str) -> FileResponse:
         # Неизвестный /api/... — это ошибка API, а не страница: фронт ждёт JSON.
         if path == api_root or path.startswith(f"{api_root}/"):
-            raise HTTPException(404, "Not Found")
+            raise not_found(f"Нет ручки GET /{path}")
         return FileResponse(index)

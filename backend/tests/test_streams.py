@@ -1797,10 +1797,6 @@ def test_without_models_the_scan_is_recorded_failed_and_can_be_run_again(agents,
     assert research_of(council_id).scan.state == "done"
 
 
-def test_settings_tell_where_repositories_are(agents, repos):
-    assert client.get("/api/settings").json()["repositories"] == str(repos.parent)
-
-
 def test_a_scan_takes_the_ideas_as_they_are_when_git_has_read_the_copy(agents, repos,
                                                                        monkeypatch):
     """Пока git читал рабочую копию, идею поменяли в другой вкладке: скан идёт под идеи, какие
@@ -2040,11 +2036,6 @@ def test_without_a_figma_token_the_design_is_not_scanned(agents):
     res = designs(council_id, "C")
     assert res.status_code == 422
     assert "FIGMA_TOKEN" in res.json()["detail"]
-    assert client.get("/api/settings").json()["figma"] is False
-
-
-def test_settings_tell_a_figma_token_is_set(agents, figma):
-    assert client.get("/api/settings").json()["figma"] is True
 
 
 def test_a_figma_refusal_fails_the_scan_with_its_reason(agents, figma):

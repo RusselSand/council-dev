@@ -1,18 +1,25 @@
 """Проекты: рабочие копии и папка документации, которые совет берёт по проекту."""
 
+import json
 import subprocess
 import threading
+from datetime import UTC, datetime, timedelta
 
 import pytest
 from fastapi import HTTPException
 from fastapi.testclient import TestClient
 
-from spec_council.api.councils import council_lock
 from spec_council.app import app
-from spec_council.deps import council_issues, council_notes, get_projects, get_repositories
+from spec_council.deps import (
+    council_issues,
+    council_notes,
+    get_projects,
+    get_repositories,
+    get_store,
+)
 from spec_council.models import ProjectDraft
 from spec_council.projects import FileProjects, Projects
-from spec_council.store import FileStore, InMemoryStore
+from spec_council.store import FileStore, InMemoryStore, council_lock
 
 client = TestClient(app)
 
@@ -45,149 +52,265 @@ def fresh_projects():
     app.dependency_overrides.pop(get_projects)
 
 
-def creates(**draft):
-    return client.post("/api/projects", json={"name": "Кромка", **draft})
+@pytest.fixture(name="store")
+def fresh_store():
+    """Свои советы: по ним считается, в скольких советах выбран проект."""
+    store = InMemoryStore()
+    app.dependency_overrides[get_store] = lambda: store
+    yield store
+    app.dependency_overrides.pop(get_store)
 
 
-def test_a_project_keeps_its_working_copies_and_notes_folder(repos, projects):
-    res = creates(name="  Кромка ", repositories=["back", "front"], notes="back/docs/reasoning")
-    assert res.status_code == 201
-    project = res.json()
-    assert (project["name"], project["repositories"]) == ("Кромка", ["back", "front"])
-    # Папки ещё нет — её создаст первая выгрузка; путь — как его найдёт сервер.
-    assert project["notes_root"] == str((repos / "back/docs/reasoning").resolve())
-    assert project["problem"] is None
-    assert client.get("/api/projects").json() == [project]
-    assert client.get("/api/settings").json()["projects"] == [project]
+def creates(key=None, **fields):
+    headers = {"Idempotency-Key": key} if key else {}
+    return client.post("/api/projects", json={"name": "Кромка", **fields}, headers=headers)
 
-    res = client.put(f"/api/projects/{project['id']}",
-                     json={"name": "Кромка", "repositories": ["front"], "notes": "", "revision": 0})
+
+def edits(project_id, **fields):
+    return client.patch(f"/api/projects/{project_id}", json=fields)
+
+
+def error_of(res):
+    assert set(res.json()) == {"error"}
+    assert set(res.json()["error"]) == {"code", "message"}
+    return res.status_code, res.json()["error"]["code"]
+
+
+def listed():
+    res = client.get("/api/projects")
     assert res.status_code == 200
-    assert (res.json()["repositories"], res.json()["notes"], res.json()["notes_root"],
-            res.json()["revision"]) == (["front"], "", None, 1)
+    return res.json()["projects"]
 
 
-def test_a_project_keeps_its_issues_folder_beside_the_notes(repos, projects):
-    res = creates(notes="back/docs/reasoning", issues="back/docs/issues")
+def test_a_new_project_is_saved_as_sent(repos, projects, store):
+    res = creates(name="  Кромка ", repos=["front", "back", "front"], docs=" back/docs/reasoning ")
     assert res.status_code == 201
-    project = res.json()
-    assert project["issues_root"] == str((repos / "back/docs/issues").resolve())
-    # Папка документации внутри папки задач не мешает: задачи читаются только с её верхнего
-    # уровня.
-    assert creates(name="Другой", notes="front/issues/reasoning",
-                   issues="front/issues").status_code == 201
-    res = client.put(f"/api/projects/{project['id']}",
-                     json={"name": "Кромка", "notes": "back/docs/reasoning", "revision": 0})
-    assert (res.json()["issues"], res.json()["issues_root"]) == ("", None)
+    project = res.json()["project"]
+    # Название и папка — без пробелов по краям, повтор репозитория — один репозиторий.
+    assert project == {"id": project["id"], "name": "Кромка", "repos": ["front", "back"],
+                       "docs": "back/docs/reasoning", "councilCount": 0}
+    assert listed() == [project]
+    saved = projects.get_project(project["id"])
+    assert (saved.repositories, saved.notes) == (["front", "back"], "back/docs/reasoning")
 
 
-def test_a_project_whose_issues_folder_no_longer_fits_tells_why(repos, projects, tmp_path):
-    app.dependency_overrides[get_repositories] = lambda: None
-    creates(notes=str(repos / "docs"), issues=str(tmp_path / "issues"))
-    app.dependency_overrides[get_repositories] = lambda: repos
-    shown = client.get("/api/projects").json()[0]
-    assert shown["notes_root"] == str((repos / "docs").resolve())
-    assert shown["issues_root"] is None and "вне каталога репозиториев" in shown["problem"]
+def test_a_new_project_goes_to_the_end_of_the_list(repos, projects, store):
+    names = ["Сайт", "Агенты", "looper"]
+    for name in names:
+        assert creates(name=name).status_code == 201
+    assert [project["name"] for project in listed()] == names
 
 
-def test_an_edit_of_an_older_version_is_refused(repos, projects):
-    project = creates(repositories=["back"], notes="back/docs").json()
-    # Одна вкладка сменила папку…
-    assert client.put(f"/api/projects/{project['id']}", json={
-        "name": "Кромка", "repositories": ["back"], "notes": "front/docs", "revision": 0,
-    }).status_code == 200
-    # …другая, открытая раньше, правит название — и вернула бы прежнюю папку.
-    res = client.put(f"/api/projects/{project['id']}", json={
-        "name": "Кромка 2", "repositories": ["back"], "notes": "back/docs", "revision": 0})
-    assert res.status_code == 409 and "уже поправили" in res.json()["detail"]
-    assert projects.get_project(project["id"]).notes == "front/docs"
+def test_without_projects_the_list_is_empty(projects, store):
+    assert client.get("/api/projects").json() == {"projects": []}
 
 
-def test_project_names_differ_in_more_than_case(repos, projects):
-    first = creates(name="Кромка").json()
-    res = creates(name=" КРОМКА ")
-    assert res.status_code == 422 and "уже есть" in res.json()["detail"]
-    other = creates(name="Совет").json()
-    res = client.put(f"/api/projects/{other['id']}", json={"name": "кромка", "revision": 0})
-    assert res.status_code == 422
-    # Себя проект не задевает: то же название с другим регистром — можно.
-    assert client.put(f"/api/projects/{first['id']}",
-                      json={"name": "КРОМКА", "revision": 0}).status_code == 200
+def test_an_empty_new_project_has_no_repos_and_no_docs(repos, projects, store):
+    project = client.post("/api/projects", json={"name": "Агенты"}).json()["project"]
+    assert (project["repos"], project["docs"]) == ([], "")
 
 
-@pytest.mark.parametrize(("draft", "why"), [
-    ({"name": "  "}, "Назовите проект"),
-    ({"repositories": ["nope"]}, "Каталога нет"),
-    ({"repositories": ["docs"]}, "docs: "),                   # не рабочая копия git
-    ({"repositories": ["../back"]}, "вне каталога репозиториев"),
-    ({"repositories": ["back", "back/."]}, "одна и та же рабочая копия"),
-    ({"notes": "../notes"}, "вне каталога репозиториев"),
-    ({"notes": "  "}, "Укажите папку документации"),
-    ({"issues": "back/issues"}, "только вместе с папкой документации"),
-    ({"notes": "docs", "issues": "  "}, "Укажите папку задач"),
-    ({"notes": "docs", "issues": "../issues"}, "вне каталога репозиториев"),
-    # Causa читает заметкой каждый .md в папке заметок: задачам там не место.
-    ({"notes": "docs", "issues": "docs"}, "внутри папки документации"),
-    ({"notes": "docs", "issues": "docs/issues"}, "внутри папки документации"),
+def test_a_repeated_key_does_not_create_a_second_project(repos, projects, store):
+    first = creates(key="k1", repos=["back"]).json()["project"]
+    # Тот же ключ — тот же проект, даже если поля другие и даже без названия.
+    again = creates(key="k1", name="", repos=["front"])
+    assert again.status_code == 201 and again.json()["project"] == first
+    other = creates(key="k2").json()["project"]
+    assert other["id"] != first["id"]
+    # Без ключа каждый запрос — новый проект.
+    assert creates().json()["project"]["id"] != creates().json()["project"]["id"]
+    assert len(listed()) == 4
+
+
+def test_a_key_is_remembered_after_a_restart(repos, tmp_path, store):
+    folder = tmp_path / "projects"
+    app.dependency_overrides[get_projects] = lambda: FileProjects(folder)
+    try:
+        first = creates(key="k1").json()["project"]
+        assert creates(key="k1").json()["project"] == first
+        assert len(listed()) == 1
+    finally:
+        app.dependency_overrides.pop(get_projects)
+
+
+@pytest.mark.parametrize(("fields", "status", "code"), [
+    ({"name": "  "}, 422, "name_required"),
+    ({"name": ""}, 422, "name_required"),
+    ({"repos": [f"r{n}" for n in range(11)]}, 422, "too_many_repos"),
+    ({"repos": ["nope"]}, 422, "unknown_repo"),
+    ({"repos": ["docs"]}, 422, "unknown_repo"),          # не рабочая копия git
+    ({"repos": ["back/."]}, 422, "unknown_repo"),        # не имя из каталога
+    ({"repos": [""]}, 422, "unknown_repo"),
+    ({"repos": "back"}, 400, "bad_request"),
+    ({"name": None}, 400, "bad_request"),
+    ({"repositories": ["back"]}, 400, "bad_request"),    # поля старого API нет
 ])
-def test_a_project_with_wrong_paths_is_not_saved(repos, projects, draft, why):
-    res = creates(**draft)
-    assert res.status_code == 422 and why in res.json()["detail"]
+def test_a_wrong_new_project_is_not_saved(repos, projects, store, fields, status, code):
+    assert error_of(creates(**fields)) == (status, code)
     assert projects.list_projects() == []
 
 
-@pytest.mark.parametrize("notes", ["docs/notes.md", "docs/notes.md/reasoning"])
-def test_the_notes_folder_is_a_folder(repos, projects, notes):
-    (repos / "docs" / "notes.md").write_text("", encoding="utf-8")
-    res = creates(notes=notes)
-    assert res.status_code == 422 and "Это не папка" in res.json()["detail"]
+def test_a_repeated_repo_counts_once(repos, projects, store):
+    res = creates(repos=["back"] * 11)
+    assert res.status_code == 201 and res.json()["project"]["repos"] == ["back"]
 
 
-def test_without_a_repositories_folder_paths_are_absolute(tmp_path, projects):
-    repo = git_repo(tmp_path / "repo")
+def test_without_a_repositories_folder_no_repo_is_known(projects, store):
     app.dependency_overrides[get_repositories] = lambda: None
     try:
-        assert "Нужен абсолютный путь" in creates(repositories=["repo"]).json()["detail"]
-        res = creates(repositories=[str(repo)], notes=str(tmp_path / "docs"))
-        assert res.status_code == 201
-        assert res.json()["notes_root"] == str((tmp_path / "docs").resolve())
-        assert client.get("/api/repositories").json() == {"root": None, "paths": []}
+        assert error_of(creates(repos=["back"])) == (422, "unknown_repo")
+        assert creates().status_code == 201
     finally:
         app.dependency_overrides.pop(get_repositories)
 
 
+def test_an_edit_changes_only_the_sent_fields(repos, projects, store):
+    project = creates(repos=["back"], docs="back/docs").json()["project"]
+    res = edits(project["id"], name=" Кромка 2 ")
+    assert res.status_code == 200
+    assert res.json()["project"] == {**project, "name": "Кромка 2"}
+    res = edits(project["id"], name="Кромка", repos=["front", "back"], docs="")
+    assert res.json()["project"] == {**project, "repos": ["front", "back"], "docs": ""}
+    assert listed() == [res.json()["project"]]
+    # Пустое тело ничего не меняет.
+    assert edits(project["id"]).json()["project"] == res.json()["project"]
+
+
+def test_an_edit_keeps_the_place_in_the_list(repos, projects, store):
+    first, second = (creates(name=name).json()["project"] for name in ("Первый", "Второй"))
+    edits(first["id"], name="Первый 2")
+    assert [project["id"] for project in listed()] == [first["id"], second["id"]]
+
+
+def test_an_edit_keeps_repos_that_left_the_repositories_folder(repos, projects, store):
+    # Проект прежней версии: путь к рабочей копии, которого в каталоге нет.
+    project = projects.create_project(ProjectDraft(name="Кромка", repositories=["old/back"]))
+    res = edits(project.id, repos=["old/back", "front"])
+    assert res.status_code == 200 and res.json()["project"]["repos"] == ["old/back", "front"]
+    # Снятый можно вернуть, пока он в проекте…
+    assert edits(project.id, repos=["front", "old/back"]).status_code == 200
+    assert edits(project.id, repos=["front"]).status_code == 200
+    # …а когда сохранили без него — уже нет.
+    assert error_of(edits(project.id, repos=["front", "old/back"])) == (422, "unknown_repo")
+
+
+def test_an_edit_keeps_the_issues_folder(repos, projects, store):
+    project = projects.create_project(ProjectDraft(name="Кромка", notes="back/docs",
+                                                   issues="back/issues"))
+    assert edits(project.id, name="Кромка", repos=[], docs="front/docs").status_code == 200
+    saved = projects.get_project(project.id)
+    assert (saved.notes, saved.issues) == ("front/docs", "back/issues")
+
+
+@pytest.mark.parametrize(("fields", "status", "code"), [
+    ({"name": " "}, 422, "name_required"),
+    ({"repos": [f"r{n}" for n in range(11)]}, 422, "too_many_repos"),
+    ({"repos": ["nope"]}, 422, "unknown_repo"),
+    ({"docs": 5}, 400, "bad_request"),
+    ({"councilCount": 2}, 400, "bad_request"),
+])
+def test_a_wrong_edit_changes_nothing(repos, projects, store, fields, status, code):
+    project = creates(repos=["back"]).json()["project"]
+    assert error_of(edits(project["id"], **fields)) == (status, code)
+    assert listed() == [project]
+
+
+def test_an_edit_of_a_missing_project_is_not_found(repos, projects, store):
+    assert error_of(edits("nope", name="Кромка")) == (404, "not_found")
+
+
+def test_the_council_count_is_how_many_councils_chose_the_project(repos, projects, store):
+    chosen, alone = (creates(name=name).json()["project"] for name in ("Кромка", "Сайт"))
+    for _ in range(2):
+        store.create_council(participants=["sol"], judge="sol", project=chosen["id"])
+    store.create_council(participants=["sol"], judge="sol")
+    counts = {project["id"]: project["councilCount"] for project in listed()}
+    assert counts == {chosen["id"]: 2, alone["id"]: 0}
+    assert edits(chosen["id"], name="Кромка 2").json()["project"]["councilCount"] == 2
+
+
+def test_only_a_project_no_council_chose_is_deleted(repos, projects, store):
+    project = creates().json()["project"]
+    council = store.create_council(participants=["sol"], judge="sol", project=project["id"])
+    assert error_of(client.delete(f"/api/projects/{project['id']}")) == (409, "project_in_use")
+    assert listed() == [{**project, "councilCount": 1}]
+
+    store.update_council(council.id, {"project": ""})
+    res = client.delete(f"/api/projects/{project['id']}")
+    assert res.status_code == 204 and res.content == b""
+    assert listed() == []
+    assert error_of(client.delete(f"/api/projects/{project['id']}")) == (404, "not_found")
+
+
+@pytest.mark.parametrize("change", [
+    lambda project_id: edits(project_id, name="Кромка 2"),
+    lambda project_id: client.delete(f"/api/projects/{project_id}"),
+])
+def test_a_project_is_changed_under_the_councils_lock(repos, projects, store, change):
+    """Ход совета берёт папку проекта под замком советов: правка и удаление ждут его."""
+    project_id = creates().json()["project"]["id"]
+    done = []
+    with council_lock:
+        worker = threading.Thread(target=lambda: done.append(change(project_id)))
+        worker.start()
+        worker.join(0.3)
+        assert worker.is_alive() and done == []
+    worker.join(5)
+    assert done[0].status_code in (200, 204)
+
+
+def test_a_project_of_the_previous_version_opens(repos, tmp_path, store):
+    """Файл проекта прежней версии — без времени создания и ключа: открывается как есть, а
+    правка не уводит его в конец списка."""
+    folder = tmp_path / "projects"
+    folder.mkdir()
+    (folder / "old1.json").write_text(json.dumps({
+        "id": "old1", "name": "Кромка", "revision": 3, "repositories": ["back", "../legacy"],
+        "notes": "back/docs", "issues": "back/issues", "updated_at": "2026-01-02T03:04:05Z",
+    }), encoding="utf-8")
+    projects = FileProjects(folder)
+    app.dependency_overrides[get_projects] = lambda: projects
+    try:
+        assert listed() == [{"id": "old1", "name": "Кромка", "repos": ["back", "../legacy"],
+                             "docs": "back/docs", "councilCount": 0}]
+        newer = creates(name="Сайт").json()["project"]
+        assert edits("old1", name="Кромка 2").status_code == 200
+        assert [project["id"] for project in listed()] == ["old1", newer["id"]]
+        assert projects.get_project("old1").issues == "back/issues"
+    finally:
+        app.dependency_overrides.pop(get_projects)
+
+
 def test_working_copies_are_offered_from_the_repositories_folder(repos):
-    assert client.get("/api/repositories").json() == {"root": str(repos),
-                                                      "paths": ["back", "front"]}
+    assert client.get("/api/repos").json() == {"repos": ["back", "front"]}
     subprocess.run(["git", "-C", str(repos), "init", "-q"], check=True, capture_output=True)
-    assert client.get("/api/repositories").json()["paths"] == [".", "back", "front"]
+    assert client.get("/api/repos").json() == {"repos": [".", "back", "front"]}
 
 
-def test_a_project_whose_folder_no_longer_fits_tells_why(repos, projects, tmp_path):
-    app.dependency_overrides[get_repositories] = lambda: None
-    project = creates(notes=str(tmp_path / "notes")).json()
-    # Каталог репозиториев задали: прежняя папка — вне его.
-    app.dependency_overrides[get_repositories] = lambda: repos
-    shown = client.get("/api/projects").json()[0]
-    assert shown["id"] == project["id"] and shown["notes_root"] is None
-    assert "вне каталога репозиториев" in shown["problem"]
+def test_without_a_repositories_folder_there_are_no_working_copies(tmp_path):
+    for folder in (None, tmp_path / "missing"):
+        app.dependency_overrides[get_repositories] = lambda folder=folder: folder
+        try:
+            assert client.get("/api/repos").json() == {"repos": []}
+        finally:
+            app.dependency_overrides.pop(get_repositories)
 
 
-def test_a_new_council_takes_the_project_of_the_latest_one(repos, projects):
-    project = creates(repositories=["back"]).json()
+def test_a_new_council_takes_the_project_of_the_latest_one(projects):
+    project = projects.create_project(ProjectDraft(name="Кромка"))
     first = client.post("/api/councils").json()["id"]
     assert client.get(f"/api/councils/{first}").json()["project"] == ""
     assert client.patch(f"/api/councils/{first}",
-                        json={"project": project["id"]}).json()["project"] == project["id"]
+                        json={"project": project.id}).json()["project"] == project.id
     second = client.post("/api/councils").json()["id"]
-    assert client.get(f"/api/councils/{second}").json()["project"] == project["id"]
+    assert client.get(f"/api/councils/{second}").json()["project"] == project.id
     # Последний совет — без проекта: и новый без него.
     client.patch(f"/api/councils/{second}", json={"project": ""})
     third = client.post("/api/councils").json()["id"]
     assert client.get(f"/api/councils/{third}").json()["project"] == ""
 
 
-def test_a_new_council_takes_its_project_under_the_councils_lock(repos, projects):
+def test_a_new_council_takes_its_project_under_the_councils_lock(projects):
     created = []
     with council_lock:
         worker = threading.Thread(target=lambda: created.append(client.post("/api/councils")))
@@ -205,21 +328,6 @@ def test_a_council_takes_only_an_existing_project(projects):
     assert client.get(f"/api/councils/{council_id}").json()["project"] == ""
 
 
-def test_a_project_chosen_by_a_council_is_not_deleted(repos, projects):
-    project = creates().json()
-    council_id = client.post("/api/councils").json()["id"]
-    client.patch(f"/api/councils/{council_id}", json={"name": "Уведомления",
-                                                      "project": project["id"]})
-    res = client.delete(f"/api/projects/{project['id']}")
-    assert res.status_code == 409 and "«Уведомления»" in res.json()["detail"]
-    client.patch(f"/api/councils/{council_id}", json={"project": ""})
-    assert client.delete(f"/api/projects/{project['id']}").status_code == 204
-    assert client.get("/api/projects").json() == []
-    assert client.delete(f"/api/projects/{project['id']}").status_code == 404
-    assert client.put(f"/api/projects/{project['id']}",
-                      json={"name": "Кромка", "revision": 0}).status_code == 404
-
-
 def test_the_notes_folder_of_a_council_is_its_projects(tmp_path):
     store, projects = InMemoryStore(), Projects()
     project = projects.create_project(ProjectDraft(name="Кромка", notes="back/docs"))
@@ -228,11 +336,17 @@ def test_the_notes_folder_of_a_council_is_its_projects(tmp_path):
     assert root == (tmp_path / "back" / "docs").resolve()
     alone = store.create_council(participants=["sol"], judge="sol")
     assert council_notes(alone, projects, tmp_path) is None
-    # Папка проекта больше не годится — не молча без неё, а отказ с причиной.
-    projects.update_project(project.id, ProjectDraft(name="Кромка", notes="../docs"))
+    # Папка проекта не годится — не молча без неё, а отказ с причиной.
+    for notes in ("../docs", "  "):
+        projects.update_project(project.id, {"notes": notes})
+        with pytest.raises(HTTPException) as refused:
+            council_notes(council, projects, tmp_path)
+        assert refused.value.status_code == 422 and "«Кромка»" in refused.value.detail
+    (tmp_path / "notes.md").write_text("", encoding="utf-8")
+    projects.update_project(project.id, {"notes": "notes.md/reasoning"})
     with pytest.raises(HTTPException) as refused:
         council_notes(council, projects, tmp_path)
-    assert refused.value.status_code == 422 and "«Кромка»" in refused.value.detail
+    assert "Это не папка" in refused.value.detail
 
 
 def test_the_issues_folder_of_a_council_is_its_projects(tmp_path):
@@ -241,46 +355,43 @@ def test_the_issues_folder_of_a_council_is_its_projects(tmp_path):
                                                    issues="back/issues"))
     council = store.create_council(participants=["sol"], judge="sol", project=project.id)
     assert council_issues(council, projects, tmp_path) == (tmp_path / "back" / "issues").resolve()
-    projects.update_project(project.id, ProjectDraft(name="Кромка", notes="back/docs"))
+    projects.update_project(project.id, {"issues": ""})
     assert council_issues(council, projects, tmp_path) is None       # без папки задач
-    projects.update_project(project.id, ProjectDraft(name="Кромка", notes="back/docs",
-                                                     issues="back/docs/issues"))
+    projects.update_project(project.id, {"issues": "back/docs/issues"})
     with pytest.raises(HTTPException) as refused:
         council_issues(council, projects, tmp_path)
     assert refused.value.status_code == 422 and "Папка задач проекта" in refused.value.detail
+    # Без папки документации нет и папки задач: задачи выгружаются вместе с заметками.
+    projects.update_project(project.id, {"notes": "", "issues": "back/issues"})
+    assert council_issues(council, projects, tmp_path) is None
 
 
 def test_projects_survive_a_restart_beside_the_councils(tmp_path):
     before = FileProjects(tmp_path / "projects")
-    kept = before.create_project(ProjectDraft(name="Кромка", repositories=["back"], notes="docs"))
+    kept = before.create_project(ProjectDraft(name="Кромка", repositories=["back"], notes="docs"),
+                                 key="k1")
     gone = before.create_project(ProjectDraft(name="Старый"))
-    before.update_project(kept.id, ProjectDraft(name="Кромка", repositories=["back", "front"]))
+    before.update_project(kept.id, {"repositories": ["back", "front"]})
     before.delete_project(gone.id)
     (tmp_path / "projects" / "broken.json").write_text("{", encoding="utf-8")
 
     after = FileProjects(tmp_path / "projects")
     assert after.list_projects() == before.list_projects()
     assert after.get_project(kept.id).repositories == ["back", "front"]
+    assert after.keyed("k1") == after.get_project(kept.id)
     # Советы того же каталога проекты за советы не принимают.
     assert FileStore(tmp_path).list_councils() == []
 
 
-def test_an_issues_folder_is_shared_only_by_projects_of_one_catalog(repos, projects):
-    assert creates(notes="back/docs/reasoning", issues="back/docs/issues").status_code == 201
-    # Тот же каталог заметок — номера задач общие, папка задач тоже может быть общей.
-    assert creates(name="Тот же каталог", notes="back/docs/reasoning",
-                   issues="back/docs/issues").status_code == 201
-    # Другой каталог нумерует задачи сам: его ISS-0005 лёг бы в файл чужой ISS-0005.
-    res = creates(name="Другой", notes="front/docs", issues="back/docs/issues")
-    assert res.status_code == 422 and "уже у проекта «Кромка»" in res.json()["detail"]
-
-
-@pytest.mark.parametrize(("notes", "issues"), [
-    ("front/docs", "back/docs/reasoning/issues"),     # задачи — в чужой папке документации
-    ("back/docs", ""),                                # чужие задачи — в своей папке документации
-])
-def test_issues_are_not_put_into_another_projects_notes_folder(repos, projects, notes, issues):
-    assert creates(notes="back/docs/reasoning", issues="back/docs/issues").status_code == 201
-    res = creates(name="Другой", notes=notes, issues=issues)
-    assert res.status_code == 422 and "Causa прочла бы" in res.json()["detail"]
-    assert len(projects.list_projects()) == 1
+def test_a_project_of_the_previous_version_is_ordered_by_its_last_edit():
+    now = datetime.now(UTC)
+    projects = Projects()
+    new = projects.create_project(ProjectDraft(name="Новый"))
+    old = projects.create_project(ProjectDraft(name="Старый"))
+    # Как у файла прежней версии: времени создания нет, последняя правка — раньше нового.
+    projects._projects[old.id] = old.model_copy(update={"created_at": None,
+                                                        "updated_at": now - timedelta(days=1)})
+    assert [project.id for project in projects.list_projects()] == [old.id, new.id]
+    projects.update_project(old.id, {"name": "Старый 2"})
+    assert projects.get_project(old.id).created_at == now - timedelta(days=1)
+    assert [project.id for project in projects.list_projects()] == [old.id, new.id]

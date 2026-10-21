@@ -16,8 +16,8 @@ def test_councils():
     assert client.get("/api/councils").status_code == 200
 
 
-def test_settings():
-    assert client.get("/api/settings").json()["models"]
+def test_models():
+    assert client.get("/api/models").json()["models"]
 
 
 def test_unknown_council_is_404():
@@ -33,7 +33,7 @@ def test_unknown_api_path_is_json_404():
     for url in ("/api", "/api/councils/c1/unknown", "/api/nope"):
         res = client.get(url)
         assert res.status_code == 404, url
-        assert res.headers["content-type"].startswith("application/json"), url
+        assert res.json()["error"]["code"] == "not_found", url
 
 
 @pytest.mark.skipif(not (STATIC / "index.html").exists(), reason="фронт не собран")
