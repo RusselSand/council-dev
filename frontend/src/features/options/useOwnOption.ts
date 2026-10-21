@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { ApiError, useAddOption, useRound, useUpdateOption } from '../../data';
-import { canSaveOption, sameText, type Option } from '../../domain/options';
+import { canSaveOption, sameText, type Option, type OptionSet } from '../../domain/options';
+import { claimChoice, holdsChoice } from './choiceClaims';
 
 /** Через сколько после последней правки поле «Свой вариант» сохраняется, мс. */
 const DELAY = 600;
@@ -17,15 +18,18 @@ interface Field {
   left: boolean;
 }
 
-/** Что известно о поле на сервере: у какого вопроса, вариант, созданный из него, его текст и надо ли его выбирать. */
+/** Что известно о поле на сервере: у какого вопроса, вариант, созданный из него, его текст и номер его выбора. */
 interface Session {
   question: string;
   /** Вариант, созданный из поля; не создан — null. */
   option: string | null;
   /** Последний сохранённый текст. */
   saved: string;
-  /** У вопроса выбрали другое: сохранённое из поля больше не выбирается — выбор за последним щелчком. */
-  unselect: boolean;
+  /**
+   * Номер выбора поля (claimChoice()): у вопроса с тех пор выбрали другое — здесь или на экране, открытом снова, —
+   * сохранённое из поля больше не выбирается: выбор за последним щелчком.
+   */
+  claim: number;
 }
 
 export interface OwnOption {
@@ -45,14 +49,14 @@ export interface OwnOption {
    * сохранился, его не правят, иначе набранное в поле ушло бы после правки и затёрло её.
    */
   saves: (option: string) => boolean;
-  /** Открыть поле у вопроса на экране. */
+  /** Открыть поле у вопроса на экране: выбором вопроса станет то, что в нём наберут (claimChoice()). */
   open: () => void;
   edit: (text: string) => void;
   /** Уходят от вопроса на экране: набранное в его поле уходит сразу; сохранилось — поле закрывается. */
   close: () => void;
   /**
-   * У вопроса выбрали другое: поле закрывается, набранное уходит сразу, но ни оно, ни прежние поля этого вопроса, которые
-   * ещё сохраняются, выбором не становятся.
+   * У вопроса выбрали другое (claimChoice()): поле закрывается, набранное уходит сразу, но ни оно, ни прежние поля этого
+   * вопроса, которые ещё сохраняются, выбором не становятся — выбор уже за другим.
    */
   unselect: (question: string) => void;
   /** Сохранить сейчас набранное во всех полях, и там, где не вышло. Ответ — сохранилось ли всё. */
@@ -62,18 +66,21 @@ export interface OwnOption {
 /**
  * Поле «Свой вариант», как в макете: набранное сохраняется само, после паузы в наборе, — сначала создаёт свой вариант
  * (useAddOption()), дальше правит его (useUpdateOption()); запросы идут по одному, каждый — с тем, что набрано к его
- * отправке. Сохранённое становится выбором вопроса (onSaved), если с открытия поля у вопроса не выбрали другое. Ушли от
- * вопроса или закрыли экран — набранное уходит сразу; поле закрывается, когда сохранилось, а не вышло — остаётся у своего
- * вопроса с набранным и ошибкой. Пустое поле не сохраняется и выбор не меняет; стёрли поле, из которого вариант уже
- * создан, — на сервере он с прежним текстом: под полем ошибка, и flush() — не всё сохранилось. current — вопрос на экране.
- * round — набор вариантов: шаг сменил состояние — варианты другие, хоть id вопросов те же: поля прежних забываются, а то,
- * что из них ещё уходит, выбором не становится, в варианты не встаёт и дальше не правится.
+ * отправке. Сохранённое становится выбором вопроса (onSaved), если с открытия поля у вопроса не выбрали другое — и на
+ * экране, открытом снова, когда с него ушли, пока поле сохранялось (holdsChoice()). Ушли от вопроса или закрыли экран —
+ * набранное уходит сразу; поле закрывается, когда сохранилось, а не вышло — остаётся у своего вопроса с набранным и
+ * ошибкой. Пустое поле не сохраняется и выбор не меняет; стёрли поле, из которого вариант уже создан, — на сервере он
+ * с прежним текстом: под полем ошибка, и flush() — не всё сохранилось. current — вопрос на экране. round — набор
+ * вариантов: шаг сменил состояние — варианты другие, хоть id вопросов те же: поля прежних забываются, а то, что из них ещё
+ * уходит, выбором не становится, в варианты не встаёт и дальше не правится. sets — варианты, как пришли; не пришли —
+ * undefined: вопроса в них больше нет (его убрали на «Вопросах», а шаг тот же) — его поле забывается так же.
  */
 export function useOwnOption(
   councilId: string,
   streamId: string,
   current: string | undefined,
   round: unknown,
+  sets: readonly OptionSet[] | undefined,
   onSaved: (question: string, option: string) => void,
 ): OwnOption {
   const addOption = useAddOption();
@@ -107,13 +114,27 @@ export function useOwnOption(
   const generation = useRound(round, () => {
     clearTimeout(timer.current);
     setScheduled(false);
-    for (const session of sessions.current.values()) session.unselect = true;
     sessions.current.clear();
     fieldsRef.current = {};
     setFields({});
     setCreated({});
     setFailed({});
   });
+
+  // Вопроса больше нет в вариантах (его убрали на «Вопросах», а шаг тот же) — его поле забывается, как со сменой состояния
+  // шага: набранное в нём не уходит, а то, что уже уходит, выбором не становится и в поле не встаёт. Иначе поле, которого
+  // не видно, сохранялось бы при каждом «Утвердить» и не давало бы утвердить.
+  useEffect(() => {
+    if (!sets) return;
+    const present = new Set(sets.map((set) => set.question.id));
+    for (const [id, session] of sessions.current) if (!present.has(session.question)) sessions.current.delete(id);
+    const known = Object.keys(fieldsRef.current);
+    if (known.every((question) => present.has(question))) return;
+    const next = { ...fieldsRef.current };
+    for (const question of known) if (!present.has(question)) delete next[question];
+    fieldsRef.current = next;
+    setFields(next);
+  }, [sets]);
 
   /** Поставить поле вопроса; null — убрать. */
   const put = useCallback((question: string, field: Field | null) => {
@@ -155,14 +176,16 @@ export function useOwnOption(
     // Набор вариантов тот же, что когда поле начали сохранять: шаг сменил состояние — поле забыто.
     const sentIn = generation.current;
     const fresh = () => generation.current === sentIn;
+    // Поле не забыто: шаг не сменил состояние и вопрос не убрали.
+    const live = () => fresh() && sessions.current.get(id) === session;
     setSending((n) => n + 1);
     let outcome = session.option
       ? await updateOption.attempt(councilId, streamId, question, session.option, text, fresh)
       : await addOption.attempt(councilId, streamId, question, text, null, `own:${id}`, fresh);
     // Вариант уже создавали по ключу этого поля, но с другим текстом (ответ на прошлую попытку не дошёл), — правим. Он
-    // уже в поле: не вышло поправить — карточкой с прежним текстом рядом с полем он не встаёт. Шаг сменил состояние, пока
-    // вариант уходил, — он из прежних вариантов, и его не правим.
-    if (fresh() && outcome.value && !session.option && !sameText(outcome.value.text, text)) {
+    // уже в поле: не вышло поправить — карточкой с прежним текстом рядом с полем он не встаёт. Поле забыто, пока
+    // вариант уходил, — он из прежних вариантов или у убранного вопроса, и его не правим.
+    if (live() && outcome.value && !session.option && !sameText(outcome.value.text, text)) {
       const recovered = outcome.value;
       session.option = recovered.id;
       session.saved = recovered.text;
@@ -170,8 +193,8 @@ export function useOwnOption(
       outcome = await updateOption.attempt(councilId, streamId, question, recovered.id, text, fresh);
     }
     setSending((n) => n - 1);
-    // Поле забыто: его ответ — про прежние варианты, ни в поле, ни в выбор он не идёт.
-    if (!fresh()) return true;
+    // Поле забыто: его ответ — про прежние варианты или убранный вопрос, ни в поле, ни в выбор он не идёт.
+    if (!live()) return true;
     if (outcome.error) {
       markFailed(id, outcome.error);
       return false;
@@ -181,7 +204,8 @@ export function useOwnOption(
     session.saved = saved.text;
     markCreated(id, saved);
     markFailed(id, undefined);
-    if (!session.unselect) onSavedRef.current(question, saved.id);
+    // Выбор за последним щелчком: после открытия поля у вопроса выбрали другое (и на экране, открытом снова) — не выбираем.
+    if (holdsChoice(councilId, streamId, question, session.claim)) onSavedRef.current(question, saved.id);
     return true;
   };
 
@@ -250,14 +274,18 @@ export function useOwnOption(
 
   const open = () => {
     if (current === undefined) return;
+    // Выбором вопроса станет поле: то, что выбрали у него раньше и ещё сохраняется, — уже нет.
+    const claim = claimChoice(councilId, streamId, current);
     const field = fieldsRef.current[current];
     // Поле осталось с тех пор, как ушли от вопроса, — снова открытое.
     if (field) {
+      const session = sessions.current.get(field.session);
+      if (session) session.claim = claim;
       if (field.left) put(current, { ...field, left: false });
       return;
     }
     const session = nextSession.current++;
-    sessions.current.set(session, { question: current, option: null, saved: '', unselect: false });
+    sessions.current.set(session, { question: current, option: null, saved: '', claim });
     put(current, { question: current, text: '', session, left: false });
   };
 
@@ -284,8 +312,7 @@ export function useOwnOption(
   };
 
   const unselect = (question: string) => {
-    // Поле этого вопроса могли закрыть раньше, уйдя к другому вопросу, а сохранение из него ещё идёт.
-    for (const session of sessions.current.values()) if (session.question === question) session.unselect = true;
+    // Выбором поле уже не станет: выбор у вопроса забрали (claimChoice()) — и у прежних полей, которые ещё сохраняются.
     const field = fieldsRef.current[question];
     if (!field) return;
     if (question === current) {
@@ -296,7 +323,8 @@ export function useOwnOption(
     void enqueue(field);
   };
 
-  // Экран закрыли — набранное уходит сразу.
+  // Экран закрыли — набранное уходит сразу и становится выбором, если на экране, открытом снова, у вопроса не выбрали
+  // другое раньше, чем оно сохранилось.
   useEffect(() => () => void flush(), [flush]);
 
   const field = current === undefined ? undefined : fields[current];

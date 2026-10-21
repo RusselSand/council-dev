@@ -1,6 +1,7 @@
-import { useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useAddOption, useRound, useUpdateOption, type ApiError, type Outcome } from '../../data';
-import { canSaveOption, sameText, type Option } from '../../domain/options';
+import { canSaveOption, sameText, type Option, type OptionSet } from '../../domain/options';
+import { claimChoice, holdsChoice } from './choiceClaims';
 
 /** Правка, открытая на варианте: у какого вопроса, какой вариант и что набрано. */
 interface Editing {
@@ -11,13 +12,6 @@ interface Editing {
   created: string | null;
   /** Не вышло сохранить: набранного на сервере нет, пока «Сохранить» не выйдет или правку не закроют. */
   error: ApiError | undefined;
-}
-
-/** Правка, которая уходит на сервер: у какого вопроса и станет ли сохранённое выбором. */
-interface Sending {
-  question: string;
-  /** У вопроса выбрали другое, пока правка уходила: сохранённое выбором не становится — выбор за последним щелчком. */
-  select: boolean;
 }
 
 export interface OptionEditor {
@@ -43,8 +37,6 @@ export interface OptionEditor {
   save: () => boolean;
   /** «Отмена»: закрыть без сохранения. */
   cancel: () => void;
-  /** У вопроса выбрали другое: правка этого вопроса, которая уходит, сохранится, но выбором не станет. */
-  unselect: (question: string) => void;
   /**
    * Дождаться ответа на правку, которая уходит. Ответ — нет ли несохранённой: открыта правка, которую не вышло
    * сохранить, — false, пока её не сохранят или не закроют; правки нет — true.
@@ -55,16 +47,19 @@ export interface OptionEditor {
 /**
  * «Поправить» у варианта, как в макете: поле с его текстом, «Сохранить» и «Отмена». «Сохранить» у варианта совета
  * создаёт свой вариант на его основе (useAddOption(), basedOn), у своего — правит его (useUpdateOption()); сохранённая
- * правка становится выбором вопроса (onSaved), если, пока она уходила, у вопроса не выбрали другое; поле закрывается.
- * Текст не меняли — поле закрывается без запроса; пустой — не сохраняется. Не вышло — поле остаётся открытым с ошибкой;
- * вариант, который правка нашла по своему ключу, а поправить не вышло (created), — в ней, пока её не сохранят или не
- * закроют. round — набор вариантов: шаг сменил состояние — варианты другие, хоть id те же: правка прежних закрывается, а
- * та, что ещё уходит, выбором не становится, в варианты не встаёт и дальше не правится.
+ * правка становится выбором вопроса (onSaved), если, пока она уходила, у вопроса не выбрали другое — и на экране,
+ * открытом снова, когда с него ушли, пока правка уходила (holdsChoice()); поле закрывается. Текст не меняли — поле
+ * закрывается без запроса; пустой — не сохраняется. Не вышло — поле остаётся открытым с ошибкой; вариант, который правка
+ * нашла по своему ключу, а поправить не вышло (created), — в ней, пока её не сохранят или не закроют. round — набор
+ * вариантов: шаг сменил состояние — варианты другие, хоть id те же: правка прежних закрывается, а та, что ещё уходит,
+ * выбором не становится, в варианты не встаёт и дальше не правится. sets — варианты, как пришли; не пришли — undefined:
+ * вопроса в них больше нет (его убрали на «Вопросах», а шаг тот же) — правка его варианта закрывается.
  */
 export function useOptionEditor(
   councilId: string,
   streamId: string,
   round: unknown,
+  sets: readonly OptionSet[] | undefined,
   onSaved: (question: string, option: string) => void,
 ): OptionEditor {
   const addOption = useAddOption();
@@ -72,8 +67,6 @@ export function useOptionEditor(
   const [editing, setEditing] = useState<Editing | null>(null);
   /** То же, что editing, но сразу: settle() узнаёт по нему, открыта ли правка, которую не вышло сохранить. */
   const editingRef = useRef<Editing | null>(null);
-  /** Правка, которая уходит на сервер; не уходит — null. */
-  const sending = useRef<Sending | null>(null);
   /** Ответ на правку, которая уходит; не уходит — null. */
   const inFlight = useRef<Promise<boolean> | null>(null);
 
@@ -84,10 +77,14 @@ export function useOptionEditor(
   };
 
   // Шаг сменил состояние — правка прежних вариантов закрывается, а та, что ещё уходит, выбором не становится.
-  const generation = useRound(round, () => {
-    if (sending.current) sending.current.select = false;
-    put(null);
-  });
+  const generation = useRound(round, () => put(null));
+
+  // Вопроса больше нет в вариантах (его убрали на «Вопросах», а шаг тот же) — правка его варианта закрывается: её не
+  // видно, и её ошибка не давала бы утвердить.
+  useEffect(() => {
+    const open = editingRef.current;
+    if (sets && open && !sets.some((set) => set.question.id === open.question)) put(null);
+  }, [sets]);
 
   /**
    * Поменять правку варианта optionId, если она ещё открыта: пока правка уходила, её могли закрыть или открыть другую, а
@@ -132,12 +129,11 @@ export function useOptionEditor(
       put(null);
       return false;
     }
-    const current: Sending = { question, select: true };
+    // Выбором вопроса станет правка: то, что выбрали у него раньше и ещё сохраняется, — уже нет.
+    const claim = claimChoice(councilId, streamId, question);
     const sentIn = generation.current;
-    sending.current = current;
     inFlight.current = (async () => {
       const outcome = await send(open, sentIn);
-      sending.current = null;
       inFlight.current = null;
       if (outcome.error) {
         const { error } = outcome;
@@ -145,7 +141,11 @@ export function useOptionEditor(
         return false;
       }
       update(option.id, sentIn, () => null);
-      if (current.select) onSaved(question, outcome.value.id);
+      // Выбор за последним щелчком: пока правка уходила, у вопроса выбрали другое (и на экране, открытом снова) или шаг
+      // сменил состояние — не выбираем.
+      if (generation.current === sentIn && holdsChoice(councilId, streamId, question, claim)) {
+        onSaved(question, outcome.value.id);
+      }
       return true;
     })();
     return true;
@@ -166,9 +166,6 @@ export function useOptionEditor(
     },
     save,
     cancel: () => put(null),
-    unselect: (question) => {
-      if (sending.current?.question === question) sending.current.select = false;
-    },
     settle: async () => {
       await inFlight.current;
       // Правка, которую не вышло сохранить, на экране с ошибкой: её текста на сервере нет — утверждать без него нельзя.

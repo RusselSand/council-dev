@@ -15,6 +15,7 @@ import {
 import { stepApprovable, stepEditable } from '../../domain/stream';
 import { useI18n } from '../../i18n';
 import { navigate, routePath } from '../../router';
+import { claimChoice } from './choiceClaims';
 import { useOptionEditor } from './useOptionEditor';
 import { useOwnOption } from './useOwnOption';
 
@@ -148,7 +149,8 @@ const NOT_SAVED = new ApiError('not_saved', 'Не всё сохранилось 
  * варианты с «почему», «ценой» и зависимостями; «Поправить»; «Свой вариант»; «Пока не решаю». Выбор уходит сразу по
  * щелчку (useOptionChoices()); свой вариант — после паузы в наборе (useOwnOption()), правка — по «Сохранить»
  * (useOptionEditor()), и сохранённое становится выбором, если, пока оно сохранялось, у вопроса не выбрали другое (щелчок
- * по варианту, «Пока не решаю», «Свой вариант», ушедшая правка): выбор за последним щелчком. «Утвердить выбор → к
+ * по варианту, «Пока не решаю», «Свой вариант», ушедшая правка) — и на экране, открытом снова, когда с него ушли, пока
+ * оно сохранялось (claimChoice()): выбор за последним щелчком. «Утвердить выбор → к
  * решениям» сначала дожидается выбора, своего варианта и правки, потом утверждает и открывает «Решения» потока; что-то не
  * сохранилось — не утверждает, под кнопкой — «Не всё сохранилось»; ушли с экрана, пока утверждался, — не открывает.
  * Правки и «Утвердить» не уходят вместе с «Запустить снова» шага: retrying — шаг запускают снова, и они не действуют;
@@ -196,9 +198,10 @@ export function useOptionsStep(
   const set = index >= 0 ? sets[index] : undefined;
 
   const select = (question: string, option: string) => choices.change(question, { kind: 'option', option });
-  // Шаг сменил состояние — варианты другие: поле «Свой вариант» и правка прежних забываются, как и выбор.
-  const own = useOwnOption(councilId, streamId, currentId, state, select);
-  const editor = useOptionEditor(councilId, streamId, state, select);
+  // Шаг сменил состояние — варианты другие: поле «Свой вариант» и правка прежних забываются, как и выбор. Вопрос убрали,
+  // а шаг тот же, — забываются его поле и правка.
+  const own = useOwnOption(councilId, streamId, currentId, state, query.data?.optionSets, select);
+  const editor = useOptionEditor(councilId, streamId, state, query.data?.optionSets, select);
 
   // Пока ответа ждут утверждение, выбор, свой вариант (и пока он ждёт паузы в наборе) или правка, «Запустить снова» не
   // действует; ответили или ушли с шага — снова действует.
@@ -274,10 +277,10 @@ export function useOptionsStep(
 
   const choose = (next: Choice) => {
     if (!set || locked) return;
-    // Выбрали другое — поле «Свой вариант» закрывается; набранное в нём и правка, которая ещё уходит, сохраняются, но
-    // выбором не становятся: выбор за последним щелчком.
+    // Выбрали другое — поле «Свой вариант» закрывается; набранное в нём и правка, которая ещё уходит (и с экрана, с
+    // которого ушли, пока они сохранялись), сохраняются, но выбором не становятся: выбор за последним щелчком.
+    claimChoice(councilId, streamId, set.question.id);
     own.unselect(set.question.id);
-    editor.unselect(set.question.id);
     choices.change(set.question.id, next);
   };
 
@@ -355,10 +358,9 @@ export function useOptionsStep(
     ownError: ownOpen ? own.error : undefined,
     openOwn: () => {
       if (!set || locked) return;
-      // Открыли поле — выбором станет то, что в нём наберут: правка, которая ещё уходит, сохранится, но выбором не станет.
-      editor.unselect(set.question.id);
       // Вариант из поля сохранился, а выбрать его не вышло, — щелчок по кружку выбирает его снова.
       if (ownOpen && !ownSelected && own.option !== null) select(set.question.id, own.option);
+      // Открыли поле — выбором станет то, что в нём наберут: правка, которая ещё уходит, сохранится, но выбором не станет.
       own.open();
     },
     editOwn: own.edit,
@@ -375,8 +377,8 @@ export function useOptionsStep(
     },
     changeEdit: editor.edit,
     saveEdit: () => {
-      // Правка ушла — выбором станет она: поле «Свой вариант» закрывается, набранное в нём сохранится, но выбором не
-      // станет.
+      // Правка ушла — выбором станет она (editor.save()): поле «Свой вариант» закрывается, набранное в нём сохранится, но
+      // выбором не станет.
       if (set && !locked && editor.save()) own.unselect(set.question.id);
     },
     cancelEdit: editor.cancel,
