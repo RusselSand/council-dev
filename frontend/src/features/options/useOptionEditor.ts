@@ -50,7 +50,7 @@ export interface OptionEditor {
  * правка становится выбором вопроса (onSaved), если, пока она уходила, у вопроса не выбрали другое; поле закрывается.
  * Текст не меняли — поле закрывается без запроса; пустой — не сохраняется. Не вышло — поле остаётся открытым с ошибкой.
  * round — набор вариантов: шаг сменил состояние — варианты другие, хоть id те же: правка прежних закрывается, а та, что
- * ещё уходит, выбором не становится.
+ * ещё уходит, выбором не становится, в варианты не встаёт и дальше не правится.
  */
 export function useOptionEditor(
   councilId: string,
@@ -89,10 +89,14 @@ export function useOptionEditor(
     if (generation.current === sentIn && open?.option.id === optionId) put(change(open));
   };
 
-  /** Сохранить правку; ответ — сохранённый вариант или ошибка. Ключ поля — свой у каждого набора вариантов. */
+  /**
+   * Сохранить правку; ответ — сохранённый вариант или ошибка. Ключ поля — свой у каждого набора вариантов; ответ про
+   * прежний набор в варианты не встаёт.
+   */
   const send = async ({ question, option, text, created }: Editing, sentIn: number): Promise<Outcome<Option>> => {
+    const fresh = () => generation.current === sentIn;
     if (option.source === 'user' || created) {
-      return updateOption.attempt(councilId, streamId, question, created ?? option.id, text);
+      return updateOption.attempt(councilId, streamId, question, created ?? option.id, text, fresh);
     }
     const added = await addOption.attempt(
       councilId,
@@ -101,12 +105,14 @@ export function useOptionEditor(
       text,
       option.id,
       `edit:${sentIn}:${question}/${option.id}`,
+      fresh,
     );
-    if (!added.value || sameText(added.value.text, text)) return added;
+    // Шаг сменил состояние, пока правка уходила, — правка закрыта, а вариант — из прежних: его не правим.
+    if (!added.value || sameText(added.value.text, text) || !fresh()) return added;
     // Вариант уже создавали по ключу этой правки, но с другим текстом (ответ на прошлую попытку не дошёл), — правим его.
     const id = added.value.id;
     update(option.id, sentIn, (open) => ({ ...open, created: id }));
-    return updateOption.attempt(councilId, streamId, question, id, text);
+    return updateOption.attempt(councilId, streamId, question, id, text, fresh);
   };
 
   const save = () => {

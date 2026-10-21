@@ -93,17 +93,34 @@ export function useOptionChoices(councilId: string, streamId: string, round: unk
  * пишут вариант («Свой вариант» или правка варианта): пока вариант из него не создан, каждая попытка идёт с одним
  * ключом, даже если текст между ними поправили, — это тот же вариант, и повтор после оборванного ответа не создаёт
  * второй; создан — следующий с новым ключом. Ключ у каждого поля свой и держится, пока из поля не создан вариант, хоть
- * между попытками сохраняли другие поля. Ответ встаёт в конец вариантов вопроса сразу; варианты и список советов
- * перезапрашиваются. Выбор вариант не меняет — выбирают его отдельно (useOptionChoices()).
+ * между попытками сохраняли другие поля. Ответ встаёт в конец вариантов вопроса сразу, если fresh() — набор вариантов
+ * тот же, что когда запрос ушёл (шаг сменил состояние — варианты другие, и ответ про прежние в них не встаёт); варианты
+ * и список советов перезапрашиваются. Выбор вариант не меняет — выбирают его отдельно (useOptionChoices()).
  */
 export function useAddOption(): Mutation<
-  [id: string, streamId: string, questionId: string, text: string, basedOn: string | null, field: string],
+  [
+    id: string,
+    streamId: string,
+    questionId: string,
+    text: string,
+    basedOn: string | null,
+    field: string,
+    fresh: () => boolean,
+  ],
   Option
 > {
   /** Ключи полей, из которых вариант ещё не создан, — по полю. */
   const keys = useRef(new Map<string, string>());
   return useMutation(
-    async (id: string, streamId: string, questionId: string, text: string, basedOn: string | null, field: string) => {
+    async (
+      id: string,
+      streamId: string,
+      questionId: string,
+      text: string,
+      basedOn: string | null,
+      field: string,
+      _fresh: () => boolean,
+    ) => {
       let key = keys.current.get(field);
       if (key === undefined) {
         key = newKey();
@@ -116,9 +133,9 @@ export function useAddOption(): Mutation<
         throw error;
       }
     },
-    (option, id, streamId, questionId, _text, _basedOn, field) => {
+    (option, id, streamId, questionId, _text, _basedOn, field, fresh) => {
       keys.current.delete(field);
-      markStale('options', putOption(id, streamId, questionId, option));
+      markStale('options', fresh() ? putOption(id, streamId, questionId, option) : undefined);
       markStale('councils');
     },
   );
@@ -126,14 +143,15 @@ export function useAddOption(): Mutation<
 
 /**
  * Правка своего варианта — PATCH /api/councils/<id>/streams/<streamId>/options/<questionId>/<optionId>: новый текст.
- * Ответ встаёт на место прежнего варианта сразу; варианты и список советов перезапрашиваются. Выбор правка не меняет.
+ * Ответ встаёт на место прежнего варианта сразу, если fresh() — набор вариантов тот же, что когда запрос ушёл (как
+ * у useAddOption()); варианты и список советов перезапрашиваются. Выбор правка не меняет.
  */
 export function useUpdateOption(): Mutation<
-  [id: string, streamId: string, questionId: string, optionId: string, text: string],
+  [id: string, streamId: string, questionId: string, optionId: string, text: string, fresh: () => boolean],
   Option
 > {
   return useMutation(
-    async (id: string, streamId: string, questionId: string, optionId: string, text: string) => {
+    async (id: string, streamId: string, questionId: string, optionId: string, text: string, _fresh: () => boolean) => {
       try {
         return await source.updateOption(id, streamId, questionId, optionId, text);
       } catch (error) {
@@ -141,8 +159,8 @@ export function useUpdateOption(): Mutation<
         throw error;
       }
     },
-    (option, id, streamId, questionId) => {
-      markStale('options', putOption(id, streamId, questionId, option));
+    (option, id, streamId, questionId, _optionId, _text, fresh) => {
+      markStale('options', fresh() ? putOption(id, streamId, questionId, option) : undefined);
       markStale('councils');
     },
   );

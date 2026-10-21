@@ -62,7 +62,7 @@ export interface OwnOption {
  * вопроса с набранным и ошибкой. Пустое поле не сохраняется и выбор не меняет; стёрли поле, из которого вариант уже
  * создан, — на сервере он с прежним текстом: под полем ошибка, и flush() — не всё сохранилось. current — вопрос на экране.
  * round — набор вариантов: шаг сменил состояние — варианты другие, хоть id вопросов те же: поля прежних забываются, а то,
- * что из них ещё уходит, выбором не становится.
+ * что из них ещё уходит, выбором не становится, в варианты не встаёт и дальше не правится.
  */
 export function useOwnOption(
   councilId: string,
@@ -94,6 +94,19 @@ export function useOwnOption(
   const timer = useRef<ReturnType<typeof setTimeout>>();
   const onSavedRef = useRef(onSaved);
   onSavedRef.current = onSaved;
+
+  // Шаг сменил состояние — поля прежних вариантов забываются: набранное в них не уходит, а то, что уже уходит, выбором не
+  // становится, в варианты не встаёт и дальше не правится.
+  const generation = useRound(round, () => {
+    clearTimeout(timer.current);
+    setScheduled(false);
+    for (const session of sessions.current.values()) session.unselect = true;
+    sessions.current.clear();
+    fieldsRef.current = {};
+    setFields({});
+    setCreated({});
+    setFailed({});
+  });
 
   /** Поставить поле вопроса; null — убрать. */
   const put = useCallback((question: string, field: Field | null) => {
@@ -132,20 +145,26 @@ export function useOwnOption(
       markFailed(id, undefined);
       return true;
     }
+    // Набор вариантов тот же, что когда поле начали сохранять: шаг сменил состояние — поле забыто.
+    const sentIn = generation.current;
+    const fresh = () => generation.current === sentIn;
     setSending((n) => n + 1);
     let outcome = session.option
-      ? await updateOption.attempt(councilId, streamId, question, session.option, text)
-      : await addOption.attempt(councilId, streamId, question, text, null, `own:${id}`);
+      ? await updateOption.attempt(councilId, streamId, question, session.option, text, fresh)
+      : await addOption.attempt(councilId, streamId, question, text, null, `own:${id}`, fresh);
     // Вариант уже создавали по ключу этого поля, но с другим текстом (ответ на прошлую попытку не дошёл), — правим. Он
-    // уже в поле: не вышло поправить — карточкой с прежним текстом рядом с полем он не встаёт.
-    if (outcome.value && !session.option && !sameText(outcome.value.text, text)) {
+    // уже в поле: не вышло поправить — карточкой с прежним текстом рядом с полем он не встаёт. Шаг сменил состояние, пока
+    // вариант уходил, — он из прежних вариантов, и его не правим.
+    if (fresh() && outcome.value && !session.option && !sameText(outcome.value.text, text)) {
       const recovered = outcome.value;
       session.option = recovered.id;
       session.saved = recovered.text;
       markCreated(id, recovered);
-      outcome = await updateOption.attempt(councilId, streamId, question, recovered.id, text);
+      outcome = await updateOption.attempt(councilId, streamId, question, recovered.id, text, fresh);
     }
     setSending((n) => n - 1);
+    // Поле забыто: его ответ — про прежние варианты, ни в поле, ни в выбор он не идёт.
+    if (!fresh()) return true;
     if (outcome.error) {
       markFailed(id, outcome.error);
       return false;
@@ -243,19 +262,6 @@ export function useOwnOption(
     put(question, null);
     queue.current = queue.current.then(() => sendRef.current(field));
   };
-
-  // Шаг сменил состояние — поля прежних вариантов забываются: набранное в них не уходит, а то, что уже уходит, выбором не
-  // становится.
-  useRound(round, () => {
-    clearTimeout(timer.current);
-    setScheduled(false);
-    for (const session of sessions.current.values()) session.unselect = true;
-    sessions.current.clear();
-    fieldsRef.current = {};
-    setFields({});
-    setCreated({});
-    setFailed({});
-  });
 
   // Экран закрыли — набранное уходит сразу.
   useEffect(() => () => void flush(), [flush]);
