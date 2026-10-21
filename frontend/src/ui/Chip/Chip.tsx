@@ -28,6 +28,8 @@ interface ChipProps {
   tone?: ChipTone;
   size?: ChipSize;
   shape?: ChipShape;
+  /** Подпись моноширинным: номер итога на «Итогах» («OUT-0024»). */
+  mono?: boolean;
   /** Щёлкнуть нельзя: чип не откликается. */
   disabled?: boolean;
   onClick: () => void;
@@ -42,11 +44,19 @@ export function Chip({
   tone = 'glass',
   size = 'md',
   shape = 'pill',
+  mono = false,
   disabled = false,
   onClick,
   children,
 }: ChipProps) {
-  const classes = [styles.chip, styles[tone], styles[size], styles[shape], selected && styles.selected]
+  const classes = [
+    styles.chip,
+    styles[tone],
+    styles[size],
+    styles[shape],
+    selected && styles.selected,
+    mono && styles.mono,
+  ]
     .filter(Boolean)
     .join(' ');
   return (

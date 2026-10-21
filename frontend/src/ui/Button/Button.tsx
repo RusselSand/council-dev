@@ -11,8 +11,11 @@ export type ButtonVariant = 'primary' | 'outline' | 'text' | 'subtle' | 'inverse
 /** md — в шапке и окнах; sm — на карточке; xs — на серой плашке внутри карточки («Объединить с», «Разделить»). */
 export type ButtonSize = 'md' | 'sm' | 'xs';
 
-/** ink — обычная; danger — красная: действие, которое не отменить. */
-export type ButtonTone = 'ink' | 'danger';
+/**
+ * ink — обычная; danger — красная: действие, которое не отменить; muted — серая главная: действие в обход главного
+ * («Пропустить · дальше →» у заблокированного итога).
+ */
+export type ButtonTone = 'ink' | 'danger' | 'muted';
 
 type ButtonProps = ButtonHTMLAttributes<HTMLButtonElement> & {
   variant?: ButtonVariant;

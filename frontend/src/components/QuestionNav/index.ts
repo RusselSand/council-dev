@@ -1,1 +1,1 @@
-export { QuestionNav, type QuestionChip } from './QuestionNav';
+export { QuestionNav, type QuestionChip, type QuestionNavLabels } from './QuestionNav';

@@ -26,6 +26,12 @@ export {
   useUpdateOption,
   type OptionChoices,
 } from './hooks/useOptions';
+export {
+  useApproveOutcomes,
+  useOutcomeApprovals,
+  useStreamOutcomes,
+  type OutcomeApprovals,
+} from './hooks/useOutcomes';
 export { useCreateProject, useDeleteProject, useProjects, useRepos, useUpdateProject } from './hooks/useProjects';
 export {
   useCouncilResearch,

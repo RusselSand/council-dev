@@ -1,7 +1,10 @@
 import type { ReactNode } from 'react';
 import styles from './Panel.module.css';
 
-/** Белый блок в светлой рамке внутри карточки, без тени: решение (ADR) на «Решениях». Содержимое — столбиком. */
-export function Panel({ children }: { children: ReactNode }) {
-  return <div className={styles.panel}>{children}</div>;
+/** outlined — белый в светлой рамке: решение (ADR) на «Решениях»; muted — серый без рамки: итог на «Итогах». */
+export type PanelVariant = 'outlined' | 'muted';
+
+/** Блок внутри карточки, без тени. Содержимое — столбиком. */
+export function Panel({ variant = 'outlined', children }: { variant?: PanelVariant; children: ReactNode }) {
+  return <div className={`${styles.panel} ${styles[variant]}`}>{children}</div>;
 }

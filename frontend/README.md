@@ -58,7 +58,7 @@ src/
 этап «Ввод», `features/slices` — этап «Нарезка», `features/structure` — этап «Группы», `features/research` — этап
 «Исследование», `features/stream` — шаг потока (общее для всех шагов), `features/projectDecisions` — шаг «Решения
 проекта», `features/questions` — шаг «Вопросы», `features/options` — шаг «Варианты», `features/decisions` — шаг
-«Решения».
+«Решения», `features/outcomes` — шаг «Итоги».
 
 Экран совета (`features/council`, `<Council route>`) — общий для всех этапов и шагов потока: под шапкой рамки вкладки
 шести этапов, под ними — этап, который `app/Screen.tsx` выбирает по адресу и получает совет из списка
@@ -247,6 +247,22 @@ streamId, run)`: правка решения шлёт «почему» и где
 рядом с экраном; расчёты — точка решения, первое и следующее незафиксированное, есть ли «почему» — `domain/decisions.ts`.
 Экран ставится с `key` по совету и потоку.
 
+«Итоги» (`features/outcomes`) — итоги по одному, как «Решения»: чипы итогов с номером моноширинным (`components/QuestionNav`
+с `labels` про итоги и `mono`; точка: утверждён — зелёная, заблокирован — красная, иначе жёлтая), «утверждено 2 из 3»,
+«←» / «→»; итог — серый блок (`parts/OutcomeCard` на `Panel variant="muted"`): номер (в каталоге, а не выгружен — в
+потоке), название и метка «готов к разработке» / «есть пробелы» / «заблокирован Q4» (`components/QuestionHead
+size="md"`), что меняется, белый блок «Готово, когда · 4» с пустыми квадратиками (`parts/DoneWhen`), решения, которые итог
+реализует, — «ADR-0046 — что меняет» (`Facts size="xs"`), внизу мелко «опирается на … · ограничения: F3» (у решений нет
+пояснений — «решения: ADR-0007, ADR-0008») и кнопка итога: «Утвердить → дальше», «Утверждён · дальше →» или серая
+«Пропустить · дальше →» у заблокированного (`Button tone="muted"`). Шаг ждёт вас или остановился — внизу «Утвердить итоги
+→ к документации». Пока на шаге работают модели — серые строки. Итоги даёт `useStreamOutcomes(id, streamId, state)`, как
+решения — по состоянию шага, с `run` и опросом вместе с потоками (тема `outcomes`). «Утвердить → дальше» уходит сразу
+(`useOutcomeApprovals()` на `useQueuedSaves()`, очередь — у каждого запуска шага своя), дожидается ответа и открывает
+следующий итог; заблокированный не утверждают. «Утвердить итоги» дожидается утверждений, которые ещё уходят, — не
+утвердилось — `not_saved` и открывается этот итог; иначе утверждает (`useApproveOutcomes()`) и открывает «Документацию».
+Открытый итог и действия — `useOutcomesStep()` рядом с экраном; расчёты — метка и точка итога, первый и следующий итог,
+можно ли утвердить — `domain/outcomes.ts`. Экран ставится с `key` по совету и потоку.
+
 «Новый совет» — одно действие на все его кнопки (шапка, меню, колонка «Ввод» на Сводке): `useNewCouncil()` из
 `components/NewCouncil` создаёт совет и открывает его «Ввод». `NewCouncilProvider` ставит `app/App.tsx`; ошибку
 создания рамка показывает под шапкой.
@@ -260,8 +276,8 @@ streamId, run)`: правка решения шлёт «почему» и где
 Готовое в `ui/`: `Shell` — стеклянная рамка страницы с местом под меню, `Button` (`primary`, `outline`, `text` —
 только текст, `subtle` — только текст, под курсором серая подложка, `inverse` — белая на тёмной плашке, `plain` — текст
 без отступов, под курсором темнеет («Отброшено вариантов: 2 — почему»), `link` — подчёркнутый текст («Поправить»);
-размер `md` — в шапке и окнах, `sm` — на карточке, `xs` — на серой плашке внутри карточки; `tone="danger"` — красная;
-недоступная `primary` — серая), `IconButton` — круглая серая кнопка со значком и подписью для читалок (`md` — «×» в
+размер `md` — в шапке и окнах, `sm` — на карточке, `xs` — на серой плашке внутри карточки; `tone="danger"` — красная,
+`tone="muted"` — серая главная: «Пропустить · дальше →»; недоступная `primary` — серая), `IconButton` — круглая серая кнопка со значком и подписью для читалок (`md` — «×» в
 окне, `sm` — «←» / «→» на карточке), `Dialog` — окно поверх страницы с заголовком, «×» и кнопками внизу (закрывается «×», кликом мимо и Esc),
 `Field` — подпись поля, поле и пояснение (`hintPosition`: под подписью или под полем), `TextInput` — поле ввода
 (`text`, `mono` — путь, `title` — название карточки, которое правят на месте), `TextArea` — поле для длинного текста
@@ -278,7 +294,8 @@ streamId, run)`: правка решения шлёт «почему» и где
 (`glass` — на фоне страницы, `paper` — белый с рамкой на карточке, `outline` — белый, выбранный в тёмной рамке, вопрос
 на «Вариантах», `green` / `yellow` — заливка цвета состояния, зависимость варианта; размер
 `sm` — теснее, тип фрагмента, `xs` — самый мелкий, зависимость; `dot` — цветная точка перед подписью, фильтр находок;
-`shape="box"` — прямоугольник со скруглёнными углами, «Решение: P12» и «Оставить открытым»),
+`shape="box"` — прямоугольник со скруглёнными углами, «Решение: P12» и «Оставить открытым»; `mono` — подпись
+моноширинным, номер итога),
 `Segmented` — переключатель из
 нескольких кнопок
 (`glass` — в шапке, `solid` — на карточке), `Card` — белая карточка (`sm` — в колонке канбана, `row` — строка списка
@@ -297,15 +314,18 @@ streamId, run)`: правка решения шлёт «почему» и где
 («Пропущено — …», «Шаг откроется, …»), `Highlight` — жёлтая плашка с подписью капсом (идея группы, идея потока),
 `Callout` — цветная плашка-пояснение внутри строки списка: заголовок мелко и жирно и под ним содержимое (`red` —
 «Пересматривает решение проекта», `green` — «В тексте уже есть ответ»), `Facts` — строки «подпись — значение»
-(`sm` — «почему» и «цена» варианта, `md` — решение: «контекст», «решение», «почему», «последствия»), `Panel` — белый
-блок в светлой рамке без тени внутри карточки (решение на «Решениях»).
+(`sm` — «почему» и «цена» варианта, `md` — решение: «контекст», «решение», «почему», «последствия», `xs` — подписи —
+номера моноширинным: решения итога), `Panel` — блок без тени внутри карточки (`outlined` — белый в светлой рамке,
+решение на «Решениях»; `muted` — серый без рамки, итог на «Итогах»).
 В `components/`:
 `StateDot` — точка состояния совета, этапа или шага; `StateTag` — метка состояния; `LoadState` — загрузка и ошибка
 (без `onRetry` — только текст ошибки); `NewCouncil` — действие «Новый совет»; `ProjectDialog` — окно проекта: новый
 и правка; `RunningStage` — этап, пока на нём работают модели: «ИИ работает», что происходит, серые строки и справа —
 ход работы; `RunProgress` — «Ход работы»: части и состояния моделей (`RUN_TONE` — цвет точки по состоянию модели);
-`QuestionNav` — вопросы шага по одному: чипы с цветной точкой, «готово 2 из 4», «←» / «→» («Варианты», «Решения»);
-`QuestionHead` — открытый вопрос крупно, метка перед текстом (`before`) и справа (`after`).
+`QuestionNav` — вопросы шага по одному: чипы с цветной точкой, «готово 2 из 4», «←» / «→» («Варианты», «Решения»; на
+«Итогах» — итоги: `labels` — подписи для читалок, `mono` — номера моноширинным, `label` у чипа — подпись, если она не
+id); `QuestionHead` — открытый вопрос крупно, метка перед текстом (`before`) и справа (`after`); `size="md"` — мельче,
+итог на «Итогах».
 
 ## Адреса
 
@@ -329,9 +349,9 @@ streamId, run)`: правка решения шлёт «почему» и где
 Экран не ходит в `fetch` сам — только через хуки из `data/`.
 
 - `data/source.ts` — интерфейс источника `DataSource`: по методу на ручку контракта.
-- `data/mock/` — моки. Совет `g1`, его нарезка, группы, исследование, поток, вопросы, варианты и решения — из
+- `data/mock/` — моки. Совет `g1`, его нарезка, группы, исследование, поток, вопросы, варианты, решения и итоги — из
   `data-1.json` макета, остальные советы, их фрагменты, группы, находки, потоки, прошлые решения, вопросы, варианты,
-  решения и проекты — из `prototype.js`.
+  решения, итоги и проекты — из `prototype.js`.
   «К потокам →» в моках создаёт потоки из групп.
   Моки отдают копию данных: экран не может их испортить.
 - `data/http/` — настоящий сервер: `request()` разбирает ответ и ошибку по контракту.
@@ -339,21 +359,23 @@ streamId, run)`: правка решения шлёт «почему» и где
 - `data/hooks/` — хуки запросов: `useCouncils()`, `useCouncilBrief(id)`, `useCouncilSlicing(id, running)`,
   `useCouncilStructure(id, running)`, `useCouncilResearch(id, running)`, `useCouncilStreams(id, running)`,
   `useProjectDecisions(id, streamId)`, `useStreamQuestions(id, streamId, state)`, `useStreamOptions(id, streamId,
-  state)`, `useStreamDecisions(id, streamId, state)`, `useModels()`, `useProjects()`, `useRepos()` → `{ data, error,
-  loading, reload }`; хуки действий: `useCreateCouncil()`, `useUpdateCouncil()`, `useSaveBrief()`, `useStartSlicing()`,
-  `useStartStructure()`, `useConfirmStructure()`, `useRetryStructure()`, `useResearchAction()` (`run(id, { action:
-  'start' | 'skip' | 'stop' | 'reset', kind, … })`), `useApproveResearch()`, `useRetryStream()`,
-  `useApproveProjectDecisions()`, `useAddQuestion()`, `useApproveQuestions()`, `useAddOption()`, `useUpdateOption()`,
-  `useApproveOptions()`, `useApproveDecisions()`, `useCreateProject()`, `useUpdateProject()`, `useDeleteProject()` →
-  `{ run, pending, error }`.
+  state)`, `useStreamDecisions(id, streamId, state)`, `useStreamOutcomes(id, streamId, state)`, `useModels()`,
+  `useProjects()`, `useRepos()` → `{ data, error, loading, reload }`; хуки действий: `useCreateCouncil()`,
+  `useUpdateCouncil()`, `useSaveBrief()`, `useStartSlicing()`, `useStartStructure()`, `useConfirmStructure()`,
+  `useRetryStructure()`, `useResearchAction()` (`run(id, { action: 'start' | 'skip' | 'stop' | 'reset', kind, … })`),
+  `useApproveResearch()`, `useRetryStream()`, `useApproveProjectDecisions()`, `useAddQuestion()`, `useApproveQuestions()`,
+  `useAddOption()`, `useUpdateOption()`, `useApproveOptions()`, `useApproveDecisions()`, `useApproveOutcomes()`,
+  `useCreateProject()`, `useUpdateProject()`, `useDeleteProject()` → `{ run, pending, error }`.
   `run()` отвечает изменённым объектом (удаление — id удалённого) или `undefined`, если не вышло (причина — в `error`).
   `attempt()` — то же, но отвечает `{ value }` или `{ error }` этого запуска: когда действие запускают для разных
   объектов (поля «Свой вариант» разных вопросов), `error` хука — только про последний.
   `useFragmentLabels(id, running)` — смена типа фрагмента по щелчку, `useFindingDecisions(id, round)` — решение по
   находке по щелчку, `useQuestionRemovals(id, streamId, round)` — «Убрать» / «Вернуть» вопрос,
-  `useOptionChoices(id, streamId, run, round)` — выбор по вопросу на «Вариантах»: все — на `useQueuedSaves()` (у каждого ключа своя очередь, на сервере — последний выбор; `pending`
+  `useOptionChoices(id, streamId, run, round)` — выбор по вопросу на «Вариантах», `useOutcomeApprovals(id, streamId, run,
+  round)` — «Утвердить → дальше» на «Итогах»: все — на `useQueuedSaves()` (у каждого ключа своя очередь, на сервере — последний выбор; `pending`
   и `errors` по ключу, `change()` — отвечает, когда очередь дошла до выбора, `settle()`; сменился набор `round` —
-  выборы прежних забываются; сменилась `lane` — очереди новые, и прежние их не держат: у выбора вариантов `lane` — `run`).
+  выборы прежних забываются; сменилась `lane` — очереди новые, и прежние их не держат: у выбора вариантов и утверждения
+  итогов `lane` — `run`).
   `useRound(round, reset)` — номер набора: `round` стал другим — номер растёт и зовётся `reset()`; запрос, ушедший в
   прежнем наборе, по номеру узнаёт, что его ответ уже не про экран. Номер растёт в `useLayoutEffect`, в том же такте,
   что новый набор встал на экран: ответ, пришедший между ними, не примут за ответ про новый набор.
@@ -604,6 +626,15 @@ streamId, run)`: правка решения шлёт «почему» и где
 | обоснование (почему) | rationale (why) |
 | правка (в последствиях) | fix       |
 | Зафиксировать решения | Finalize decisions |
+| итог (на шаге «Итоги») | outcome    |
+| утверждён, утверждено (итог) | approved |
+| Готово, когда   | Done when         |
+| готов к разработке | ready for development |
+| есть пробелы    | has gaps          |
+| заблокирован (итог) | blocked by    |
+| опирается на    | relies on         |
+| ограничения     | constraints       |
+| Утвердить итоги | Approve outcomes  |
 
 ## Токены
 
@@ -632,7 +663,8 @@ streamId, run)`: правка решения шлёт «почему» и где
   `--question-id-width` (колонка с id вопроса потока), `--icon-button-sm` (круглая кнопка «←» / «→» на карточке),
   `--radio-size` и `--radio-dot` (кружок выбора варианта и точка в нём), `--option-label-min` (колонка «почему» /
   «цена» на карточке варианта), `--decision-label-min` (колонка подписей решения: «контекст», «последствия»),
-  `--fix-num` (белый кружок с номером в «Что поправить»);
+  `--fix-num` (белый кружок с номером в «Что поправить»), `--adr-ref-min` (колонка номеров решений на итоге),
+  `--criterion-box` (пустой квадратик перед критерием в «Готово, когда»);
 - прозрачность — `--opacity-count` (число на чипе), `--opacity-disabled` (недоступный переключатель), `--opacity-idle`
   (не начатый шаг в цепочке), `--opacity-removed` (убранный вопрос потока);
 - тени — `--shadow-card`, `--shadow-modal`, `--shadow-knob`; фон страницы — `--page-background`; затемнение под
@@ -693,6 +725,15 @@ npm --prefix frontend run shot -- --name own --proto "#/c/c1/streams/B/options" 
 ```
 npm --prefix frontend run shot -- --name decisions --proto "#/c/c1/streams/A/decisions" --click "Q4" --click "Оставить открытым" --app "/c/c1/streams/A/decisions" --app-click "Q4" --app-click "Оставить открытым" --full
 npm --prefix frontend run shot -- --name tooptions --proto "#/c/c1/streams/A/decisions" --click "Q4" --click "Поправить в «Вариантах»" --app "/c/c1/streams/A/decisions" --app-click "Q4" --app-click "Поправить в «Вариантах»"
+```
+
+«Итоги»: у `g1` все итоги утверждены, у итогов — решения с пояснениями; у `c1` поток A — как в макете: «Итоги» готовы,
+итоги не утверждены, OUT-3 заблокирован Q4. Заблокированный итог и «Утвердить → дальше»:
+
+```
+npm --prefix frontend run shot -- --name outcomes --proto "#/c/g1/streams/A/outcomes" --app "/c/g1/streams/A/outcomes" --full
+npm --prefix frontend run shot -- --name blocked --proto "#/c/c1/streams/A/outcomes" --click "OUT-3" --app "/c/c1/streams/A/outcomes" --app-click "OUT-3"
+npm --prefix frontend run shot -- --name approve --proto "#/c/c1/streams/A/outcomes" --click "Утвердить → дальше" --app "/c/c1/streams/A/outcomes" --app-click "Утвердить → дальше"
 ```
 
 Для снимков нужен браузер: один раз `npx playwright install chromium` в `frontend/`. Если его нет, скрипт снимает в

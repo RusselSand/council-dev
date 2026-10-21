@@ -15,9 +15,23 @@
   gap: var(--space-10) var(--space-14);
 }
 
+/* Решения итога: «ADR-0046 — что меняет». */
+.xs {
+  grid-template-columns: minmax(var(--adr-ref-min), max-content) minmax(0, 1fr);
+  gap: var(--space-6) var(--space-10);
+  font-size: var(--text-sm);
+  line-height: var(--leading-relaxed);
+}
+
 .label {
   font-size: var(--text-sm);
   color: var(--color-text-faint);
+}
+
+.xs .label {
+  font-family: var(--font-mono);
+  font-weight: var(--weight-semibold);
+  color: var(--color-ink);
 }
 
 .value {
@@ -33,4 +47,8 @@
 
 .md .value {
   color: var(--color-ink);
+}
+
+.xs .value {
+  color: var(--color-text-secondary);
 }

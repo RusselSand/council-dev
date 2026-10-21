@@ -1,0 +1,25 @@
+/* Что меняется в системе. */
+.change {
+  margin: 0;
+  font-size: var(--text-md);
+  line-height: var(--leading-text);
+  text-wrap: pretty;
+  overflow-wrap: anywhere;
+}
+
+/* Низ итога: слева мелко — на что опирается, справа — кнопка; не влезают в строку — кнопка уходит вниз, тоже справа. */
+.foot {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: var(--space-8);
+}
+
+.meta {
+  flex: 1;
+  min-width: 0;
+  font-size: var(--text-xs);
+  color: var(--color-text-faint);
+  overflow-wrap: anywhere;
+}

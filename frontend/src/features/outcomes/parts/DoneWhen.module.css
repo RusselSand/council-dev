@@ -1,0 +1,43 @@
+.block {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-6);
+  min-width: 0;
+  padding: var(--space-12) var(--space-14);
+  border-radius: var(--radius-14);
+  background: var(--color-paper);
+}
+
+.list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-6);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.criterion {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-8);
+  font-size: var(--text-md);
+  line-height: var(--leading-relaxed);
+}
+
+/* Пустой квадратик перед критерием — как в макете; его не отмечают. */
+.box {
+  flex: none;
+  box-sizing: border-box;
+  width: var(--criterion-box);
+  height: var(--criterion-box);
+  margin-top: var(--space-3);
+  border: var(--border-thick) solid var(--color-disabled);
+  border-radius: var(--radius-4);
+}
+
+.text {
+  min-width: 0;
+  text-wrap: pretty;
+  overflow-wrap: anywhere;
+}

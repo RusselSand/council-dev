@@ -372,6 +372,22 @@ export const ru = {
   'decisions.accept.open': 'Дальше →',
   'decisions.approve': 'Зафиксировать решения → к итогам',
 
+  'outcomes.nav': 'Итоги потока',
+  'outcomes.prev': 'Предыдущий итог',
+  'outcomes.next': 'Следующий итог',
+  'outcomes.done': 'утверждено {done} из {total}',
+  'outcomes.tag.ready': 'готов к разработке',
+  'outcomes.tag.gaps': 'есть пробелы',
+  'outcomes.tag.blocked': 'заблокирован {questions}',
+  'outcomes.criteria': 'Готово, когда · {count}',
+  'outcomes.decisions': 'решения: {ids}',
+  'outcomes.reliesOn': 'опирается на {ids}',
+  'outcomes.constraints': 'ограничения: {ids}',
+  'outcomes.next.ready': 'Утвердить → дальше',
+  'outcomes.next.approved': 'Утверждён · дальше →',
+  'outcomes.next.blocked': 'Пропустить · дальше →',
+  'outcomes.approve': 'Утвердить итоги → к документации',
+
   'progress.title': 'Ход работы',
   'progress.note': 'Участники работают по отдельности, судья решает там, где они разошлись.',
 
@@ -480,6 +496,9 @@ export const ru = {
   'error.decisions_not_ready':
     'Решения сейчас не изменить: шаг ещё не начат или его запустили снова. Поток и решения обновлены.',
   'error.rationale_required': 'Без обоснования решение не зафиксировать — напишите «почему».',
+  'error.outcomes_not_ready':
+    'Итоги сейчас не утвердить: шаг ещё не начат или его запустили снова. Поток и итоги обновлены.',
+  'error.outcome_blocked': 'Итог заблокирован — ему не хватает решения, утверждать нечего. Итоги обновлены.',
   'error.network': 'Нет связи с сервером. Проверьте сеть и попробуйте ещё раз.',
   'error.unknown': 'Что-то пошло не так. Попробуйте ещё раз.',
   'error.not_saved': 'Не всё сохранилось — шаг не утверждён. Проверьте правки и попробуйте ещё раз.',

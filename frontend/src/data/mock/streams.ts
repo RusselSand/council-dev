@@ -320,6 +320,11 @@ const RUNNING_NOTE: Partial<Record<Step, string>> = {
   outcomes: 'сбор итогов идёт',
 };
 
+/** Строка шага в цепочке, когда он ждёт человека сразу, без работы моделей: «Документация» — как у потока A c1 в макете. */
+const WAITING_NOTE: Partial<Record<Step, string>> = {
+  notes: 'черновик ждёт вас',
+};
+
 /** Модели шага начали работать сейчас (now): модели совета работают, судья ждёт своей очереди. */
 const started = (step: Step, participants: string[], judge: string, now: string): StepProgress[] =>
   progress(step, participants, judge, [participants.map(() => 'running'), 'waiting']).map((phase, i) => ({
@@ -335,8 +340,9 @@ const projectDoneNote = (selected: string[]) =>
 
 /**
  * Поток, где человек утвердил шаг: шаг готов, со строкой note. Шаг готов впервые — на следующем начинают работать
- * модели (в макете он сразу ждёт вас, будто модели уже поработали); уже был готов — меняется только строка шага,
- * остальные шаги не трогаются, как в макете. В моках модели на следующем шаге не заканчивают.
+ * модели (в макете он сразу ждёт вас, будто модели уже поработали), а где модели не работают («Документация»), он сразу
+ * ждёт вас; уже был готов — меняется только строка шага, остальные шаги не трогаются, как в макете. В моках модели на
+ * следующем шаге не заканчивают.
  */
 function stepApproved(
   stream: Stream,
@@ -352,6 +358,9 @@ function stepApproved(
     ...stream,
     steps: stream.steps.map((step): StreamStep => {
       if (step.step === approved) return { ...step, state: 'done', note, text: null };
+      if (step.step === next && first && !PHASES[next]) {
+        return { ...step, state: 'waiting', note: WAITING_NOTE[next] ?? '', text: null, progress: [] };
+      }
       if (step.step === next && first) {
         return {
           ...step,
@@ -429,6 +438,26 @@ export const decisionsStepApproved = (
   judge: string,
   now: string,
 ): Stream => stepApproved(stream, 'decisions', decisionsNote(fixed, total), participants, judge, now);
+
+/**
+ * Строка «Итогов» в цепочке: шаг готов — «итоги утверждены · 6», как у g1 в макете; иначе — «утверждено 2 из 3»: сколько
+ * итогов утверждено из всех. Пишет сервер.
+ */
+export const outcomesNote = (approved: number, total: number, done: boolean) =>
+  done ? `итоги утверждены · ${approved}` : `утверждено ${approved} из ${total}`;
+
+/**
+ * Поток после «Утвердить итоги → к документации»: «Итоги» готовы — со строкой, сколько утверждено; «Документация» ждёт
+ * вас. Какие итоги утверждены, переход не меняет, как в макете.
+ */
+export const outcomesStepApproved = (
+  stream: Stream,
+  approved: number,
+  total: number,
+  participants: string[],
+  judge: string,
+  now: string,
+): Stream => stepApproved(stream, 'outcomes', outcomesNote(approved, total, true), participants, judge, now);
 
 /**
  * «Запустить снова» — шаг, который остановился, запускается снова: модели, которые уже ответили, заново не работают —

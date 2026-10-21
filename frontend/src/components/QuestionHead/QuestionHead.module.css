@@ -33,3 +33,20 @@
   flex: none;
   margin-top: var(--space-2);
 }
+
+/* Итог на «Итогах»: название мельче, номер и метка — по центру строки. */
+.md {
+  align-items: center;
+}
+
+.md .id {
+  padding-top: 0;
+}
+
+.md .text {
+  font-size: var(--text-lg);
+}
+
+.md .after {
+  margin-top: 0;
+}

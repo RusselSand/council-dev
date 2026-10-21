@@ -349,6 +349,22 @@ export const en = translation({
   'decisions.accept.open': 'Next →',
   'decisions.approve': 'Finalize decisions → to outcomes',
 
+  'outcomes.nav': 'Stream outcomes',
+  'outcomes.prev': 'Previous outcome',
+  'outcomes.next': 'Next outcome',
+  'outcomes.done': '{done} of {total} approved',
+  'outcomes.tag.ready': 'ready for development',
+  'outcomes.tag.gaps': 'has gaps',
+  'outcomes.tag.blocked': 'blocked by {questions}',
+  'outcomes.criteria': 'Done when · {count}',
+  'outcomes.decisions': 'decisions: {ids}',
+  'outcomes.reliesOn': 'relies on {ids}',
+  'outcomes.constraints': 'constraints: {ids}',
+  'outcomes.next.ready': 'Approve → next',
+  'outcomes.next.approved': 'Approved · next →',
+  'outcomes.next.blocked': 'Skip · next →',
+  'outcomes.approve': 'Approve outcomes → to documentation',
+
   'progress.title': 'Progress',
   'progress.note': 'Members work separately; the judge decides where they disagree.',
 
@@ -451,6 +467,9 @@ export const en = translation({
   'error.decisions_not_ready':
     'Decisions can’t be changed now: the step hasn’t started or it was run again. The stream and decisions are updated.',
   'error.rationale_required': 'A decision can’t be finalized without a rationale — write the “why”.',
+  'error.outcomes_not_ready':
+    'Outcomes can’t be approved now: the step hasn’t started or it was run again. The stream and outcomes are updated.',
+  'error.outcome_blocked': 'The outcome is blocked — it lacks a decision, so there’s nothing to approve. Outcomes are updated.',
   'error.network': 'No connection to the server. Check your network and try again.',
   'error.unknown': 'Something went wrong. Please try again.',
   'error.not_saved': 'Not everything was saved, so the step wasn’t approved. Check your edits and try again.',

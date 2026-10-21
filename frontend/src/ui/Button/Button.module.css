@@ -144,6 +144,11 @@
   color: var(--state-failed);
 }
 
+/* «Пропустить · дальше →» у заблокированного итога. */
+.muted.primary:not(:disabled) {
+  background: var(--color-text-faint);
+}
+
 /* Недоступная текстовая кнопка — бледная, как «Удалить» у проекта в советах. */
 .text:disabled {
   color: var(--color-text-ghost);
