@@ -16,6 +16,7 @@ import { stepApprovable, stepEditable } from '../../domain/stream';
 import { useI18n } from '../../i18n';
 import { navigate, routePath } from '../../router';
 import { claimChoice } from './choiceClaims';
+import { settleWrites, trackWrite } from './pendingWrites';
 import { useOptionEditor } from './useOptionEditor';
 import { useOwnOption } from './useOwnOption';
 
@@ -55,7 +56,8 @@ export interface OptionView {
   /** Открыта правка этого варианта. */
   editing: boolean;
   /**
-   * «Поправить» действует: правки не заперты, другая правка не уходит и вариант не сохраняется из поля «Свой вариант».
+   * «Поправить» действует: правки не заперты, другая правка не уходит (и с экрана, который закрыли, пока она уходила) и
+   * вариант не сохраняется из поля «Свой вариант».
    */
   editable: boolean;
 }
@@ -155,7 +157,8 @@ const NOT_SAVED = new ApiError('not_saved', 'Не всё сохранилось 
  * (useOptionEditor()), и сохранённое становится выбором, если, пока оно сохранялось, у вопроса не выбрали другое (щелчок
  * по варианту, «Пока не решаю», «Свой вариант», в котором начали писать, ушедшая правка) — и на экране, открытом снова,
  * когда с него ушли, пока оно сохранялось (claimChoice()): выбор за последним щелчком. «Утвердить выбор → к
- * решениям» сначала дожидается выбора, своего варианта и правки, потом утверждает и открывает «Решения» потока; что-то не
+ * решениям» сначала дожидается выбора, своего варианта и правки — и тех, что уходят с экрана, который закрыли, пока они
+ * уходили (settleWrites()), — потом утверждает и открывает «Решения» потока; что-то не
  * сохранилось — не утверждает, под кнопкой — «Не всё сохранилось»; ушли с экрана, пока утверждался, — не открывает.
  * Правки и «Утвердить» не уходят вместе с «Запустить снова» шага: retrying — шаг запускают снова, и они не действуют;
  * пока выбор утверждается или что-то из правок ждёт паузы в наборе или ответа, onBusy(true) — не действует «Запустить
@@ -215,7 +218,10 @@ export function useOptionsStep(
   const index = sets.findIndex((s) => s.question.id === currentId);
   const set = index >= 0 ? sets[index] : undefined;
 
-  const select = (question: string, option: string) => choices.change(question, { kind: 'option', option });
+  // Выбор уходит — «Утвердить» дождётся его и на экране, открытом снова, если с этого ушли раньше ответа.
+  const change = (question: string, next: Choice) =>
+    trackWrite(councilId, streamId, run, 'choice', choices.change(question, next));
+  const select = (question: string, option: string) => change(question, { kind: 'option', option });
   // Набор вариантов другой: поле «Свой вариант» и правка прежних забываются, как и выбор. Вопрос убрали, а шаг тот же, —
   // забываются его поле и правка.
   const own = useOwnOption(councilId, streamId, currentId, run, round, query.data?.optionSets, select);
@@ -235,9 +241,9 @@ export function useOptionsStep(
   // вместе с ними. Пока правка уходит — тоже: не сохранится — её ошибка останется у вопроса на экране, и «Утвердить» не
   // утвердит без неё. На готовом шаге вопросы смотрят, хоть выбирать и нельзя.
   const navLocked = approving || retrying || editor.saving;
-  // «Поправить»: пока правка уходит, другую не открыть; вариант ещё сохраняется из поля «Свой вариант» — правка ушла бы
-  // раньше набранного в поле, и оно бы её затёрло.
-  const editable = (id: string) => !locked && !editor.saving && !own.saves(id);
+  // «Поправить»: пока правка уходит (и с экрана, который закрыли, пока она уходила), другую не открыть; вариант ещё
+  // сохраняется из поля «Свой вариант» — правка ушла бы раньше набранного в поле, и оно бы её затёрло.
+  const editable = (id: string) => !locked && !editor.saving && !editor.locked && !own.saves(id);
   const ownOpen = set !== undefined && own.shown;
   const choice: Choice | null = set ? choiceOf(set, pending) : null;
   // Выбором станет вариант из поля (в нём набрано то, чего на сервере ещё нет) или уже стал — выбран его кружок. Поле
@@ -300,7 +306,7 @@ export function useOptionsStep(
     // которого ушли, пока они сохранялись), сохраняются, но выбором не становятся: выбор за последним щелчком.
     claimChoice(councilId, streamId, set.question.id);
     own.unselect(set.question.id);
-    choices.change(set.question.id, next);
+    void change(set.question.id, next);
   };
 
   const done = chosenCount(sets, pending);
@@ -316,12 +322,16 @@ export function useOptionsStep(
     setApproving(true);
     setApproveError(undefined);
     void (async () => {
-      // Утверждается то, что на экране: сначала — набранное в полях «Свой вариант» (и там, где не вышло), правка и
+      // Сначала — то, что ещё уходит в этих вариантах и с «Вариантов» потока, которые закрыли, пока оно уходило: выбор,
+      // поле «Свой вариант», правка и выбор, которым они станут. Поле и правка оттуда, которые не сохранились, встают
+      // здесь у своих вопросов, и дальше их сохраняют, как здешние.
+      const elsewhere = await settleWrites(councilId, streamId, approvedRun);
+      // Утверждается то, что на экране: потом — набранное в полях «Свой вариант» (и там, где не вышло), правка и
       // выбор, которые ещё идут. Правка открыта с ошибкой или с набранным, которое не сохраняли, — она не сохранилась.
       const ownSaved = await own.flush();
       const edited = await editor.settle();
       const chosen = await choices.settle();
-      const saved = ownSaved && edited && chosen;
+      const saved = elsewhere && ownSaved && edited && chosen;
       // Не сохранилось — не утверждаем и говорим под кнопкой: ошибка может быть у вопроса, которого нет на экране.
       const { value: stream, error } = saved
         ? await approveAction.attempt(councilId, streamId, approvedRun)

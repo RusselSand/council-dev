@@ -1,8 +1,9 @@
 import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from 'react';
 import { ApiError, useAddOption, useRound, useUpdateOption } from '../../data';
 import { canSaveOption, sameText, type Option, type OptionSet } from '../../domain/options';
-import { claimChoice, holdsChoice, releaseChoice } from './choiceClaims';
+import { applyChoice, claimChoice, holdsChoice, releaseChoice } from './choiceClaims';
 import { leftovers } from './leftovers';
+import { trackWrite } from './pendingWrites';
 
 /** Через сколько после последней правки поле «Свой вариант» сохраняется, мс. */
 const DELAY = 600;
@@ -130,8 +131,9 @@ export interface OwnOption {
  * Поле «Свой вариант», как в макете: набранное сохраняется само, после паузы в наборе, — сначала создаёт свой вариант
  * (useAddOption()), дальше правит его (useUpdateOption()); запросы идут по одному, каждый — с тем, что набрано к его
  * отправке. Сохранённое становится выбором вопроса (onSaved), если с тех пор, как в поле начали писать, у вопроса не
- * выбрали другое — и на экране, открытом снова, когда с него ушли, пока поле сохранялось (holdsChoice()); поле только
- * открыли — правка, которая ещё уходит, всё равно станет выбором. Ушли от вопроса или закрыли экран —
+ * выбрали другое — и на экране, открытом снова, когда с него ушли, пока поле сохранялось (applyChoice()); поле только
+ * открыли — правка, которая ещё уходит, всё равно станет выбором, и та, что уже сохранилась, пока в поле писали, — когда
+ * его стёрли (releaseChoice()). Ушли от вопроса или закрыли экран —
  * набранное уходит сразу; поле закрывается, когда сохранилось, а не вышло — остаётся у своего вопроса с набранным и
  * ошибкой; экран закрыли, а набранное не сохранилось, — поле ждёт «Варианты» этого потока, открытые снова (leftFields),
  * и там оно у своего вопроса с набранным и ошибкой, как у вопроса, от которого ушли. Пустое поле не сохраняется и выбор
@@ -315,9 +317,11 @@ export function useOwnOption(
     markCreated(id, saved);
     markFailed(id, undefined);
     // Выбор за последним щелчком: с тех пор, как в поле начали писать, у вопроса выбрали другое (и на экране, открытом
-    // снова) — не выбираем.
-    if (session.claim !== null && holdsChoice(councilId, streamId, question, session.claim)) {
-      onSavedRef.current(question, saved.id);
+    // снова) — не выбираем; выбрали в другом поле «Свой вариант» и стёрли его — выбор снова за этим.
+    if (session.claim !== null) {
+      applyChoice(councilId, streamId, question, session.claim, () => {
+        if (live()) onSavedRef.current(question, saved.id);
+      });
     }
     return true;
   };
@@ -327,7 +331,8 @@ export function useOwnOption(
 
   /**
    * Поле пустое, из него ничего не создано и ничего не уходит — выбор оно не меняет: его номер выбора отпускается, и
-   * выбор снова за тем, кто выбирал до него (правка, которая ещё уходит, станет выбором).
+   * выбор снова за тем, кто выбирал до него: правка, которая ещё уходит, станет выбором, а та, что уже сохранилась, пока
+   * в поле писали, — сейчас (applyChoice()).
    */
   const releaseEmpty = (field: Field) => {
     const session = sessions.current.get(field.session);
@@ -362,6 +367,8 @@ export function useOwnOption(
         }
       });
       queue.current = sent;
+      // «Утвердить» дождётся его и на экране, открытом снова. Не сохранилось — скажет поле (и там, leftFields).
+      if (session) void trackWrite(councilId, streamId, session.run, 'own', sent.then(() => true));
       return sent;
     },
     [councilId, streamId],
@@ -466,11 +473,14 @@ export function useOwnOption(
       clearTimeout(timer.current);
       const leftIn = roundRef.current;
       for (const field of Object.values(fieldsRef.current)) {
-        void enqueue(field).then((saved) => {
-          const session = sessions.current.get(field.session);
+        const session = sessions.current.get(field.session);
+        const left = enqueue(field).then((saved) => {
           const error = failedRef.current[field.session];
           if (!saved && session && error) leftFields.leave(councilId, streamId, { round: leftIn, field, session, error });
+          return true;
         });
+        // «Утвердить» на экране, открытом снова, дождётся и того, что поле, которое не сохранилось, встанет там.
+        if (session) void trackWrite(councilId, streamId, session.run, 'own', left);
       }
     },
     [councilId, streamId, enqueue],

@@ -1,8 +1,9 @@
 import { useEffect, useRef, useState } from 'react';
 import { ApiError, useAddOption, useRound, useUpdateOption, type Outcome } from '../../data';
 import { canSaveOption, sameText, type Option, type OptionSet } from '../../domain/options';
-import { claimChoice, holdsChoice } from './choiceClaims';
+import { applyChoice, claimChoice } from './choiceClaims';
 import { leftovers } from './leftovers';
+import { trackWrite, useWriting } from './pendingWrites';
 
 /** Текст правки стёрли: пустым вариант не сохранить. */
 const EMPTY = new ApiError('text_required', 'Пустой вариант не сохранить');
@@ -46,11 +47,16 @@ export interface OptionEditor {
   text: string;
   /** Правка уходит на сервер. */
   saving: boolean;
+  /**
+   * Правка уходит — с этого экрана или с «Вариантов» потока, которые закрыли, пока она уходила: новая не открывается,
+   * пока на ту не ответят, иначе обе ушли бы разом, и прежняя могла бы затереть новую.
+   */
+  locked: boolean;
   /** Не вышло сохранить открытую правку. */
   error: ApiError | undefined;
   /**
-   * «Поправить»: открыть правку варианта; прежняя правка закрывается без сохранения. Пока правка уходит, новая не
-   * открывается: ответ на ушедшую закрыл бы её или повесил на неё свою ошибку.
+   * «Поправить»: открыть правку варианта; прежняя правка закрывается без сохранения. Пока правка уходит (locked), новая
+   * не открывается: ответ на ушедшую закрыл бы её или повесил на неё свою ошибку, а с закрытого экрана — затёр бы её.
    */
   start: (question: string, option: Option) => void;
   edit: (text: string) => void;
@@ -80,15 +86,17 @@ const unsaved = ({ text, option, created }: Editing) => created !== null || !sam
  * «Поправить» у варианта, как в макете: поле с его текстом, «Сохранить» и «Отмена». «Сохранить» у варианта совета
  * создаёт свой вариант на его основе (useAddOption(), basedOn), у своего — правит его (useUpdateOption()); сохранённая
  * правка становится выбором вопроса (onSaved), если, пока она уходила, у вопроса не выбрали другое — и на экране,
- * открытом снова, когда с него ушли, пока правка уходила (holdsChoice()); поле закрывается. Текст не меняли — поле
+ * открытом снова, когда с него ушли, пока правка уходила (applyChoice()); выбрали другое в поле «Свой вариант» и стёрли
+ * его — правка становится выбором, как только номер поля отпустят. Поле закрывается. Текст не меняли — поле
  * закрывается без запроса; стёрли — не сохраняется, под полем ошибка. Набрали и не нажали «Сохранить» (или стёрли) —
  * settle() отвечает false: «Утвердить» не выбросит набранное молча. Не вышло — поле остаётся открытым с ошибкой; вариант,
  * который правка нашла по своему ключу, а поправить не вышло (created), — в ней, пока её не сохранят или не закроют.
  * Экран закрыли, пока правка уходила, а она не сохранилась (или закрыли с правкой, которую не вышло сохранить), —
  * правка ждёт «Варианты» этого потока, открытые снова (leftEdits): там она открывается с набранным и ошибкой, когда её
- * вопрос на экране (current) и другой правки нет. run — номер запуска шага, варианты которого на экране: правка уходит
- * с ним. round — набор вариантов: шаг сменил состояние или пришли варианты другого его запуска — варианты другие, хоть
- * id те же: правка прежних закрывается (и та, что ждёт своего вопроса), а та, что ещё уходит, выбором не становится, в
+ * вопрос на экране (current) и другой правки нет. Пока правка уходит — и с экрана, который закрыли, — новая не
+ * открывается (locked, pendingWrites.ts): правки не уходят разом и не затирают одна другую. run — номер запуска шага,
+ * варианты которого на экране: правка уходит с ним. round — набор вариантов: шаг сменил состояние или пришли варианты
+ * другого его запуска — варианты другие, хоть id те же: правка прежних закрывается (и та, что ждёт своего вопроса), а та, что ещё уходит, выбором не становится, в
  * варианты не встаёт и дальше не правится. sets — варианты, как пришли; не пришли — undefined: вопроса в них больше нет
  * (его убрали на «Вопросах», а шаг тот же) — правка его варианта закрывается так же.
  */
@@ -103,6 +111,8 @@ export function useOptionEditor(
 ): OptionEditor {
   const addOption = useAddOption();
   const updateOption = useUpdateOption();
+  // Правки, которые уходят в этом запуске шага, — и с экранов, которые закрыли, пока они уходили.
+  const locked = useWriting(councilId, streamId, run, 'edit');
   const [editing, setEditing] = useState<Editing | null>(null);
   /** То же, что editing, но сразу: settle() узнаёт по нему, открыта ли правка, которую не вышло сохранить. */
   const editingRef = useRef<Editing | null>(null);
@@ -234,7 +244,7 @@ export function useOptionEditor(
     // Выбором вопроса станет правка: то, что выбрали у него раньше и ещё сохраняется, — уже нет.
     const claim = claimChoice(councilId, streamId, question);
     const sentIn = generation.current;
-    inFlight.current = (async () => {
+    const sent = (async () => {
       const outcome = await send(open, sentIn);
       inFlight.current = null;
       if (outcome.error) {
@@ -249,12 +259,17 @@ export function useOptionEditor(
       }
       update(option.id, sentIn, () => null);
       // Выбор за последним щелчком: пока правка уходила, у вопроса выбрали другое (и на экране, открытом снова) или шаг
-      // сменил состояние — не выбираем.
-      if (generation.current === sentIn && holdsChoice(councilId, streamId, question, claim)) {
-        onSaved(question, outcome.value.id);
-      }
+      // сменил состояние — не выбираем. Выбрали другое в поле «Свой вариант» и стёрли его — выбор снова за правкой.
+      const saved = outcome.value.id;
+      applyChoice(councilId, streamId, question, claim, () => {
+        if (generation.current === sentIn) onSaved(question, saved);
+      });
       return true;
     })();
+    inFlight.current = sent;
+    // «Утвердить» дождётся правки и на экране, открытом снова, а новая правка там не уйдёт раньше ответа на эту. Не
+    // сохранилась — скажет сама правка (settle()), и на экране, открытом снова (leftEdits).
+    void trackWrite(councilId, streamId, open.run, 'edit', sent.then(() => true));
     return true;
   };
 
@@ -263,9 +278,10 @@ export function useOptionEditor(
     created: editing?.created ?? null,
     text: editing?.text ?? '',
     saving: addOption.pending || updateOption.pending,
+    locked,
     error: editing?.error,
     start: (question, option) => {
-      if (inFlight.current) return;
+      if (inFlight.current || locked) return;
       put({
         question,
         run,

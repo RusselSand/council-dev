@@ -78,13 +78,14 @@ function staleOnRefused(error: unknown) {
 export type OptionChoices = QueuedSaves<Choice>;
 
 /**
- * Выборы, которые ушли на сервер или ждут, пока ответят на прежний, — по совету, потоку и вопросу. Общие для всех
- * экранов «Варианты», а не у каждого свои: ушли с экрана, пока выбор уходил, вернулись и выбрали другое — новый выбор
- * уходит после ответа на прежний и не обгоняет его.
+ * Выборы, которые ушли на сервер или ждут, пока ответят на прежний, — по совету, потоку, запуску шага и вопросу. Общие
+ * для всех экранов «Варианты», а не у каждого свои: ушли с экрана, пока выбор уходил, вернулись и выбрали другое — новый
+ * выбор уходит после ответа на прежний и не обгоняет его. У другого запуска шага очередь своя: выбор в прежнем сервер
+ * всё равно не примет, и новый его не ждёт.
  */
 const choiceWrites = new Map<string, Promise<unknown>>();
 
-/** Отправить выбор по вопросу после тех, что уже ушли по нему с любого экрана. */
+/** Отправить выбор по вопросу после тех, что уже ушли по нему в этом запуске шага с любого экрана. */
 function writeChoice(
   councilId: string,
   streamId: string,
@@ -92,7 +93,7 @@ function writeChoice(
   questionId: string,
   choice: Choice,
 ): Promise<OptionSet> {
-  const key = JSON.stringify([councilId, streamId, questionId]);
+  const key = JSON.stringify([councilId, streamId, run, questionId]);
   const written = (choiceWrites.get(key) ?? Promise.resolve()).then(() =>
     source.setChoice(councilId, streamId, run, questionId, choice),
   );
@@ -111,20 +112,26 @@ function writeChoice(
  * варианты, потоки (строка шага в цепочке) и список советов перезапрашиваются. round — набор вариантов: шаг сменил
  * состояние или пришли варианты другого его запуска — варианты другие, хоть id вопросов те же, и выборы прежних
  * забываются. run — номер запуска шага, варианты которого на экране: выбор уходит с ним, и сервер не примет его, если шаг
- * с тех пор запустили снова, — выбор, отправленный до того, не встанет в новые варианты с теми же id.
+ * с тех пор запустили снова, — выбор, отправленный до того, не встанет в новые варианты с теми же id. Поэтому очереди
+ * выбора — у каждого запуска шага свои (lane у useQueuedSaves(), run в writeChoice()): выбор в новом запуске не ждёт
+ * ответа на тот, что ещё идёт в прежнем; в одном запуске выборы вопроса по-прежнему уходят по одному.
  */
 export function useOptionChoices(councilId: string, streamId: string, run: number, round: unknown): OptionChoices {
-  return useQueuedSaves<Choice>(async (questionId, choice, fresh) => {
-    try {
-      const set = await writeChoice(councilId, streamId, run, questionId, choice);
-      markStale('options', fresh() ? putSet(councilId, streamId, run, set) : undefined);
-      markStale('streams');
-      markStale('councils');
-    } catch (error) {
-      staleOnRefused(error);
-      throw error;
-    }
-  }, round);
+  return useQueuedSaves<Choice>(
+    async (questionId, choice, fresh) => {
+      try {
+        const set = await writeChoice(councilId, streamId, run, questionId, choice);
+        markStale('options', fresh() ? putSet(councilId, streamId, run, set) : undefined);
+        markStale('streams');
+        markStale('councils');
+      } catch (error) {
+        staleOnRefused(error);
+        throw error;
+      }
+    },
+    round,
+    run,
+  );
 }
 
 /**
