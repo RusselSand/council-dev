@@ -1,4 +1,5 @@
 import { cleanName, type CouncilFields, type CouncilSummary } from '../../domain/council';
+import { canSaveOption, type Choice, type OptionSet } from '../../domain/options';
 import { cleanFields, MAX_PROJECT_REPOS, type Project, type ProjectFields } from '../../domain/project';
 import { canAddQuestion, type Question } from '../../domain/questions';
 import { fitsKind, isFigmaLink, isPending, isSettled, researchStatus, type Research } from '../../domain/research';
@@ -9,6 +10,7 @@ import { ApiError } from '../errors';
 import type { DataSource } from '../source';
 import { BRIEFS } from './briefs';
 import {
+  choiceChanged,
   COUNCILS,
   newDraft,
   researchApproved,
@@ -20,6 +22,7 @@ import {
   structureStarted,
 } from './councils';
 import { MODELS } from './models';
+import { noOptions, OPTIONS, ownOption, type MockOptionSet } from './options';
 import { PROJECT_LIST, REPO_LIST, type MockProject } from './projects';
 import { ownQuestion, QUESTIONS } from './questions';
 import { noResearch, RESEARCHES, startedCode, startedDesign, toSetup } from './research';
@@ -28,11 +31,14 @@ import {
   decisionsApproved,
   newDecisions,
   newStreams,
+  optionsApproved,
+  optionsNote,
   PROJECT_DECISIONS,
   questionsApproved,
   STREAMS,
   streamKey,
   streamRetried,
+  withNote,
 } from './streams';
 import {
   mergeGroups,
@@ -69,6 +75,10 @@ const projectDecisions = new Map(Object.entries(PROJECT_DECISIONS).map(([key, va
 const questions = new Map(Object.entries(QUESTIONS).map(([key, list]) => [key, copy(list)]));
 /** Idempotency-Key → ключ потока и id созданного по нему вопроса. */
 const questionByKey = new Map<string, { stream: string; id: string }>();
+/** Варианты по совету и потоку (streamKey), по id вопроса: выбор, свои варианты и «Утвердить выбор» меняют их здесь. */
+const options = new Map(Object.entries(OPTIONS).map(([key, sets]) => [key, copy(sets)]));
+/** Idempotency-Key → ключ потока, вопрос и id созданного по нему варианта. */
+const optionByKey = new Map<string, { stream: string; question: string; id: string }>();
 /** Проекты моков: создание, правка и удаление меняют их здесь; живут, пока открыта вкладка. */
 const projects = copy(PROJECT_LIST);
 /** Idempotency-Key → id созданного по нему проекта. */
@@ -157,6 +167,53 @@ function checkQuestionsReady(id: string, at: number) {
   if (state === 'idle' || state === 'running') {
     throw new ApiError('questions_not_ready', `Шаг «Вопросы» не начат или на нём работают модели (${state})`, 409);
   }
+}
+
+/** Варианты потока по id вопроса; у потока, которому их ещё не искали, — пусто. */
+function optionsOf(id: string, streamId: string): Record<string, MockOptionSet> {
+  const key = streamKey(id, streamId);
+  const sets = options.get(key) ?? {};
+  options.set(key, sets);
+  return sets;
+}
+
+/**
+ * Вопросы на «Вариантах» — неубранные вопросы потока по порядку, у каждого — его варианты; вопросу, добавленному после
+ * утверждения вопросов, вариантов не искали.
+ */
+function optionSetsOf(id: string, streamId: string): OptionSet[] {
+  const sets = optionsOf(id, streamId);
+  return questionsOf(id, streamId)
+    .filter((q) => !q.removed)
+    .map((question) => {
+      sets[question.id] ??= noOptions();
+      return { question, ...sets[question.id] };
+    });
+}
+
+/** Варианты вопроса на «Вариантах»; вопроса нет или он убран — not_found, как у сервера. */
+function optionSetAt(id: string, streamId: string, questionId: string): OptionSet {
+  const found = optionSetsOf(id, streamId).find((s) => s.question.id === questionId);
+  if (!found) throw new ApiError('not_found', `Вопроса ${questionId} на «Вариантах» потока ${streamId} нет`, 404);
+  return found;
+}
+
+/** Выбор правят, когда шаг «Варианты» начат и модели на нём не работают. */
+function checkOptionsReady(id: string, at: number) {
+  const { state } = stepOf((streams.get(id) ?? [])[at], 'options');
+  if (state === 'idle' || state === 'running') {
+    throw new ApiError('options_not_ready', `Шаг «Варианты» не начат или на нём работают модели (${state})`, 409);
+  }
+}
+
+/** Выбор поменялся: строка «Вариантов» в цепочке, строка на Сводке и время изменения совета — по выбору. */
+function choicesChanged(index: number, id: string, streamId: string) {
+  const sets = optionSetsOf(id, streamId);
+  const chosen = sets.filter((s) => s.choice !== null).length;
+  const list = streams.get(id) ?? [];
+  const at = streamAt(id, streamId);
+  list[at] = withNote(list[at], 'options', optionsNote(chosen, sets.length));
+  councils[index] = choiceChanged(councils[index], streamId, sets.length - chosen, sets.length, new Date().toISOString());
 }
 
 /** Совет поменяли: новое время изменения. */
@@ -514,6 +571,89 @@ export const mockSource: DataSource = {
       const { participants, judge } = councils[index];
       const kept = questionsOf(id, streamId).filter((q) => !q.removed).length;
       list[at] = questionsApproved(list[at], kept, participants, judge, now);
+      councils[index] = streamsChanged(councils[index], list, streamId, now);
+    }
+    return copy(list[at]);
+  },
+  async listOptions(id, streamId) {
+    councilAt(id);
+    const at = streamAt(id, streamId);
+    // «Варианты» не начаты — вариантов нет.
+    if (stepOf((streams.get(id) ?? [])[at], 'options').state === 'idle') return [];
+    return copy(optionSetsOf(id, streamId));
+  },
+  async setChoice(id, streamId, questionId, choice) {
+    const index = councilAt(id);
+    const at = streamAt(id, streamId);
+    checkOptionsReady(id, at);
+    const found = optionSetAt(id, streamId, questionId);
+    if (choice.kind === 'option' && !found.options.some((o) => o.id === choice.option)) {
+      throw new ApiError('unknown_option', `Варианта ${choice.option} у вопроса ${questionId} нет`, 422);
+    }
+    const next: Choice = choice.kind === 'option' ? { kind: 'option', option: choice.option } : { kind: 'unresolved' };
+    optionsOf(id, streamId)[questionId].choice = next;
+    // Шаги потока выбор не меняет, как в макете; меняются строка «Вариантов» в цепочке и совет.
+    choicesChanged(index, id, streamId);
+    return copy(optionSetAt(id, streamId, questionId));
+  },
+  async addOption(id, streamId, questionId, text, basedOn, key) {
+    const index = councilAt(id);
+    const at = streamAt(id, streamId);
+    const stream = streamKey(id, streamId);
+    // Ключ уже был — вариант создан раньше, второй не создаём.
+    const created = optionByKey.get(key);
+    const existing =
+      created?.stream === stream &&
+      created.question === questionId &&
+      optionsOf(id, streamId)[questionId]?.options.find((o) => o.id === created.id);
+    if (existing) return copy(existing);
+    if (!canSaveOption(text)) throw new ApiError('text_required', 'Пустой вариант не сохранить', 422);
+    checkOptionsReady(id, at);
+    const found = optionSetAt(id, streamId, questionId);
+    if (basedOn !== null && !found.options.some((o) => o.id === basedOn)) {
+      throw new ApiError('unknown_option', `Варианта ${basedOn} у вопроса ${questionId} нет`, 422);
+    }
+    const option = ownOption(Object.values(optionsOf(id, streamId)), text, basedOn);
+    optionsOf(id, streamId)[questionId].options.push(option);
+    optionByKey.set(key, { stream, question: questionId, id: option.id });
+    // Выбор новый вариант не меняет; у совета — новое время изменения.
+    touch(index);
+    return copy(option);
+  },
+  async updateOption(id, streamId, questionId, optionId, text) {
+    const index = councilAt(id);
+    const at = streamAt(id, streamId);
+    checkOptionsReady(id, at);
+    optionSetAt(id, streamId, questionId);
+    const list = optionsOf(id, streamId)[questionId].options;
+    const found = list.findIndex((o) => o.id === optionId);
+    if (found < 0) throw new ApiError('not_found', `Варианта ${optionId} у вопроса ${questionId} нет`, 404);
+    if (list[found].source !== 'user') throw new ApiError('not_own_option', `Вариант ${optionId} — совета`, 422);
+    if (!canSaveOption(text)) throw new ApiError('text_required', 'Пустой вариант не сохранить', 422);
+    // «Почему», цену и зависимости совет пересмотрит под новый текст — пока их нет.
+    list[found] = { ...list[found], text: text.trim(), reason: null, cost: null, dependsOn: [] };
+    touch(index);
+    return copy(list[found]);
+  },
+  async approveOptions(id, streamId) {
+    const index = councilAt(id);
+    const at = streamAt(id, streamId);
+    checkOptionsReady(id, at);
+    const list = streams.get(id) ?? [];
+    // Шаг уже готов — ничего не меняем, отвечаем потоком как есть.
+    if (stepOf(list[at], 'options').state !== 'done') {
+      const sets = optionSetsOf(id, streamId);
+      // Вопрос без выбора идёт на «Решения» с первым вариантом, как в макете; вариантов нет — как unresolved.
+      for (const set of sets) {
+        if (set.choice) continue;
+        const [first] = set.options;
+        optionsOf(id, streamId)[set.question.id].choice = first
+          ? { kind: 'option', option: first.id }
+          : { kind: 'unresolved' };
+      }
+      const now = new Date().toISOString();
+      const { participants, judge } = councils[index];
+      list[at] = optionsApproved(list[at], sets.length, participants, judge, now);
       councils[index] = streamsChanged(councils[index], list, streamId, now);
     }
     return copy(list[at]);

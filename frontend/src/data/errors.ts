@@ -26,6 +26,9 @@ export const ERROR_CODES = [
   'unknown_decision',
   'questions_not_ready',
   'text_required',
+  'options_not_ready',
+  'unknown_option',
+  'not_own_option',
   'network',
   'unknown',
 ] as const;

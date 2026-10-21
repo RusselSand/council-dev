@@ -1,6 +1,7 @@
 import type { Brief } from '../../domain/brief';
 import type { CouncilSummary } from '../../domain/council';
 import type { Model } from '../../domain/model';
+import type { Option, OptionSet } from '../../domain/options';
 import type { Project } from '../../domain/project';
 import type { Question } from '../../domain/questions';
 import type { Finding, Research } from '../../domain/research';
@@ -21,6 +22,10 @@ const researchPath = (id: string) => `${councilPath(id)}/research`;
 
 /** Путь потока совета: /councils/<id>/streams/<streamId>. */
 const streamPath = (id: string, streamId: string) => `${councilPath(id)}/streams/${encodeURIComponent(streamId)}`;
+
+/** Путь вариантов на вопрос потока: /councils/<id>/streams/<streamId>/options/<questionId>. */
+const optionsPath = (id: string, streamId: string, questionId: string) =>
+  `${streamPath(id, streamId)}/options/${encodeURIComponent(questionId)}`;
 
 /** Настоящий сервер. */
 export const httpSource: DataSource = {
@@ -153,6 +158,31 @@ export const httpSource: DataSource = {
   },
   async approveQuestions(id, streamId) {
     const path = `${streamPath(id, streamId)}/questions/approve`;
+    const { stream } = await request<{ stream: Stream }>('POST', path, {});
+    return stream;
+  },
+  async listOptions(id, streamId) {
+    const { optionSets } = await request<{ optionSets: OptionSet[] }>('GET', `${streamPath(id, streamId)}/options`);
+    return optionSets;
+  },
+  async setChoice(id, streamId, questionId, choice) {
+    const path = `${optionsPath(id, streamId, questionId)}/choice`;
+    const { optionSet } = await request<{ optionSet: OptionSet }>('PUT', path, choice);
+    return optionSet;
+  },
+  async addOption(id, streamId, questionId, text, basedOn, key) {
+    const path = optionsPath(id, streamId, questionId);
+    const body = { text, basedOn };
+    const { option } = await request<{ option: Option }>('POST', path, body, { 'Idempotency-Key': key });
+    return option;
+  },
+  async updateOption(id, streamId, questionId, optionId, text) {
+    const path = `${optionsPath(id, streamId, questionId)}/${encodeURIComponent(optionId)}`;
+    const { option } = await request<{ option: Option }>('PATCH', path, { text });
+    return option;
+  },
+  async approveOptions(id, streamId) {
+    const path = `${streamPath(id, streamId)}/options/approve`;
     const { stream } = await request<{ stream: Stream }>('POST', path, {});
     return stream;
   },

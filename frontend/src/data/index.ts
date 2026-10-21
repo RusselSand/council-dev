@@ -12,6 +12,14 @@ export {
   useUpdateCouncil,
 } from './hooks/useCouncils';
 export { useModels } from './hooks/useModels';
+export {
+  useAddOption,
+  useApproveOptions,
+  useOptionChoices,
+  useStreamOptions,
+  useUpdateOption,
+  type OptionChoices,
+} from './hooks/useOptions';
 export { useCreateProject, useDeleteProject, useProjects, useRepos, useUpdateProject } from './hooks/useProjects';
 export {
   useCouncilResearch,
