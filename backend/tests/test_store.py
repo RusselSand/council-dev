@@ -255,3 +255,28 @@ def test_councils_are_read_under_the_models_of_today(tmp_path):
     assert (after.participants, after.judge) == (["fable", "opus"], "opus")
     saved = json.loads((tmp_path / f"{council.id}.json").read_text(encoding="utf-8"))
     assert saved["participants"] == ["fable", "opus"]
+
+
+def test_a_council_created_with_a_key_is_found_by_it_after_a_restart(tmp_path):
+    before = FileStore(tmp_path)
+    council = before.create_council(participants=["sol"], judge="sol", key="k1")
+    assert before.create_council(participants=["sol"], judge="sol", key="k1") == council
+    after = FileStore(tmp_path)
+    assert after.keyed("k1") == council
+    assert after.keyed("") is None and after.keyed("k2") is None
+    assert len(after.list_councils()) == 1
+
+
+def test_the_store_remembers_when_each_stream_changed(tmp_path):
+    store = FileStore(tmp_path)
+    council = store.create_council(participants=["sol"], judge="sol")
+    first = store.update_council(council.id, {"streams": [Stream(group="A"),
+                                                          Stream(group="B")]}).streams_changed
+    assert set(first) == {"A", "B"}
+    later = store.update_council(council.id, {"streams": [
+        Stream(group="A"), Stream(group="B", scope=[])]}, touch=False).streams_changed
+    assert later["A"] == first["A"] and later["B"] >= first["B"]
+    assert FileStore(tmp_path).get_council(council.id).streams_changed == later
+    # Потоков больше нет — нет и их времени; правка без потоков его не трогает.
+    assert store.update_council(council.id, {"name": "Совет"}).streams_changed == later
+    assert store.update_council(council.id, {"streams": None}).streams_changed == {}

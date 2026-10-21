@@ -1,3 +1,6 @@
+"""Старые ручки запуска нарезки и раскладки и общее для старых ходов совета. Список, создание,
+чтение и правка совета — в новом API (web/councils.py)."""
+
 from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
@@ -5,19 +8,16 @@ from typing import Any
 from fastapi import APIRouter, HTTPException
 
 from ..agents import AgentRunner
-from ..config import MIN_PARTICIPANTS, AppConfig
-from ..deps import AgentsDep, ConfigDep, Launcher, LauncherDep, ProjectsDep, Store, StoreDep
+from ..config import AppConfig
+from ..deps import AgentsDep, ConfigDep, Launcher, LauncherDep, Store, StoreDep
 from ..models import (
     STREAM_RUNS,
     Council,
-    CouncilCreated,
-    CouncilPatch,
     CouncilStatus,
     DecisionAnalysis,
     DecisionsSearch,
     DesignScan,
     IdeaDiscovery,
-    Label,
     NotesDraft,
     OutcomeDiscovery,
     ProposalDiscovery,
@@ -35,9 +35,6 @@ router = APIRouter(prefix="/councils", tags=["councils"])
 
 MISSING = "Совет не найден"
 NOT_FOUND = {404: {"description": MISSING}}
-INVALID_MODELS = {422: {"description": "Участники или судья не из подключённых моделей, "
-                                       "или такого проекта нет"}}
-NOT_RELABELABLE = {409: {"description": "Типы меняются только у готовой и той же нарезки"}}
 CANNOT_START = {
     503: {"description": "Не запущено: сервер останавливается или состав совета меняется"},
     409: {"description": "Этот ход уже идёт или его только что запустил другой запрос"},
@@ -67,78 +64,6 @@ class Slot:
 SLICING = Slot(lambda council: council.slicing, lambda council, state: {"slicing": state})
 STRUCTURE = Slot(lambda council: council.structure, lambda council, state: {"structure": state},
                  lambda council: council.structure.revision if council.structure else 0)
-
-
-@router.get("")
-def list_councils(store: StoreDep) -> list[Council]:
-    return store.list_councils()
-
-
-@router.post("", status_code=201)
-def create_council(store: StoreDep, config: ConfigDep, projects: ProjectsDep) -> CouncilCreated:
-    """Новый совет — с проектом совета, который трогали последним: обычно работают над одним
-    проектом подряд, и выбирать его каждый раз заново незачем. Проекта того уже нет — без него."""
-    # Под замком: проект не удалят между тем, как его нашли, и тем, как совет его запомнил.
-    with council_lock:
-        latest = next(iter(store.list_councils()), None)
-        project = latest.project if latest and projects.get_project(latest.project) else ""
-        council = store.create_council(
-            participants=config.default_participants, judge=config.default_judge,
-            project=project)
-    return CouncilCreated(id=council.id)
-
-
-@router.get("/{council_id}", responses=NOT_FOUND)
-def get_council(council_id: str, store: StoreDep) -> Council:
-    council = store.get_council(council_id)
-    if council is None:
-        raise HTTPException(404, MISSING)
-    return council
-
-
-@router.patch("/{council_id}", responses={**NOT_FOUND, **INVALID_MODELS, **NOT_RELABELABLE})
-def update_council(
-    council_id: str, patch: CouncilPatch, store: StoreDep, config: ConfigDep,
-    projects: ProjectsDep,
-) -> Council:
-    """Правка с экрана. Другой проект ничего в совете не сбрасывает, как и смена каталога
-    заметок: сканы остаются, какие были, отбор решений проекта к другому каталогу устаревает
-    сам, а выгрузка считается только в тот каталог, куда её записали."""
-    check_models(patch, config)
-    changes = patch.model_dump(exclude_none=True, exclude={"labels", "slicing_run"})
-    if patch.labels is None and patch.project is None:
-        council = store.update_council(council_id, changes)
-    else:
-        # Типы и запуск нарезки не должны разойтись, а проект — пропасть, пока его выбирают.
-        with council_lock:
-            current = store.get_council(council_id)
-            if current is None:
-                raise HTTPException(404, MISSING)
-            if patch.project and projects.get_project(patch.project) is None:
-                raise HTTPException(422, "Такого проекта нет — возможно, его удалили")
-            if patch.labels is not None:
-                changes["slicing"] = relabeled(current.slicing, patch.labels, patch.slicing_run)
-            council = store.update_council(council_id, changes)
-    if council is None:
-        raise HTTPException(404, MISSING)
-    return council
-
-
-def relabeled(slicing: Slicing | None, labels: dict[int, Label], run: str | None) -> Slicing:
-    """Типы, выбранные человеком. Тип совета остаётся в council_label: выбор всегда можно
-    вернуть, и видно, где человек не согласился."""
-    if run is None:
-        raise HTTPException(422, "Типы без slicing_run: непонятно, к какой нарезке они")
-    if slicing is None or slicing.state != "done":
-        raise HTTPException(409, "Типы меняются только у готовой нарезки")
-    if slicing.run != run:
-        raise HTTPException(409, "Нарезку уже переделали: эти типы относятся к прежней")
-    unknown = sorted(set(labels) - {fragment.id for fragment in slicing.fragments})
-    if unknown:
-        raise HTTPException(422, f"Нет фрагментов: {', '.join(map(str, unknown))}")
-    fragments = [fragment.model_copy(update={"label": labels.get(fragment.id, fragment.label)})
-                 for fragment in slicing.fragments]
-    return slicing.model_copy(update={"fragments": fragments})
 
 
 @router.post("/{council_id}/slicing", status_code=202, responses={**NOT_FOUND, **CANNOT_START})
@@ -302,18 +227,3 @@ def check_online(council: Council, config: AppConfig, agents: AgentRunner, *, fr
     missing = offline(council, config, agents, fresh=fresh)
     if missing:
         raise HTTPException(422, f"Нет подключения к моделям: {', '.join(missing)}")
-
-
-def check_models(patch: CouncilPatch, config: AppConfig) -> None:
-    """Участники и судья — только из подключённых моделей. Судья может и не участвовать."""
-    known = {model.alias for model in config.models}
-    if patch.participants is not None:
-        if len(set(patch.participants)) != len(patch.participants):
-            raise HTTPException(422, "Модель указана в совете дважды")
-        if len(patch.participants) < MIN_PARTICIPANTS:
-            raise HTTPException(422, "В совете нужен хотя бы один участник")
-        unknown = [alias for alias in patch.participants if alias not in known]
-        if unknown:
-            raise HTTPException(422, f"Неизвестные модели: {', '.join(unknown)}")
-    if patch.judge is not None and patch.judge not in known:
-        raise HTTPException(422, f"Неизвестная модель: {patch.judge}")

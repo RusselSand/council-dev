@@ -23,6 +23,10 @@ class Schema(BaseModel):
                               validate_by_alias=True, extra="forbid")
 
 
+class Empty(Schema):
+    """Тело действия без полей — пустой объект {}. Чужое поле в нём — bad_request."""
+
+
 def iso(moment: datetime) -> str:
     """Время по контракту — ISO 8601 в UTC до секунд: 2026-10-15T13:41:50Z. Время без пояса
     уже в UTC."""

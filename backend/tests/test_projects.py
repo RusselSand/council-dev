@@ -296,38 +296,6 @@ def test_without_a_repositories_folder_there_are_no_working_copies(tmp_path):
             app.dependency_overrides.pop(get_repositories)
 
 
-def test_a_new_council_takes_the_project_of_the_latest_one(projects):
-    project = projects.create_project(ProjectDraft(name="Кромка"))
-    first = client.post("/api/councils").json()["id"]
-    assert client.get(f"/api/councils/{first}").json()["project"] == ""
-    assert client.patch(f"/api/councils/{first}",
-                        json={"project": project.id}).json()["project"] == project.id
-    second = client.post("/api/councils").json()["id"]
-    assert client.get(f"/api/councils/{second}").json()["project"] == project.id
-    # Последний совет — без проекта: и новый без него.
-    client.patch(f"/api/councils/{second}", json={"project": ""})
-    third = client.post("/api/councils").json()["id"]
-    assert client.get(f"/api/councils/{third}").json()["project"] == ""
-
-
-def test_a_new_council_takes_its_project_under_the_councils_lock(projects):
-    created = []
-    with council_lock:
-        worker = threading.Thread(target=lambda: created.append(client.post("/api/councils")))
-        worker.start()
-        worker.join(0.3)
-        assert worker.is_alive() and created == []     # ждёт замка: удаление проекта — под ним же
-    worker.join(5)
-    assert created[0].status_code == 201
-
-
-def test_a_council_takes_only_an_existing_project(projects):
-    council_id = client.post("/api/councils").json()["id"]
-    res = client.patch(f"/api/councils/{council_id}", json={"project": "nope"})
-    assert res.status_code == 422 and "Такого проекта нет" in res.json()["detail"]
-    assert client.get(f"/api/councils/{council_id}").json()["project"] == ""
-
-
 def test_the_notes_folder_of_a_council_is_its_projects(tmp_path):
     store, projects = InMemoryStore(), Projects()
     project = projects.create_project(ProjectDraft(name="Кромка", notes="back/docs"))

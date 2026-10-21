@@ -56,8 +56,10 @@ class Store(Protocol):
 
     def get_council(self, council_id: str) -> Council | None: ...
 
+    def keyed(self, key: str) -> Council | None: ...
+
     def create_council(self, *, participants: list[str], judge: str,
-                       project: str = "") -> Council: ...
+                       project: str = "", key: str = "") -> Council: ...
 
     def update_council(self, council_id: str, changes: dict[str, Any], *,
                        touch: bool = True) -> Council | None: ...
@@ -85,8 +87,15 @@ class InMemoryStore:
         with self._lock:
             return self._councils.get(council_id)
 
+    def keyed(self, key: str) -> Council | None:
+        """Совет, созданный с этим Idempotency-Key. Пустой ключ — ничей."""
+        with self._lock:
+            return self._keyed(key)
+
     def create_council(self, *, participants: list[str], judge: str,
-                       project: str = "") -> Council:
+                       project: str = "", key: str = "") -> Council:
+        """Новый совет. С ключом, по которому совет уже создан, второй не создаётся — в ответ
+        тот, что есть."""
         council = Council(
             id=uuid4().hex[:8],
             name="",  # человек ещё не назвал; подпись для пустого — на стороне фронта
@@ -96,8 +105,12 @@ class InMemoryStore:
             judge=judge,
             updated_at=datetime.now(UTC),
             project=project,
+            idempotency_key=key,
         )
         with self._lock:
+            existing = self._keyed(key)
+            if existing is not None:
+                return existing
             self._keep(council)
             self._councils[council.id] = council
         return council
@@ -110,6 +123,7 @@ class InMemoryStore:
             council = self._councils.get(council_id)
             if council is None or not changes:
                 return council
+            changes = stamped(council, changes, datetime.now(UTC))
             if not touch:
                 council = council.model_copy(update=changes)
                 self._keep(council)
@@ -120,6 +134,12 @@ class InMemoryStore:
             self._councils[council_id] = council
             self._councils.move_to_end(council_id)  # так он выиграет и равное время
             return council
+
+    def _keyed(self, key: str) -> Council | None:
+        if not key:
+            return None
+        return next((council for council in self._councils.values()
+                     if council.idempotency_key == key), None)
 
     def _keep(self, council: Council) -> None:
         """Сохранить совет — под замком, до того как его увидят. В памяти хранить нечего."""
@@ -154,6 +174,19 @@ class FileStore(InMemoryStore):
         # в файл — только то, из чего его считают.
         kept(self._folder, council.id,
              council.model_dump_json(indent=2, exclude_computed_fields=True))
+
+
+def stamped(council: Council, changes: dict[str, Any], now: datetime) -> dict[str, Any]:
+    """Правка со временем изменения потоков: у каждого потока, который она меняет, — now.
+    Потоков больше нет — нет и их времени."""
+    if "streams" not in changes:
+        return changes
+    before = {stream.group: stream for stream in council.streams or []}
+    streams = changes["streams"] or []
+    moments = {stream.group: now if before.get(stream.group) != stream
+               else council.streams_changed.get(stream.group) for stream in streams}
+    return {**changes, "streams_changed": {group: moment for group, moment in moments.items()
+                                           if moment is not None}}
 
 
 def kept(folder: Path, name: str, text: str) -> None:

@@ -1092,29 +1092,12 @@ class Council(BaseModel):
     tasks: TaskPlan | None = None
     tasks_draft: TasksDraft | None = None
     tasks_export: TasksExport | None = None
-
-
-class CouncilCreated(BaseModel):
-    """Ответ на создание: фронт сразу уходит на страницу проекта."""
-
-    id: str
-
-
-class CouncilPatch(BaseModel):
-    """Правка с экрана: меняются только присланные поля, null значит «не менять»."""
-
-    model_config = ConfigDict(extra="forbid")
-
-    name: str | None = None
-    brief: str | None = None
-    participants: list[str] | None = None
-    judge: str | None = None
-    # Проект совета (Project.id); пустая строка — без проекта.
-    project: str | None = None
-    # Типы фрагментов готовой нарезки: {id: тип}. Только изменённые, остальные не трогаются.
-    labels: dict[int, Label] | None = None
-    # К какой нарезке относятся labels: Slicing.run. Обязателен вместе с ними.
-    slicing_run: str | None = None
+    # Idempotency-Key запроса, которым совет создан: повтор с тем же ключом второго не создаёт.
+    idempotency_key: str = ""
+    # Когда последний раз менялся каждый поток (буква — момент): у Сводки пункты потоков в одном
+    # состоянии — сначала тот, что менялся позже. Ставит хранилище (store.stamped). Потока здесь
+    # нет — он не менялся с тех пор, как совет стал это помнить.
+    streams_changed: dict[str, datetime] = {}
 
 
 class GroupsEdit(BaseModel):

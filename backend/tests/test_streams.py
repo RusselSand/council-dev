@@ -214,7 +214,7 @@ def agents():
 
 
 def grouped():
-    council_id = client.post("/api/councils").json()["id"]
+    council_id = client.post("/api/councils").json()["council"]["id"]
     slicing = Slicing(state="done", run="s1", steps=[], fragments=[
         LabeledFragment(id=i, text=TEXTS[i], label=label, reason="", council_label=label)
         for i, label in LABELS.items()])
@@ -1320,7 +1320,7 @@ def test_saved_outcomes_are_seen_while_new_questions_are_worked_out(agents):
     # До итогов ещё далеко, а готовый итог виден: решения по нему прежние.
     assert stream.outcomes is None
     assert stream.saved_outcomes == before.outcomes.outcomes
-    council = client.get(f"/api/councils/{council_id}").json()
+    council = get_store().get_council(council_id).model_dump(mode="json")
     seen = next(s for s in council["streams"] if s["group"] == "C")
     assert [o["id"] for o in seen["saved_outcomes"]] == ["O1"]
     chose(council_id, "C", [("Q1", "P1"), ("Q2", "P2"), ("Q3", "P3")])
