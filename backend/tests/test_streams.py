@@ -327,7 +327,6 @@ def test_regrouping_waits_for_the_search_and_takes_the_confirmation_back(agents)
                if s.group == "C" else s for s in streams.values()]
     get_store().update_council(council_id, {"streams": running})
     assert client.post(f"/api/councils/{council_id}/structure").status_code == 423
-    assert client.post(f"/api/councils/{council_id}/slicing").status_code == 423
 
     get_store().update_council(council_id, {"streams": list(streams.values())})
     res = client.post(f"/api/councils/{council_id}/structure")

@@ -83,11 +83,19 @@ export function useUpdateCouncil(): Mutation<[id: string, fields: CouncilFields]
 
 /**
  * Нарезать текст ввода — POST /api/councils/<id>/slicing; ответ — совет после запуска нарезки. Он сразу встаёт
- * в список советов на место старого: вкладки этапов, меню и Сводка видят, что идёт нарезка.
+ * в список советов на место старого: вкладки этапов, меню и Сводка видят, что идёт нарезка. Модели работают дальше
+ * по совету, и нарезка не запустилась, — список советов перезапрашивается: меню и Сводка покажут, где они работают.
  */
 export function useStartSlicing(): Mutation<[id: string], CouncilSummary> {
   return useMutation(
-    (id: string) => source.startSlicing(id),
+    async (id: string) => {
+      try {
+        return await source.startSlicing(id);
+      } catch (error) {
+        if (error instanceof ApiError && error.code === 'models_running') markStale('councils');
+        throw error;
+      }
+    },
     (council) => markStale('councils', (list) => replaceIn(list, council)),
   );
 }

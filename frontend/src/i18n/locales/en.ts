@@ -508,6 +508,7 @@ export const en = translation({
   'error.model_offline':
     'The model is not connected: it can’t be added to the council or made the judge. The model list has been refreshed.',
   'error.slicing_running': 'The council is slicing the text again — fragments will appear when slicing is over.',
+  'error.models_running': 'Wait until the models finish.',
   'error.unknown_label': 'There is no such fragment type.',
   'error.structure_running': 'The council is sorting the fragments into groups again — groups will appear when the models finish.',
   'error.bad_merge': 'A group can’t be merged with itself.',

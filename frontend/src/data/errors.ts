@@ -16,6 +16,7 @@ export const ERROR_CODES = [
   'unknown_model',
   'model_offline',
   'slicing_running',
+  'models_running',
   'unknown_label',
   'structure_running',
   'bad_merge',

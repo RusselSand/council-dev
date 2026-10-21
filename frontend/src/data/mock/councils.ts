@@ -196,21 +196,33 @@ export const COUNCILS: CouncilSummary[] = [
 
 /**
  * Совет после «Нарезать →» — как в макете (prototype.js, runSlice): «Ввод» готов, «Нарезка» — ИИ работает, совет —
- * ИИ работает и стоит на «Нарезке», итог — «Нарезка — модели режут текст». Остальные этапы не меняются. Строка
- * «Нарезки» на Сводке — как у c2 в макете: «sol и fable режут текст».
+ * ИИ работает и стоит на «Нарезке», итог — «Нарезка — модели режут текст». Строка «Нарезки» на Сводке — как у c2
+ * в макете: «sol и fable режут текст». Группы и потоки новая нарезка стирает (решение q-001 бекенда; в макете они
+ * остаются): «Группы», «Потоки» и «Задачи» не начаты, потоков нет, их строк на Сводке нет. Исследование (research)
+ * остаётся, каким было: утверждённое — готово, иначе ждёт вас, и его строка — по новому состоянию: групп нет. К нему
+ * не приступали (null) — оно ждало только групп и снова не начато.
  */
-export const slicingStarted = (council: CouncilSummary, updatedAt: string): CouncilSummary => ({
-  ...council,
-  stage: 'slices',
-  state: 'running',
-  stages: { ...council.stages, brief: 'done', slices: 'running' },
-  activity: [
-    ...council.activity.filter((a) => a.stage !== 'brief' && a.stage !== 'slices'),
-    atStage('slices', 'running', `${modelsText(council.participants)} режут текст`),
-  ],
-  summary: 'Нарезка — модели режут текст',
-  updatedAt,
-});
+export const slicingStarted = (
+  council: CouncilSummary,
+  research: Research | null,
+  updatedAt: string,
+): CouncilSummary => {
+  const waiting = research !== null && council.stages.research !== 'done';
+  const researched: State = research === null ? 'idle' : waiting ? 'waiting' : 'done';
+  return {
+    ...council,
+    stage: 'slices',
+    state: 'running',
+    stages: stages('done', 'running', 'idle', researched, 'idle', 'idle'),
+    streams: [],
+    activity: [
+      ...(waiting ? [atStage('research', 'waiting', researchWaitingText(research, false))] : []),
+      atStage('slices', 'running', `${modelsText(council.participants)} режут текст`),
+    ],
+    summary: 'Нарезка — модели режут текст',
+    updatedAt,
+  };
+};
 
 /** Первый неготовый этап, начиная с from; все готовы — «Задачи». */
 const firstOpen = (stages: Record<Stage, State>, from: Stage): Stage =>
@@ -319,6 +331,12 @@ const RESEARCH_WAITING: Record<ResearchStatus, string> = {
   start: 'Начните или пропустите оба исследования — потом группы станут потоками.',
 };
 
+/** Строка «Исследования», которое ждёт человека: что от него нужно — по исследованию и тому, подтверждены ли группы. */
+const researchWaitingText = (research: Research, groupsConfirmed: boolean) => {
+  const pending = research.findings.filter((f) => isPending(f.kind, f.decision)).length;
+  return RESEARCH_WAITING[researchStatus(research.code.state, research.design.state, pending, groupsConfirmed)];
+};
+
 /**
  * Совет после действия с исследованием — начать, пропустить, остановить, вернуть к настройке — или решения по находке,
  * пока исследование не утверждено. «Исследование» — ИИ работает, пока хоть одно исследование идёт, иначе — ждёт вас:
@@ -330,12 +348,9 @@ export const researchChanged = (council: CouncilSummary, research: Research, upd
   const runs = [...research.code.runs, ...research.design.runs].filter((run) => run.state === 'running');
   const stages: Record<Stage, State> = { ...council.stages, research: running ? 'running' : 'waiting' };
   const stage = firstOpen(stages, 'brief');
-  const pending = research.findings.filter((f) => isPending(f.kind, f.decision)).length;
   const text = running
     ? `${modelsText([...new Set(runs.map((run) => run.model))])} исследуют ${researchedText(research)}`
-    : RESEARCH_WAITING[
-        researchStatus(research.code.state, research.design.state, pending, council.stages.structure === 'done')
-      ];
+    : researchWaitingText(research, council.stages.structure === 'done');
   return {
     ...council,
     stage,

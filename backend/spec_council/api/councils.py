@@ -1,34 +1,16 @@
-"""Старые ручки запуска нарезки и раскладки и общее для старых ходов совета. Список, создание,
-чтение и правка совета — в новом API (web/councils.py)."""
+"""Старая ручка запуска раскладки и общее для старых ходов совета. Список, создание, правка
+совета и нарезка — в новом API (web/); ход в фоне и его отчёт — background.py."""
 
 from collections.abc import Callable
-from dataclasses import dataclass
-from typing import Any
 
 from fastapi import APIRouter, HTTPException
 
 from ..agents import AgentRunner
+from ..background import RunState, Slot, launched, reporter, running, seeking
 from ..config import AppConfig
 from ..deps import AgentsDep, ConfigDep, Launcher, LauncherDep, Store, StoreDep
-from ..models import (
-    STREAM_RUNS,
-    Council,
-    CouncilStatus,
-    DecisionAnalysis,
-    DecisionsSearch,
-    DesignScan,
-    IdeaDiscovery,
-    NotesDraft,
-    OutcomeDiscovery,
-    ProposalDiscovery,
-    QuestionDiscovery,
-    RepositoryScan,
-    Slicing,
-    Structure,
-    TaskPlan,
-    TasksDraft,
-)
-from ..pipeline import CouncilRun, GroupingRun, SlicingRun
+from ..models import Council, CouncilStatus
+from ..pipeline import CouncilRun, GroupingRun
 from ..store import council_lock
 
 router = APIRouter(prefix="/councils", tags=["councils"])
@@ -45,49 +27,8 @@ CANNOT_START = {
 # Сколько раз проверять вход заново, если состав совета меняют прямо во время проверки.
 PROBE_ATTEMPTS = 3
 
-RunState = (Slicing | Structure | IdeaDiscovery | RepositoryScan | DesignScan
-            | DecisionsSearch | QuestionDiscovery | ProposalDiscovery | DecisionAnalysis
-            | OutcomeDiscovery | TaskPlan | NotesDraft | TasksDraft)
-
-
-@dataclass(frozen=True)
-class Slot:
-    """Где в совете лежит ход: поле совета (нарезка, группы) или поиск идеи потока. put —
-    правка совета, которая кладёт ход на место; revision — сколько раз итог хода правил
-    человек: новый ход не должен молча затереть принятую правку."""
-
-    get: Callable[[Council], RunState | None]
-    put: Callable[[Council, RunState], dict[str, Any]]
-    revision: Callable[[Council], int] = lambda council: 0
-
-
-SLICING = Slot(lambda council: council.slicing, lambda council, state: {"slicing": state})
 STRUCTURE = Slot(lambda council: council.structure, lambda council, state: {"structure": state},
                  lambda council: council.structure.revision if council.structure else 0)
-
-
-@router.post("/{council_id}/slicing", status_code=202, responses={**NOT_FOUND, **CANNOT_START})
-def start_slicing(council_id: str, store: StoreDep, config: ConfigDep, agents: AgentsDep,
-                  launch: LauncherDep) -> Council:
-    """Запускает нарезку и разметку текста советом. Идёт в фоне минутами: ход виден в
-    council.slicing, фронт его опрашивает. Повтор после сбоя берёт оплаченные ответы даром.
-    Прежние группы при этом сбрасываются: они были про прежние фрагменты."""
-    def ready(council: Council) -> None:
-        if running(council.structure):
-            raise HTTPException(
-                423, "Идёт раскладка по группам — дождитесь её, потом нарезайте заново")
-        if seeking(council):
-            raise HTTPException(
-                423, "Совет ищет идеи потоков — дождитесь его, потом нарезайте заново")
-        if not council.brief.strip():
-            raise HTTPException(422, "Нарезать нечего: текст пуст")
-
-    return start_run(
-        council_id, store, config, agents, launch, SLICING, ready, CouncilStatus.slices,
-        lambda council, report: SlicingRun(council.id, council.brief, council.participants,
-                                           council.judge, agents, report),
-        also={"structure": None, "streams": None},
-    )
 
 
 @router.post("/{council_id}/structure", status_code=202, responses={**NOT_FOUND, **CANNOT_START})
@@ -161,49 +102,6 @@ def start_run(council_id: str, store: Store, config: AppConfig, agents: AgentRun
     if not launched(launch, pipeline, report):
         raise HTTPException(503, "Сервер останавливается, ход не запущен")
     return council
-
-
-def launched(launch: Launcher, pipeline: CouncilRun, report: Callable[[RunState], None]) -> bool:
-    """Отдать ход в пул. Пул закрыт — приложение останавливается: ход не начался, так и
-    записываем, иначе совет навсегда остался бы «идёт» и повтор получал бы 409."""
-    try:
-        launch(pipeline.run)
-    except RuntimeError as exc:
-        report(pipeline.state.model_copy(update={"state": "failed", "error": f"не запущен: {exc}"}))
-        return False
-    return True
-
-
-def reporter(store: Store, council_id: str, slot: Slot) -> Callable[[RunState], None]:
-    """Отчёт хода: кладёт его на место, если там всё ещё он. Совет читается и пишется под
-    замком: ходы потоков идут разом и пишут в один список — без замка один затёр бы другой.
-    Ход, которого на месте уже нет (группы разложили или поправили заново), не пишется."""
-    def report(state: RunState) -> None:
-        with council_lock:
-            council = store.get_council(council_id)
-            current = slot.get(council) if council else None
-            if current is None or current.run != state.run:
-                return
-            store.update_council(council_id, slot.put(council, state),
-                                 touch=state.state != "running")
-    return report
-
-
-def running(state: RunState | None) -> bool:
-    return state is not None and state.state == "running"
-
-
-def seeking(council: Council) -> bool:
-    """Совет работает хоть над одним потоком — ищет идею, вопросы, варианты, проверяет выбор
-    или собирает итоги, — исследует код и макет или строит и выгружает план задач: новая
-    нарезка, раскладка или другой состав групп стёрли бы потоки из-под него."""
-    research = council.research
-    if research is not None and (running(research.scan) or running(research.design_scan)):
-        return True
-    if running(council.tasks) or running(council.tasks_draft):
-        return True
-    return any(running(getattr(stream, field))
-               for stream in council.streams or [] for field in STREAM_RUNS)
 
 
 def lineup(council: Council) -> frozenset[str]:
