@@ -1,0 +1,1444 @@
+"""Репозиторий потока: inventory рабочей копии и разбор ответов участников и судьи.
+
+Inventory — обычный список файлов, его даёт git при запуске скана: отслеживаемые (и в
+подмодулях) и новые, не игнорируемые, и только обычные файлы, что на диске есть. Git зовётся
+только на чтение: каталог может быть смонтирован read-only, а владелец — не тот, кто запускает
+(safe.directory). Корень рабочей копии — внутри каталога репозиториев. Модели читают не саму
+рабочую копию, а её снимок — только файлы inventory, без .git и игнорируемого: он не меняется
+во время скана, а его отпечаток ключует оплаченные ответы.
+
+Факт verified держится на evidence, и evidence — на файлах, которые в репозитории есть: путь
+не из inventory отбрасывается, verified без единого подтверждения становится inferred. Ссылки
+на факты — только на свои; чужой номер просто отбрасывается. Модели описывают, как система
+устроена сейчас: это вход для следующих шагов, а не решения.
+"""
+
+import hashlib
+import itertools
+import json
+import os
+import re
+import stat
+import subprocess
+import tempfile
+import threading
+import unicodedata
+from collections import Counter
+from collections.abc import Iterable, Iterator, Mapping, Sequence
+from contextlib import contextmanager
+from dataclasses import dataclass, field, replace
+from functools import cached_property
+from pathlib import Path
+from typing import BinaryIO, NamedTuple
+from uuid import uuid4
+
+from .ideas import reason_of
+from .models import (
+    CoverageArea,
+    Evidence,
+    FlowStep,
+    FollowUp,
+    RepositoryFinding,
+    RepositoryFlow,
+    RepositoryMap,
+    RepositoryScan,
+    RepositoryUnknown,
+    ScannedRepository,
+)
+from .slicing import BadAnswer
+
+# Больше файлов в промпт не кладём: модели всё равно ищут по репозиторию сами.
+INVENTORY_MAX = 5000
+# И не длиннее этого: путь бывает и в 4 КБ, а список идёт в каждый промпт скана.
+INVENTORY_CHARS = 150_000
+# Нескачанных подмодулей в промптах — не больше стольких и стольких символов.
+ABSENT_SHOWN = 20
+ABSENT_CHARS = 4000
+# Снимок ложится на диск сервера: рабочую копию больше этого не копируем, а отказываем, —
+# и по байтам, и по числу файлов (крошечных их бывает миллион: кончились бы память и inode).
+SNAPSHOT_MAX = 512 * 2**20
+FILES_MAX = 100_000
+# Больше вывода от одной команды git не читаем — и путей всех копий вместе не держим.
+OUTPUT_MAX = 64 * 2**20
+PATHS_MAX = 64 * 2**20
+# Вложенных рабочих копий (подмодулей и репозиториев внутри) — у каждой свои вызовы git.
+COPIES_MAX = 500
+GIT_TIMEOUT = 120
+TEXT_MAX = 2000
+# Путь в ответе: 4 КБ байтов имени, каждый — до четырёх знаков «\xNN», и символ точки входа.
+PATH_CHARS = 20_000
+FINDING_ID = re.compile(r"R?(\d+)", re.IGNORECASE)
+STATUSES = ("verified", "inferred", "unknown")
+COVERAGE = ("covered", "partial", "not_investigated", "not_applicable")
+
+
+class RepositoryError(ValueError):
+    """Каталог не годится для скана: его нет, это не рабочая копия git или git не запускается.
+    Текст — для человека; его сохраняют и отдают в JSON, так что байт не из UTF-8 в имени
+    (у POSIX — суррогат) в нём виден как \\udcNN, а не ломает запись."""
+
+    def __init__(self, message: str) -> None:
+        super().__init__(message.encode("utf-8", "backslashreplace").decode("utf-8"))
+
+
+@dataclass(frozen=True)
+class Inventory:
+    root: Path
+    # Пусто — коммитов ещё нет: новый репозиторий, только рабочая копия.
+    commit_sha: str
+    dirty: bool
+    files: tuple[str, ...]
+    # Состояние рабочей копии при inventory — коммит и git status: снимок сверяется с ним.
+    state: bytes = b""
+    # Бит исполняемости из индекса — там, где git не верит диску (core.fileMode=false).
+    modes: Mapping[str, bool] = field(default_factory=dict)
+    # Сколько весят файлы: больше SNAPSHOT_MAX — снимка не будет.
+    size: int = 0
+    # Сколько файлов коммита вне sparse checkout: их нет ни на диске, ни в снимке.
+    outside: int = 0
+    # Чего нет в снимке, хоть оно и в рабочей копии: нескачанные подмодули и ссылки (их не
+    # копируем — за ссылкой может быть что угодно), с причиной; модели должны это знать.
+    omitted: tuple[str, ...] = ()
+    # Метка рабочей копии (checkout_of) и её корень от каталога репозиториев — по ним копию
+    # находят и узнают, как бы ни был виден каталог (working_copy).
+    checkout: str = ""
+    within: str = ""
+    # Папки, что в снимок не берут (skipped_of: заметки и задачи совета), — от корня, с «/» на
+    # конце. Их файлы, и появившиеся после inventory, — не правка рабочей копии под снимком.
+    skipped: tuple[str, ...] = ()
+    # Коммит каждой копии при inventory, по её пути от корня: сменился только в пропущенных
+    # папках — снимок тот же (settled).
+    heads: Mapping[str, str] = field(default_factory=dict)
+
+
+def git_command(root: Path, *args: str) -> list[str]:
+    # --no-optional-locks: status не пытается обновить индекс — каталог может быть read-only.
+    # core.fsmonitor — команда из конфига рабочей копии: git status её запускает, не надо.
+    return ["git", "--no-pager", "-c", "safe.directory=*", "-c", "core.fsmonitor=false",
+            "--no-optional-locks", "-C", str(root), *args]
+
+
+def git_env(root: Path | None) -> dict[str, str]:
+    """Окружение git без команд из конфига рабочей копии: фильтры (clean, smudge, process),
+    заданные в ней самой, git status и hash-object запускают — от имени сервера, с его доступом
+    к ключам моделей. Их отключаем; заданные сервером (git-lfs) — его, им верим. Через
+    GIT_CONFIG_*, а не -c: там «=» в имени фильтра разорвало бы настройку."""
+    pairs = []
+    for driver in local_filters(root) if root is not None else ():
+        pairs += [(f"filter.{driver}.{key}", "") for key in ("clean", "smudge", "process")]
+        pairs.append((f"filter.{driver}.required", "false"))
+    env = {key: value for key, value in os.environ.items() if not key.startswith("GIT_CONFIG_")}
+    env["GIT_CONFIG_COUNT"] = str(len(pairs))
+    for n, (key, value) in enumerate(pairs):
+        env[f"GIT_CONFIG_KEY_{n}"] = key
+        env[f"GIT_CONFIG_VALUE_{n}"] = value
+    return env
+
+
+def local_filters(root: Path) -> set[str]:
+    """Фильтры, которые задаёт сама рабочая копия (её .git/config, worktree и их include)."""
+    # Не больше OUTPUT_MAX, как и всё от git: .git/config не входит ни в какой предел. Ничего
+    # не задано — git config выходит с 1; любая другая ошибка — отказ, а не скан с фильтрами.
+    output = git_bytes(root, "config", "-z", "--show-scope", "--get-regexp", r"^filter\.",
+                       nothing=1)
+    entries = output.split(b"\0")
+    drivers = set()
+    for scope, entry in zip(entries[::2], entries[1::2], strict=False):
+        name = os.fsdecode(entry.split(b"\n", 1)[0])           # «filter.<драйвер>.<ключ>»
+        if scope in (b"local", b"worktree") and name.count(".") >= 2:
+            drivers.add(name[len("filter."):name.rindex(".")])
+    return drivers
+
+
+def git_bytes(root: Path, *args: str, nothing: int | None = None) -> bytes:
+    """Вывод git — кусками и не больше OUTPUT_MAX: больше — RepositoryError, а git
+    останавливаем. В рабочей копии с миллионами файлов один список занял бы всю память.
+    nothing — код выхода, который значит «ничего не нашлось»: тогда пусто."""
+    command = git_command(root, *args)
+    # Содержимое файлов — а с ним и фильтры — читают только status и hash-object.
+    env = git_env(root) if args[0] in ("status", "hash-object") else git_env(None)
+    expired = threading.Event()
+    with tempfile.TemporaryFile() as errors:
+        try:
+            process = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=errors, env=env)
+        except OSError as exc:
+            raise RepositoryError(f"git не запускается: {exc}") from exc
+
+        def stop() -> None:
+            expired.set()
+            process.kill()
+
+        timer = threading.Timer(GIT_TIMEOUT, stop)
+        timer.start()
+        output = bytearray()
+        try:
+            with process.stdout:
+                while chunk := process.stdout.read(1 << 16):
+                    output += chunk
+                    if len(output) > OUTPUT_MAX:
+                        process.kill()
+                        break
+            code = process.wait()
+        finally:
+            timer.cancel()
+        if len(output) > OUTPUT_MAX:
+            raise RepositoryError(f"Рабочая копия слишком велика для скана: список от git "
+                                  f"{args[0]} больше {OUTPUT_MAX / 2**20:g} МБ")
+        if expired.is_set():
+            raise RepositoryError(f"git {args[0]} не уложился в {GIT_TIMEOUT} с")
+        if code == nothing:
+            return b""
+        if code != 0:
+            errors.seek(0)
+            detail = errors.read(8192).decode("utf-8", errors="replace").strip()
+            raise RepositoryError(detail or f"git {args[0]} не удался")
+    return bytes(output)
+
+
+def git(root: Path, *args: str) -> str:
+    return git_bytes(root, *args).decode("utf-8", errors="replace")
+
+
+class Copy(NamedTuple):
+    """Рабочая копия — корень или вложенная: каталог, путь от корня с «/» на конце (у корня —
+    ""), её отслеживаемые и новые, не игнорируемые файлы; embedded — не подмодуль, а просто
+    репозиторий внутри: её коммита в коммите корня нет."""
+
+    folder: Path
+    prefix: str
+    cached: list[str]
+    others: list[str]
+    embedded: bool = False
+    outside: int = 0
+    # Её подмодули, что не скачаны (или подменены ссылкой): их кода в снимке нет.
+    absent: tuple[str, ...] = ()
+    # Пропущенные папки в ней — исключающими pathspec для git (excluded_in).
+    excluded: tuple[str, ...] = ()
+    # Её подмодули — путь от неё и коммит, на котором они записаны в её индексе.
+    gitlinks: tuple[tuple[str, str], ...] = ()
+
+
+def listed(copies: list[Copy]) -> list[str]:
+    """Отслеживаемые и новые, не игнорируемые файлы каждой рабочей копии из copies_of. Во
+    вложенные git сам не заходит (--recurse-submodules споткнулся бы о подмодуль-ссылку, а
+    --others его и вовсе не умеет): обходим их мы, без ссылок и кругов. Новые файлы внешней
+    копии, что лежат во вложенной, — по правилам вложенной: её исключений внешняя не знает."""
+    found: list[str] = []
+    for copy in copies:
+        inner = tuple(other.prefix.removeprefix(copy.prefix) for other in copies
+                      if other.prefix != copy.prefix and other.prefix.startswith(copy.prefix))
+        found += [copy.prefix + name for name in copy.cached]
+        found += [copy.prefix + name for name in copy.others if not name.startswith(inner)]
+    return found
+
+
+def copies_of(root: Path, skipped: tuple[str, ...] = ()) -> list[Copy]:
+    """Корень и вложенные рабочие копии — checked-out подмодули и просто репозитории внутри,
+    не подмодули, — и вложенные в них. Подменённую ссылкой и уже пройденную не обходим: ссылка
+    назад на родителя водила бы по кругу, а наружу — за пределы рабочей копии. Пропущенных папок
+    (skipped — от корня, с «/» на конце: skipped_of) нет нигде: ни их файлов, ни копий и ссылок
+    в них, — и в пределы обхода они не идут."""
+    top = os.path.realpath(root)
+    seen = {top}
+    found: list[Copy] = []
+    counted = chars = 0
+    queue = [(root, "", False)]
+    while queue:
+        folder, prefix, embedded = queue.pop(0)
+        excluded = excluded_in(prefix, skipped)
+        index = index_of(folder, excluded)
+        cached = [name for *_, name in index]
+        others = names(git_bytes(folder, "ls-files", "-z", "--others", "--exclude-standard",
+                                 *limited(excluded)))
+        counted += len(cached) + len(others)
+        # Пути — как их потом соберёт listed(): с путём копии от корня у каждого.
+        chars += (len(cached) + len(others)) * len(prefix)
+        chars += sum(map(len, cached)) + sum(map(len, others))
+        within(counted, chars, len(seen))   # пока обходим: подмодулей бывает и тысяча
+        # Подмодуль записан в коммите своего родителя (recorded); репозиторий внутри — нигде.
+        links = [(name, embedded, True) for _, mode, _, name in index if mode == b"160000"]
+        links += [(name, True, False) for name in inner_copies(folder, cached, others)]
+        absent: list[str] = []
+        for link, inside, recorded in links:
+            path = folder / link
+            if not checked_out(path, top):
+                # Подменённую ссылкой покажет links_of; остальное — тут, с причиной.
+                if recorded and not is_link(path):
+                    absent.append(f"{shown(prefix + link)}/ — подмодуль не скачан")
+                elif not is_link(path):
+                    absent.append(f"{shown(prefix + link)}/ — репозиторий внутри не прочитать: "
+                                  "его .git не годится или уводит в другой каталог")
+                continue
+            real = os.path.realpath(path)
+            if real not in seen:
+                seen.add(real)
+                within(counted, chars, len(seen))
+                queue.append((path, f"{prefix}{link}/", inside))
+        found.append(Copy(folder, prefix, cached, others, embedded, outside_of(folder, index),
+                          tuple(absent), excluded,
+                          tuple((name, sha) for _, mode, sha, name in index if mode == b"160000")))
+    return found
+
+
+def excluded_in(prefix: str, skipped: tuple[str, ...]) -> tuple[str, ...]:
+    """Пропущенные папки (skipped — от корня, с «/» на конце) в копии с путём prefix — как
+    исключающие pathspec git от её корня: их не выводит сам git, и большая папка заметок не
+    упрётся в предел его вывода (OUTPUT_MAX) и не попадёт в hash-object. Папка исключена и сама:
+    подмодуль на её месте git зовёт без «/». literal — имя как есть, не шаблон."""
+    return tuple(":(exclude,literal)" + folder[len(prefix):].rstrip("/")
+                 for folder in skipped if folder.startswith(prefix) and folder != prefix)
+
+
+def limited(excluded: tuple[str, ...]) -> tuple[str, ...]:
+    """Хвост команды git для копии без пропущенных папок (excluded_in): без них — ничего."""
+    return ("--", ".", *excluded) if excluded else ()
+
+
+def within(files: int, chars: int, copies: int) -> None:
+    """Пределы обхода всех копий вместе — каждая команда git и так в своём, а вместе их много:
+    файлов, длины их путей и самих копий (у каждой свои вызовы git)."""
+    if files > FILES_MAX:
+        raise too_many()
+    if chars > PATHS_MAX:
+        raise RepositoryError(f"Рабочая копия слишком велика для скана: пути её файлов вместе "
+                              f"длиннее {PATHS_MAX / 2**20:g} МБ")
+    if copies > COPIES_MAX:
+        raise RepositoryError(f"Рабочая копия слишком велика для скана: вложенных рабочих копий "
+                              f"больше {COPIES_MAX}")
+
+
+def checked_out(path: Path, top: str) -> bool:
+    """Вложенная рабочая копия на месте: каталог, а не ссылка, внутри корня и со своим .git."""
+    try:
+        if not stat.S_ISDIR(path.lstat().st_mode):
+            return False
+    except OSError:
+        return False
+    real = os.path.realpath(path)
+    return (real == os.path.abspath(path) and Path(real).is_relative_to(top)
+            and (path / ".git").exists() and own_top(path))
+
+
+def own_top(path: Path) -> bool:
+    """Корень этой копии по git — сама она: core.worktree или .git-файл не уводят git в чужой
+    каталог под её именем."""
+    try:
+        return os.path.normcase(top_of(path)) == os.path.normcase(os.path.realpath(path))
+    except RepositoryError:
+        return False
+
+
+def outside_of(folder: Path, index: list[tuple[bytes, bytes, str, str]]) -> int:
+    """skip-worktree, а файла нет — он вне sparse checkout: в снимок не ляжет."""
+    return sum(1 for tag, mode, _, name in index
+               if tag.upper() == b"S" and mode in (b"100644", b"100755")
+               and not plain(folder, name))
+
+
+def inner_copies(folder: Path, *listings: list[str]) -> list[str]:
+    """Репозитории внутри, не подмодули: каталоги с .git, где лежат файлы из списков. --others
+    показывает такой каталог одной строкой («tools/gen/»), а если в нём есть и отслеживаемые
+    файлы внешней копии — поштучно. Игнорируемые каталоги в списки не попадают — в них не ищем."""
+    return [prefix for prefix, is_folder in prefixes(itertools.chain(*listings))
+            if is_folder and os.path.lexists(folder / prefix / ".git")]
+
+
+def prefixes(names: Iterable[str]) -> Iterator[tuple[str, bool]]:
+    """Пути от корня к именам — и каталоги по дороге, и сами имена — каждый по одному разу, по
+    порядку: (путь, каталог ли). Имена — по порядку, и у соседних общее начало уже пройдено:
+    все имена под одним каталогом в нём идут подряд. Строк «каталог по дороге» у глубокого пути
+    квадратично много — их общая длина не больше PATHS_MAX, иначе RepositoryError."""
+    previous: list[str] = []
+    used = 0
+    for name in sorted(set(names)):
+        parts = name.removesuffix("/").split("/")
+        whole = name.endswith("/")                   # «tools/gen/» — сам каталог тоже
+        same = 0
+        while same < min(len(parts), len(previous)) and parts[same] == previous[same]:
+            same += 1
+        for depth in range(same + 1, len(parts) + 1):
+            prefix = "/".join(parts[:depth])
+            used += len(prefix)
+            if used > PATHS_MAX:
+                raise RepositoryError(f"Рабочая копия слишком велика для скана: пути к её файлам "
+                                      f"вместе длиннее {PATHS_MAX / 2**20:g} МБ")
+            yield prefix, depth < len(parts) or whole
+        previous = parts
+
+
+def names(output: bytes) -> list[str]:
+    """Пути из вывода с -z: через NUL, без кавычек и восьмеричных escape-кодов. Байты — как в
+    файловой системе (os.fsdecode): имя не в UTF-8 остаётся тем же файлом, а не «�»."""
+    return [os.fsdecode(name) for name in output.split(b"\0") if name]
+
+
+def located(text: str, base: Path | None) -> Path:
+    """Каталог рабочей копии по тексту человека: от каталога репозиториев (placed)."""
+    if not text.strip():           # пробелы по краям — часть имени: « repo» — не «repo»
+        raise RepositoryError("Укажите путь к рабочей копии репозитория")
+    path = placed(text, base)
+    if not path.is_dir():
+        raise RepositoryError(f"Каталога нет: {path}")
+    return path
+
+
+def placed(text: str, base: Path | None) -> Path:
+    """Путь по тексту человека. С каталогом репозиториев — от него и только внутри него, и
+    по ссылкам тоже; без него — абсолютный. Самого каталога может и не быть."""
+    if "\0" in text:              # в пути его не бывает, а resolve() на нём падает
+        raise RepositoryError("В пути не может быть символа NUL")
+    path = Path(text)
+    if base is not None:
+        path = (base / path).resolve()
+        if not path.is_relative_to(base.resolve()):
+            raise RepositoryError(f"Путь вне каталога репозиториев {base}")
+    elif not path.is_absolute():
+        raise RepositoryError(
+            "Нужен абсолютный путь: каталог репозиториев (COUNCIL_REPOS) не задан")
+    return path.resolve()
+
+
+def working_copy(text: str, base: Path | None, *, mark: bool = False,
+                 skip: Iterable[tuple[Path, str]] = ()) -> Inventory:
+    """Рабочая копия по тексту человека — целиком внутри каталога репозиториев: корень git
+    может оказаться выше выбранной папки. Корень — одним дешёвым вызовом git, до обхода: чужую
+    рабочую копию не читаем даже ради отказа. С её меткой (mark — поставить, если её нет: скан)
+    и корнем от каталога репозиториев. Всё это — git и файлы, и потому вне замка советов."""
+    root = top_of(located(text, base))
+    if base is not None and not root.is_relative_to(base.resolve()):
+        raise RepositoryError(f"Корень рабочей копии {root} вне каталога репозиториев {base}")
+    found = inventory(root, skip)
+    fits(found)
+    within = root.relative_to(base.resolve()).as_posix() if base is not None else ""
+    return replace(found, checkout=checkout_of(root, mark=mark), within=within)
+
+
+def has_commit(root: Path, sha: str) -> bool:
+    """Есть ли в рабочей копии этот коммит."""
+    try:
+        git_bytes(root, "cat-file", "-e", f"{sha}^{{commit}}")
+    except RepositoryError:
+        return False
+    return True
+
+
+# Файл метки рабочей копии в её каталоге git: git посторонних файлов там не замечает.
+CHECKOUT = "spec-council-checkout"
+# Метки ставят по одной: два скана одной копии разом иначе поставили бы разные, и один запомнил
+# бы не ту, что на диске. Замок — только на метки, не советов: в нём лишь пара файлов, не git.
+MARKING = threading.Lock()
+
+
+def checkout_of(root: Path, *, mark: bool = False) -> str:
+    """Метка рабочей копии — свой номер в её каталоге git. Каталог git свой у каждого клона и
+    каждого worktree, а номер в нём один и тот же, как бы ни был виден каталог репозиториев:
+    снаружи докера (C:\\…\\repo) и внутри (/repos/repo). mark — поставить, если её ещё нет (скан).
+    Не прочитать и не поставить — пусто."""
+    try:
+        found = git_bytes(root, "rev-parse", "--absolute-git-dir").removesuffix(b"\n")
+    except RepositoryError:
+        return ""
+    path = Path(os.fsdecode(found)) / CHECKOUT
+    mark_now = mark_in(path)
+    if mark_now or not mark:
+        return mark_now
+    with MARKING:
+        return marked(path)
+
+
+def marked(path: Path) -> str:
+    """Метка в файле path — та, что уже есть, или новая. Появляется она целиком или никак:
+    сначала — во временном файле рядом, потом — жёсткой ссылкой, а та не перезапишет метку,
+    которую тем временем поставил другой процесс. Жёстких ссылок нет — заменой, если метки всё ещё
+    нет; сканы одного сервера ставят метки по одной (MARKING), и каждый вернёт ту, что на диске.
+    Пустая или битая метка (прерванная запись) — не метка: её заменяют."""
+    mark_now = mark_in(path)
+    if mark_now:
+        return mark_now
+    made = uuid4().hex
+    part = path.with_name(f"{CHECKOUT}-{made}.part")
+    try:
+        part.write_text(f"{made}\n", encoding="ascii", newline="\n")
+        try:
+            os.link(part, path)
+        except FileExistsError:
+            if not mark_in(path):
+                os.replace(part, path)
+        except OSError:
+            if not mark_in(path):
+                os.replace(part, path)
+    except OSError:
+        return ""
+    finally:
+        part.unlink(missing_ok=True)
+    return mark_in(path)
+
+
+def mark_in(path: Path) -> str:
+    """Метка из файла — 32 шестнадцатеричных знака; нет файла, пустой или не метка — пусто."""
+    try:
+        text = path.read_text(encoding="ascii").strip()
+    except (OSError, UnicodeError):
+        return ""
+    return text if re.fullmatch(r"[0-9a-f]{32}", text) else ""
+
+
+def same_copy(source: ScannedRepository, root: Path) -> bool:
+    """По пути скана — та же рабочая копия, что сканировали: с той же меткой (checkout_of). Другой
+    клон или worktree того же проекта — уже другая копия, хоть коммит в нём и тот же: карта могла
+    описывать правки, которых в нём нет. Скан без метки (сделан раньше) — по корню; корень другой
+    (каталог репозиториев виден по-другому) — та же, если скан был без правок и сканированный
+    коммит в ней есть: правок, которые не узнать, у такого скана нет."""
+    if source.checkout:
+        return checkout_of(root) == source.checkout
+    if os.path.normcase(str(root)) == os.path.normcase(source.root):
+        return True
+    return not source.dirty and bool(source.commit_sha) and has_commit(root, source.commit_sha)
+
+
+def rerooted(scan: RepositoryScan, base: Path | None) -> RepositoryScan:
+    """Скан с корнями рабочих копий, где они сейчас: по их местам от каталога репозиториев
+    (located_again), если там та же копия (same_copy). Не найти или там уже другая — корня нет, и
+    следа по ней не будет: прежний корень мог привести в чужую копию."""
+    repositories = []
+    for source in scan.repositories:
+        try:
+            root = top_of(located_again(source, base))
+        except RepositoryError:
+            root = None
+        same = (root is not None and bool(source.root)
+                and (base is None or root.is_relative_to(base.resolve()))
+                and same_copy(source, root))
+        repositories.append(source.model_copy(update={"root": str(root) if same else ""}))
+    return scan.model_copy(update={"repositories": repositories})
+
+
+def located_again(source: ScannedRepository, base: Path | None) -> Path:
+    """Где рабочая копия скана сейчас: по её корню от каталога репозиториев, каким он был при
+    скане (within), — так её находят, и если путь ввели абсолютным, а каталог теперь виден
+    по-другому. Скан до этого — по пути, как его ввели."""
+    return located(source.within if source.within and base is not None else source.path, base)
+
+
+def top_of(path: Path) -> Path:
+    """Корень по git — байтами файловой системы: «�» вместо байта дал бы другой каталог."""
+    output = git_bytes(path, "rev-parse", "--show-toplevel").removesuffix(b"\n")
+    return Path(os.fsdecode(output.removesuffix(b"\r"))).resolve()
+
+
+def fits(found: Inventory) -> None:
+    """Снимок этой рабочей копии ляжет на диск сервера — или RepositoryError: больше не
+    копируем."""
+    if len(found.files) > FILES_MAX:
+        raise too_many()
+    if found.size > SNAPSHOT_MAX:
+        raise too_big()
+
+
+def too_many() -> RepositoryError:
+    return RepositoryError(f"В рабочей копии слишком много файлов для снимка: больше {FILES_MAX}")
+
+
+def too_big() -> RepositoryError:
+    return RepositoryError(
+        f"Рабочая копия слишком велика для снимка: файлы весят больше "
+        f"{SNAPSHOT_MAX / 2**20:g} МБ — крупные артефакты держите вне git, в игнорируемых")
+
+
+def head(root: Path) -> str:
+    """Коммит рабочей копии; пусто — коммитов ещё нет, а файлы есть."""
+    try:
+        return git(root, "rev-parse", "--verify", "-q", "HEAD").strip()
+    except RepositoryError:
+        return ""
+
+
+def levels(copies: list[Copy]) -> list[tuple[str, str, bytes]]:
+    """Каждая рабочая копия из copies_of: (путь от корня, коммит, git status с каждым новым
+    файлом). Во вложенные git status сам не заходит: обходим их мы, без ссылок и кругов, — и у
+    каждой свой статус: у грязного подмодуля общая пометка в родителе не меняется, что бы в
+    нём ни правили."""
+    by_prefix = {copy.prefix: copy for copy in copies}
+    heads = {copy.prefix: head(copy.folder) for copy in copies}
+    found = []
+    for copy in copies:
+        # Подмодуль сдвинулся только в своих пропущенных папках (закоммитили заметки) — для
+        # родителя не правка: файлы, что читают модели, те же.
+        moved = tuple(
+            ":(exclude,literal)" + name for name, sha in copy.gitlinks
+            if (child := by_prefix.get(f"{copy.prefix}{name}/")) is not None
+            and heads[child.prefix] != sha and moved_within(child, sha, heads[child.prefix],
+                                                            by_prefix))
+        found.append((copy.prefix, heads[copy.prefix],
+                      changes_of(copy.folder, copy.excluded + moved)))
+    return found
+
+
+def settled(now: list[tuple[str, str, bytes]], found: Inventory,
+            copies: list[Copy]) -> list[tuple[str, str, bytes]]:
+    """Состояние копий (levels) для сверки с found.state: коммит копии сменился только в
+    пропущенных папках (выгрузили заметки и закоммитили) — для снимка он тот же: файлы, что
+    читают модели, в нём те же."""
+    by_prefix = {copy.prefix: copy for copy in copies}
+    kept: list[tuple[str, str, bytes]] = []
+    for (prefix, sha, status), copy in zip(now, copies, strict=True):
+        was = found.heads.get(prefix, sha)
+        if was != sha and found.skipped and moved_within(copy, was, sha, by_prefix):
+            sha = was
+        kept.append((prefix, sha, status))
+    return kept
+
+
+def moved_within(copy: Copy, before: str, after: str, copies: Mapping[str, Copy]) -> bool:
+    """Коммиты before и after копии различаются только в её пропущенных папках — и в
+    подмодулях (copies — копии по пути от корня), сдвинутых только в их пропущенных папках."""
+    if not before or not after or not any(c.excluded for c in copies.values()):
+        return False
+    try:
+        raw = git_bytes(copy.folder, "diff", "--raw", "-z", "--no-abbrev", "--no-renames",
+                        "--no-ext-diff", "--no-textconv", before, after, *limited(copy.excluded))
+    except RepositoryError:     # не сравнить — или различий столько, что и не перечислить
+        return False
+    parts = raw.split(b"\0")
+    # «:режим режим sha sha буква» и следом путь.
+    for meta, name in zip(parts[0::2], parts[1::2], strict=False):
+        fields = meta.split()
+        child = copies.get(f"{copy.prefix}{os.fsdecode(name)}/")
+        if not (len(fields) == 5 and fields[0] == b":160000" and fields[1] == b"160000"
+                and child is not None
+                and moved_within(child, fields[2].decode(), fields[3].decode(), copies)):
+            return False
+    return True
+
+
+def state_of(found: list[tuple[str, str, bytes]]) -> bytes:
+    """Состояние рабочей копии одной строкой байтов: поменялось — её правили."""
+    return b"\0\0".join(os.fsencode(prefix) + b"\0" + sha.encode() + b"\0" + status
+                         for prefix, sha, status in found)
+
+
+# Где в статусе копии (changes_of) кончается git status и начинаются правки, что он не
+# покажет (hidden_of).
+HIDDEN_MARK = b"\0\0hidden\0"
+
+
+def changes_of(root: Path, excluded: tuple[str, ...] = ()) -> bytes:
+    """git status с каждым новым файлом — и правки, которых он не покажет. Без пропущенных папок
+    (excluded — excluded_in): их в снимке нет, и их правка — не правка того, что читают модели."""
+    hidden = hidden_of(root, excluded)
+    return status_of(root, excluded) + (HIDDEN_MARK + hidden if hidden else b"")
+
+
+def hidden_of(root: Path, excluded: tuple[str, ...] = ()) -> bytes:
+    """Правки в файлах с assume-unchanged или skip-worktree: их содержимое git status не
+    сверяет, а модели читают уже не коммит. Такие файлы на диске сверяем сами — с индексом
+    (hash-object — с теми же фильтрами, что и git add), и бит исполняемости тоже, если git ему
+    на диске верит: снимок его сохранит."""
+    flagged: dict[str, str] = {}
+    changed: list[str] = []
+    modes = file_mode(root) and os.name != "nt"
+    symlinks = config_bool(root, "core.symlinks")
+    for tag, mode, sha, name in index_of(root, excluded):
+        if not (tag.islower() or tag == b"S"):
+            continue
+        if mode == b"120000":
+            if link_changed(root, name, sha, symlinks=symlinks, sparse=tag.upper() == b"S"):
+                changed.append(name)
+            continue
+        if mode not in (b"100644", b"100755"):
+            continue
+        if plain(root, name):
+            flagged[name] = sha
+            if modes and executable_on_disk(root / name) != (mode == b"100755"):
+                changed.append(name)
+        elif tag.upper() != b"S":
+            # assume-unchanged, а файла нет или он уже не файл — правка; у skip-worktree это
+            # обычный sparse checkout.
+            changed.append(name)
+    for chunk in batches(list(flagged)):
+        shas = git(root, "hash-object", "--", *chunk).split()
+        changed += [name for name, sha in zip(chunk, shas, strict=True) if sha != flagged[name]]
+    return b"\0".join(os.fsencode(name) for name in changed)
+
+
+def batches(names: list[str], limit: int = 8000) -> Iterator[list[str]]:
+    """Имена пачками по длине: командная строка не бесконечна (на Windows — около 32 тысяч
+    символов), а имя — до 4 КБ, так что по числу пачку не отмерить."""
+    batch: list[str] = []
+    used = 0
+    for name in names:
+        size = len(os.fsencode(name)) + 3            # с пробелом и кавычками
+        if batch and used + size > limit:
+            yield batch
+            batch, used = [], 0
+        batch.append(name)
+        used += size
+    if batch:
+        yield batch
+
+
+def link_changed(root: Path, name: str, sha: str, *, symlinks: bool, sparse: bool) -> bool:
+    """Ссылка с флагом против её версии в индексе (блоб — текст ссылки). Без поддержки ссылок
+    (core.symlinks=false, как на Windows) git кладёт её файлом с этим текстом. Нет на диске:
+    у assume-unchanged — правка, у skip-worktree — sparse checkout."""
+    path = root / name
+    if os.path.islink(path):
+        data = os.fsencode(os.readlink(path))
+    elif not symlinks and plain(root, name):
+        with path.open("rb") as file:
+            data = file.read(1 << 16)
+    else:
+        return os.path.lexists(path) or not sparse
+    return blob_id(data, len(sha)) != sha
+
+
+def blob_id(data: bytes, length: int) -> str:
+    """Имя блоба, как его считает git: sha1 или, в репозитории на sha256, — sha256."""
+    algorithm = hashlib.sha1 if length == 40 else hashlib.sha256
+    return algorithm(b"blob %d\0" % len(data) + data).hexdigest()
+
+
+def executable_on_disk(path: Path) -> bool:
+    try:
+        return bool(path.lstat().st_mode & 0o111)
+    except OSError:
+        return False
+
+
+def index_of(root: Path, excluded: tuple[str, ...] = ()) -> list[tuple[bytes, bytes, str, str]]:
+    """Записи индекса: (тег ls-files -v, режим, sha, имя) — из «h 100644 <sha> 0<TAB><имя>».
+    Без пропущенных папок (excluded — excluded_in)."""
+    found = []
+    for entry in git_bytes(root, "ls-files", "-z", "-v", "--stage",
+                           *limited(excluded)).split(b"\0"):
+        if entry:
+            tag, _, rest = entry.partition(b" ")
+            meta, _, raw = rest.partition(b"\t")
+            mode, sha = meta.split(b" ")[:2]
+            found.append((tag, mode, sha.decode(), os.fsdecode(raw)))
+    return found
+
+
+def modes_of(copies: list[Copy]) -> dict[str, bool]:
+    """Бит исполняемости, которому git верит больше, чем диску: при core.fileMode=false — из
+    индекса (на диске он бывает и у всех файлов сразу, как в bind mount из Windows). Снимок
+    берёт его оттуда же, откуда взял бы коммит: иначе модели видели бы не показанный коммит, а
+    копия числилась бы без правок."""
+    modes: dict[str, bool] = {}
+    for copy in copies:
+        if not file_mode(copy.folder):
+            modes.update({copy.prefix + name: mode == b"100755"
+                          for _, mode, _, name in index_of(copy.folder, copy.excluded)
+                          if mode in (b"100644", b"100755")})
+    return modes
+
+
+def file_mode(root: Path) -> bool:
+    """core.fileMode: false — бит исполняемости на диске git не сверяет."""
+    return config_bool(root, "core.fileMode")
+
+
+def config_bool(root: Path, key: str) -> bool:
+    """Булева настройка git; не задана — true (так у core.fileMode и core.symlinks)."""
+    try:
+        return git(root, "config", "--type=bool", "--get", key).strip() != "false"
+    except RepositoryError:
+        return True
+
+
+def status_of(root: Path, excluded: tuple[str, ...] = ()) -> bytes:
+    """--ignore-submodules=dirty: подмодуль не на записанном в родителе коммите — это правка
+    (снимок уже не показанный коммит), а что внутри него, git сам не смотрит: это его статус.
+    Без пропущенных папок (excluded — excluded_in)."""
+    return git_bytes(root, "status", "--porcelain=v1", "-z", "--untracked-files=all",
+                     "--ignore-submodules=dirty", *limited(excluded))
+
+
+def inventory(path: Path, skip: Iterable[tuple[Path, str]] = ()) -> Inventory:
+    """Корень рабочей копии, её коммит, есть ли незакоммиченные правки, и список файлов — тех,
+    что на диске есть, это обычные файлы и лежат в рабочей копии (удалённый, но отслеживаемый,
+    вне sparse checkout, ссылка и файл за каталогом-ссылкой — не её файлы). Без папок skip (путь
+    и почему: council_folders) — их нет ни в файлах, ни в пределах, ни в состоянии и правках:
+    их правят (выгрузка заметок), а снимок тот же; модели узнают, почему их нет (omitted)."""
+    root = top_of(path)
+    skipped, told = skipped_of(root, skip)
+    copies = copies_of(root, skipped)
+    files = present(root, copies)
+    size = sum(stamp[0] for stamp in (stamp_of(root / name) for name in files) if stamp)
+    if size > SNAPSHOT_MAX:
+        raise too_big()        # до git status и hash-object: они читают файлы с флагами целиком
+    found = levels(copies)
+    # Правки — и вложенный репозиторий, не подмодуль: его кода в коммите корня нет.
+    dirty = any(status for _, _, status in found) or any(copy.embedded for copy in copies)
+    kept = set(files)
+    modes = {name: mode for name, mode in modes_of(copies).items() if name in kept}
+    return Inventory(root, found[0][1], dirty, files, state_of(found), modes, size,
+                     sum(copy.outside for copy in copies), (*omitted_of(root, copies), *told),
+                     skipped=skipped, heads={prefix: sha for prefix, sha, _ in found})
+
+
+def skipped_of(root: Path, folders: Iterable[tuple[Path, str]]
+               ) -> tuple[tuple[str, ...], tuple[str, ...]]:
+    """Какие из папок folders (путь и почему) опись рабочей копии с корнем root пропускает — от
+    корня, с «/» на конце, — и что о каждой узнают модели (omitted). Папка вне рабочей копии — не
+    пропускается. Сама копия — папка совета или в ней — RepositoryError: читать моделям в ней
+    нечего, кроме того, что приходит в совет только отбором."""
+    top = root.resolve()
+    prefixes: list[str] = []
+    told: list[str] = []
+    for folder, why in folders:
+        resolved = folder.resolve()
+        if top.is_relative_to(resolved):
+            raise RepositoryError(COUNCIL_COPY)
+        if not resolved.is_relative_to(top):
+            continue
+        inside = resolved.relative_to(top).as_posix()
+        prefixes.append(inside + "/")
+        told.append(f"{shown(inside)}/ — {why}")
+    return tuple(prefixes), tuple(told)
+
+
+COUNCIL_COPY = ("Рабочая копия — сама папка документации или задач совета или лежит в ней: их "
+                "модели в коде не читают — укажите папку кода или поправьте папки проекта")
+
+
+def council_folders(notes: Path | None, issues: Path | None) -> list[tuple[Path, str]]:
+    """Папки совета в репозитории проекта, что модели в коде не читают: заметки — прошлые
+    решения приходят в совет только отбором, и невыбранное решение не должно действовать
+    из-за того, что его файл лежит в репозитории; задачи — план прошлого совета не факт о коде."""
+    return [*([(notes, "папка документации совета (заметки IDEA, OQ, PRO, ADR, OUT): в снимок "
+                       "не входит — прошлые решения приходят в совет отбором")] if notes else []),
+            *([(issues, "папка задач совета: в снимок не входит")] if issues else [])]
+
+
+def omitted_of(root: Path, copies: list[Copy]) -> tuple[str, ...]:
+    """Чего нет в снимке, хоть оно и в рабочей копии, — с причиной."""
+    return (*(entry for copy in copies for entry in copy.absent), *links_of(root, copies))
+
+
+def links_of(root: Path, copies: list[Copy]) -> list[str]:
+    """Ссылки рабочей копии — путь и куда ведёт (сам текст ссылки, по ней не ходим). И ссылка
+    на каталог по дороге к файлу: файлов за ней в снимке нет, даже если git её самой не
+    показывает (каталог игнорируется). Каждая — один раз, первая по пути."""
+    found: list[str] = []
+    behind = None                                    # ссылка, за которой уже не смотрим
+    for prefix, _ in prefixes(listed(copies)):
+        if behind is not None and prefix.startswith(behind):
+            continue
+        if is_link(root / prefix):
+            found.append(f"{shown(prefix)} → {link_text(root / prefix)} — ссылка, в снимок не "
+                         "копируется")
+            behind = prefix + "/"
+    return found
+
+
+def is_link(path: Path) -> bool:
+    return os.path.islink(path) or os.path.isjunction(path)
+
+
+def link_text(path: Path) -> str:
+    try:
+        return shown(os.readlink(path))
+    except OSError:
+        return "?"
+
+
+def present(root: Path, copies: list[Copy]) -> tuple[str, ...]:
+    """Файлы рабочей копии: из списков git — те, что на диске есть и это обычные файлы."""
+    listing = set(listed(copies))
+    if len(listing) > FILES_MAX:
+        raise too_many()                  # до lstat каждого: их может быть миллион
+    return tuple(sorted(name for name in listing if plain(root, name)))
+
+
+def plain(root: Path, name: str) -> bool:
+    """Обычный файл, и путь к нему — без ссылок: ни он сам, ни каталоги по дороге. За ссылкой
+    может быть что угодно, вплоть до /dev/zero или чужих ключей."""
+    path = root / name
+    try:
+        if not stat.S_ISREG(path.lstat().st_mode):
+            return False
+    except OSError:
+        return False
+    return unlinked(root, name)
+
+
+def unlinked(root: Path, name: str) -> bool:
+    """От корня до файла — ни одной ссылки или junction: путь без них тот же, что и с ними.
+    Ссылка и внутрь рабочей копии не годится: за ней может быть игнорируемое, вплоть до .env."""
+    real = os.path.realpath(root / name)
+    expected = os.path.join(os.path.realpath(root), *name.split("/"))
+    return os.path.normcase(real) == os.path.normcase(expected)
+
+
+def snapshot(found: Inventory, into: Path, *,
+             budget: int | None = None) -> tuple[str, frozenset[str]]:
+    """Снимок рабочей копии, который читают модели: только файлы inventory — без .git и
+    игнорируемого (там бывают .env и ключи) — и только обычные файлы внутри неё. Пока идёт
+    скан, рабочую копию могут править, а снимок неподвижен: все участники и все проходы читают
+    один и тот же код. Правили, пока он делался, — снимок был бы смесью старого и нового:
+    RepositoryError. Отпечаток — по содержимому снимка и битам исполняемости: им ключуются
+    оплаченные ответы, и тот же код в другой копии — тот же ключ. Файл inventory не прочитать —
+    тоже RepositoryError: промпт его называет, и карта без него вышла бы «полной», хотя его никто
+    не читал. budget — сколько байтов ещё влезет (у нескольких рабочих копий предел общий).
+    Вернёт отпечаток и какие файлы в снимок легли."""
+    fits(found)
+    budget = SNAPSHOT_MAX if budget is None else budget
+    if found.size > budget:
+        raise too_big()
+    digest = hashlib.sha256()
+    taken: dict[str, tuple[int, int]] = {}
+    missed: list[str] = []
+    written = 0
+    for name in found.files:
+        copied = copied_file(found.root, name, into / name, executable=found.modes.get(name),
+                             limit=budget - written)
+        if copied is None:
+            missed.append(name)
+            continue
+        part, stamp = copied
+        digest.update(os.fsencode(name) + b"\0" + part + b"\0")
+        taken[name] = stamp
+        written += (into / name).stat().st_size
+    copies = copies_of(found.root, found.skipped)
+    # Состояние читается после списка файлов: появился файл между ними — его в снимке нет.
+    appeared = set(present(found.root, copies)) - set(found.files)
+    if state_of(settled(levels(copies), found, copies)) != found.state or appeared or any(
+            stamp_of(found.root / name) != stamp for name, stamp in taken.items()):
+        raise RepositoryError("Рабочая копия менялась, пока делался её снимок, — запустите скан "
+                              "снова, когда правки закончатся")
+    if missed:
+        told = ", ".join(map(shown, missed[:5]))
+        told += f" и ещё {len(missed) - 5}" if len(missed) > 5 else ""
+        raise RepositoryError(f"Не прочитать файлы рабочей копии: {told} — без них карта вышла "
+                              "бы неполной; дайте серверу права на чтение и запустите скан снова")
+    return digest.hexdigest(), frozenset(taken)
+
+
+def stamp_of(path: Path) -> tuple[int, int] | None:
+    """Размер и время правки: поменялись после копирования — файл правили."""
+    try:
+        info = path.stat()
+    except OSError:
+        return None
+    return info.st_size, info.st_mtime_ns
+
+
+def open_inside(root: Path, name: str) -> int:
+    """Файл рабочей копии, открытый так, чтобы ни один каталог по дороге не был ссылкой: каждый
+    — относительно предыдущего и без перехода по ссылке (O_NOFOLLOW). Где так нельзя (Windows),
+    — только если на всём пути нет ни ссылки, ни junction (unlinked). FIFO не ждём: O_NONBLOCK."""
+    flags = (os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0)
+             | getattr(os, "O_BINARY", 0))
+    folder_flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0) | getattr(os, "O_NOFOLLOW", 0)
+    if os.open in os.supports_dir_fd and hasattr(os, "O_DIRECTORY"):
+        *folders, file = name.split("/")
+        handle = os.open(root, os.O_RDONLY | os.O_DIRECTORY)
+        try:
+            for folder in folders:
+                inner = os.open(folder, folder_flags, dir_fd=handle)
+                os.close(handle)
+                handle = inner
+            return os.open(file, flags, dir_fd=handle)
+        finally:
+            os.close(handle)
+    if not unlinked(root, name):
+        raise OSError(f"{name}: путь идёт через ссылку")
+    return os.open(os.path.realpath(root / name), flags)
+
+
+def copied_file(root: Path, name: str, target: Path, *, executable: bool | None = None,
+                limit: int | None = None) -> tuple[bytes, tuple[int, int]] | None:
+    """Копия одного файла кусками — и хеш его содержимого с битом исполняемости, и его размер
+    и время правки на момент копирования. Пропал, не читается, не обычный файл — None.
+    executable — бит из индекса, если диску git не верит; limit — сколько ещё влезет в снимок:
+    вырос больше — RepositoryError, не дописываем."""
+    try:
+        handle = open_inside(root, name)
+    except OSError:
+        return None
+    with os.fdopen(handle, "rb") as read:
+        info = os.fstat(read.fileno())
+        if not stat.S_ISREG(info.st_mode):
+            return None
+        digest = hashlib.sha256()
+        size = 0
+        with written(target, name) as write:
+            for chunk in iter(lambda: read.read(1 << 16), b""):
+                size += len(chunk)
+                if limit is not None and size > limit:
+                    raise too_big()
+                digest.update(chunk)
+                write.write(chunk)
+    if executable is None:
+        executable = bool(info.st_mode & 0o111) and os.name != "nt"
+    if executable and os.name != "nt":
+        target.chmod(0o755)   # исполняемый — и в снимке: модели видят, что это запускают
+    return digest.digest() + (b"x" if executable else b"-"), (info.st_size, info.st_mtime_ns)
+
+
+@contextmanager
+def written(target: Path, name: str) -> Iterator[BinaryIO]:
+    """Файл снимка на запись. Путь в снимке длиннее исходного (временный каталог), и предел
+    системы может кончиться — это причина отказа, а не внутренняя ошибка."""
+    try:
+        target.parent.mkdir(parents=True, exist_ok=True)
+        file = target.open("wb")
+    except OSError as exc:
+        raise RepositoryError(f"Не записать в снимок {shown(name)}: "
+                              f"{exc.strerror or exc}") from exc
+    with file:
+        yield file
+
+
+@dataclass(frozen=True)
+class Source:
+    """Рабочая копия скана: путь, как его ввёл человек, её inventory и имя в снимке. У
+    нескольких копий файлы каждой — в её папке, «name/…»; у одной имени нет, и пути — как в ней
+    самой."""
+
+    name: str
+    path: str
+    found: Inventory
+
+    @property
+    def prefix(self) -> str:
+        return f"{self.name}/" if self.name else ""
+
+
+def sources_of(chosen: Sequence[tuple[str, Inventory]]) -> list[Source]:
+    """Рабочие копии скана с их именами в снимке: одна — без имени; несколько — по имени
+    каталога, у тёзок (и тех, что отличаются лишь регистром или нормализацией Unicode, —
+    снимок может лечь на систему, где это одно имя) с номером. Одна и та же копия дважды или
+    копия внутри другой, чьи файлы её уже включают, — RepositoryError: эти файлы легли бы в
+    снимок дважды."""
+    for n, (_, found) in enumerate(chosen):
+        for _, other in chosen[n + 1:]:
+            overlapping(found, other)
+            overlapping(other, found)
+    if len(chosen) == 1:
+        path, found = chosen[0]
+        return [Source("", path, found)]
+    sources: list[Source] = []
+    taken: set[str] = set()
+    for path, found in chosen:
+        base = found.root.name or "repository"
+        name, n = base, 2
+        while folded(name) in taken:
+            name, n = f"{base}-{n}", n + 1
+        taken.add(folded(name))
+        sources.append(Source(name, path, found))
+    return sources
+
+
+def overlapping(inner: Inventory, outer: Inventory) -> None:
+    """Файлы inner уже есть среди файлов outer — RepositoryError. Вложенную рабочую копию скан
+    outer обходит сам, если git её не игнорирует."""
+    if inner.root == outer.root:
+        raise RepositoryError(f"Рабочая копия {inner.root} выбрана дважды")
+    if not inner.root.is_relative_to(outer.root):
+        return
+    folder = inner.root.relative_to(outer.root).as_posix() + "/"
+    if any(name.startswith(folder) for name in outer.files):
+        raise RepositoryError(f"Рабочая копия {inner.root} лежит внутри {outer.root}, и её "
+                              "файлы скан той уже видит — выберите одну из них")
+
+
+def folded(name: str) -> str:
+    return unicodedata.normalize("NFC", name).casefold()
+
+
+def scanned(source: Source) -> ScannedRepository:
+    """Что скан помнит о рабочей копии."""
+    found = source.found
+    return ScannedRepository(name=source.name, path=source.path, root=str(found.root),
+                             within=found.within, checkout=found.checkout,
+                             commit_sha=found.commit_sha, dirty=found.dirty,
+                             files=len(found.files), outside=found.outside,
+                             omitted=capped(found.omitted), omitted_count=len(found.omitted),
+                             skipped=list(found.skipped))
+
+
+# Карта сделана, когда скан ещё читал папки совета, или их с тех пор сменили (unskipped_since).
+STALE_MAP = ("Карта кода сделана, когда скан ещё читал папки документации и задач совета (или их "
+             "с тех пор сменили в проекте), — просканируйте репозиторий заново")
+
+
+def unskipped_since(scan: RepositoryScan, base: Path | None,
+                    folders: Iterable[tuple[Path, str]]) -> bool:
+    """Скан пропускал не те папки совета, что пропустил бы сейчас (folders — council_folders):
+    сделан до пропуска или папки проекта с тех пор сменили. Его карта читала не то, что прочтут
+    потоки, — карту делают заново. Корни — где копии сейчас (rerooted): снаружи докера и в нём
+    каталог репозиториев виден по-другому, а папки проекта — от того, каким он виден сейчас.
+    Копию не найти (сдвинули, удалили, скан до запоминания корня) — не сверить: карту тоже делают
+    заново, если папки совета есть сейчас или были при скане. Зовёт git в каждой копии — не под
+    замком советов."""
+    folders = list(folders)
+    for source in rerooted(scan, base).repositories:
+        if not source.root:
+            if folders or source.skipped:
+                return True
+            continue
+        try:
+            if list(skipped_of(Path(source.root), folders)[0]) != source.skipped:
+                return True
+        except RepositoryError:     # копия теперь — в самой папке совета
+            return True
+    return False
+
+
+def merged(sources: Sequence[Source]) -> Inventory:
+    """Все рабочие копии скана как одна — для промпта и общих пределов: пути с папкой копии."""
+    if len(sources) == 1:
+        return sources[0].found
+    return Inventory(
+        root=Path(), commit_sha="", dirty=any(source.found.dirty for source in sources),
+        files=tuple(source.prefix + name for source in sources for name in source.found.files),
+        size=sum(source.found.size for source in sources),
+        outside=sum(source.found.outside for source in sources),
+        omitted=tuple(shown(source.prefix) + entry for source in sources
+                      for entry in source.found.omitted))
+
+
+def snapshot_all(sources: Sequence[Source], into: Path) -> tuple[str, frozenset[str]]:
+    """Снимок всех рабочих копий скана: каждая — в своей папке (одна — прямо в into, и её
+    отпечаток — как у снимка одной копии). Пределы — на все вместе. Вернёт отпечаток и какие
+    файлы, с папкой копии, в снимок легли."""
+    if len(sources) == 1:
+        return snapshot(sources[0].found, into)
+    fits(merged(sources))
+    digest = hashlib.sha256()
+    copied: set[str] = set()
+    budget = SNAPSHOT_MAX
+    for source in sources:
+        folder = into / source.name
+        folder.mkdir()
+        part, files = snapshot(source.found, folder, budget=budget)
+        budget -= sum((folder / name).stat().st_size for name in files)
+        digest.update(os.fsencode(source.name) + b"\0" + part.encode() + b"\0")
+        copied.update(source.prefix + name for name in files)
+    return digest.hexdigest(), frozenset(copied)
+
+
+def commits_prompt(sources: Sequence[Source]) -> str:
+    """Коммит каждой рабочей копии; у нескольких — с её папкой."""
+    if len(sources) == 1:
+        return sha_prompt(sources[0].found)
+    return "\n".join(f"{source.name}: {sha_prompt(source.found)}" for source in sources)
+
+
+def sources_prompt(sources: Sequence[Source]) -> str:
+    """Inventory всех рабочих копий скана; у нескольких — сначала, где какая."""
+    text = inventory_prompt(merged(sources))
+    if len(sources) == 1:
+        return text
+    where = ", ".join(f"{shown(source.name)}/ — {shown(source.path)}" for source in sources)
+    return (f"Рабочих копий несколько, каждая — в своей папке снимка: {where}. Пути файлов — "
+            f"с этой папкой.\n{text}")
+
+
+def inventory_prompt(found: Inventory) -> str:
+    lines: list[str] = []
+    used = 0
+    for name in found.files[:INVENTORY_MAX]:
+        used += len(shown(name)) + 1
+        if used > INVENTORY_CHARS:
+            break
+        lines.append(shown(name))
+    text = "\n".join(lines)
+    if len(found.files) > len(lines):
+        text += f"\n… и ещё {len(found.files) - len(lines)} файлов: ищите по репозиторию сами"
+    if found.outside:
+        text += (f"\n… файлов коммита вне sparse checkout: {found.outside} — их нет ни на диске, "
+                 "ни в снимке: коммит виден не весь")
+    if found.omitted:
+        told = capped(found.omitted)
+        more = len(found.omitted) - len(told)
+        text += f"\n… нет в снимке: {'; '.join(told)}{f'; и ещё {more}' if more else ''}"
+    return text
+
+
+def capped(names: Sequence[str]) -> list[str]:
+    """Первые имена — не больше ABSENT_SHOWN и ABSENT_CHARS символов: список идёт в промпты."""
+    taken: list[str] = []
+    used = 0
+    for name in names[:ABSENT_SHOWN]:
+        used += len(name) + 2
+        if used > ABSENT_CHARS:
+            break
+        taken.append(name)
+    return taken
+
+
+def shown(name: str) -> str:
+    """Имя файла, каким его видят модели и человек: байты не из UTF-8 и управляющие символы
+    (перевод строки разбил бы имя на два «файла» списка) — как \\xNN, байтами (как есть их в
+    промпт не положить и не сохранить), а сама «\\» — как «\\\\»: иначе байт и те же буквы в
+    имени другого файла выглядели бы одинаково. Обратно переводит Context.path_of."""
+    if name.isprintable() and "\\" not in name:
+        return name
+    return "\\\\".join("".join(map(escaped, part.decode("utf-8", "backslashreplace")))
+                       for part in os.fsencode(name).split(b"\\"))
+
+
+def escaped(char: str) -> str:
+    if unicodedata.category(char)[0] == "C" or unicodedata.category(char) in ("Zl", "Zp"):
+        return "".join(f"\\x{byte:02x}" for byte in char.encode())
+    return char
+
+
+def sha_prompt(found: Inventory) -> str:
+    if not found.commit_sha:
+        return "нет коммитов: репозиторий новый, есть только рабочая копия"
+    return found.commit_sha + (" (в рабочей копии есть незакоммиченные изменения: читайте её)"
+                               if found.dirty else "")
+
+
+# --- разбор
+
+
+@dataclass(frozen=True)
+class Context:
+    """На что могут ссылаться находки: файлы репозитория. roots — где лежит снимок: модель
+    может назвать файл и полным путём в нём."""
+
+    files: frozenset[str]
+    roots: tuple[Path, ...] = field(default_factory=tuple)
+
+    def path_of(self, value: object) -> str:
+        """Путь файла, как его назвала модель, — относительный, как в inventory. Сначала как
+        есть: в POSIX «\\» — буква имени; «/» вместо «\\» — запасной ход для ссылок в духе
+        Windows. Имя, каким его показали моделям (shown), — прежде всего: модель берёт его
+        из списка. Путь — как есть, не прозой: не режем и пробелы не схлопываем."""
+        text = path_text(value)
+        variants = (text, text.replace("\\", "/"), text.strip(), text.strip().replace("\\", "/"))
+        named = [self.relative(path) for path in dict.fromkeys(variants)]
+        for path in named:
+            if path in self.originals:
+                return self.originals[path]
+            if path in self.files:
+                return path
+        return named[-1]
+
+    @cached_property
+    def originals(self) -> dict[str, str]:
+        """Имена файлов по тому, как их показали моделям: у имён не из UTF-8 это разное."""
+        return {shown(name): name for name in self.files if shown(name) != name}
+
+    def relative(self, path: str) -> str:
+        path = path.removeprefix("./")
+        for root in self.roots:
+            prefix = root.as_posix().rstrip("/") + "/"
+            if path.startswith(prefix):
+                return path[len(prefix):]
+        return path
+
+
+def text_of(value: object) -> str:
+    return reason_of(value)[:TEXT_MAX]
+
+
+def path_text(value: object) -> str:
+    """Путь из ответа — как есть: в имени бывают и два пробела подряд, и 4 КБ."""
+    return value[:PATH_CHARS] if isinstance(value, str) else ""
+
+
+def strings(value: object) -> list[str]:
+    items = value if isinstance(value, list) else []
+    return list(dict.fromkeys(text for text in (text_of(item) for item in items) if text))
+
+
+def finding_id(value: object) -> str | None:
+    found = FINDING_ID.fullmatch(value.strip()) if isinstance(value, str) else None
+    return f"R{int(found.group(1))}" if found else None
+
+
+def evidence_of(value: object, context: Context) -> list[Evidence]:
+    items = value if isinstance(value, list) else []
+    found = []
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        path = context.path_of(item.get("path"))
+        if path not in context.files:
+            continue   # файла в репозитории нет — это не подтверждение
+        found.append(Evidence(path=shown(path), lines=text_of(item.get("lines")) or None,
+                              symbol=text_of(item.get("symbol")) or None))
+    return found
+
+
+def findings_of(value: object, context: Context) -> list[RepositoryFinding]:
+    """Находки со своими номерами. Без номера или с повтором — номер наш и не занятый ни одной
+    находкой ответа: иначе ссылки на ту находку достались бы этой."""
+    items = given_findings(value)
+    taken = {finding_id(item.get("id")) for item in items}
+    free = (f"R{n}" for n in itertools.count(1) if f"R{n}" not in taken)
+    found: dict[str, RepositoryFinding] = {}
+    for item in items:
+        name = finding_id(item.get("id"))
+        if name is None or name in found:
+            name = next(free)
+        status = item.get("status") if item.get("status") in STATUSES else "unknown"
+        evidence = evidence_of(item.get("evidence"), context)
+        if status == "verified" and not evidence:
+            status = "inferred"   # verified без подтверждения в репозитории — только вывод
+        found[name] = RepositoryFinding(id=name, statement=text_of(item.get("statement")),
+                                        status=status, evidence=evidence,
+                                        relevance=text_of(item.get("relevance")))
+    return list(found.values())
+
+
+def given_findings(value: object) -> list[dict]:
+    items = value if isinstance(value, list) else []
+    return [item for item in items if isinstance(item, dict) and text_of(item.get("statement"))]
+
+
+def linkable(findings: list[RepositoryFinding], value: object) -> set[str]:
+    """На какие находки ссылки берём: на те, чей номер дал сам ответ, и одной находке. Номер у
+    двух — ссылка на неизвестно какую из них; номер наш — ответ его и не знал."""
+    named = Counter(finding_id(item.get("id")) for item in given_findings(value))
+    return {finding.id for finding in findings if named[finding.id] == 1}
+
+
+def ids_in(value: object, known: set[str]) -> list[str]:
+    items = value if isinstance(value, list) else []
+    found = (finding_id(item) for item in items)
+    return list(dict.fromkeys(name for name in found if name in known))
+
+
+def entry_of(value: object, context: Context) -> tuple[str, str]:
+    """Точка входа потока — файл репозитория, можно с символом: «api/routes.py:handler». Путь —
+    самое длинное начало, которое есть в inventory: в именах бывают и пробелы. Файла нет — точки
+    входа нет: следующие шаги поверили бы несуществующему компоненту. Вернёт (файл, точку
+    входа)."""
+    text = path_text(value)       # как есть: пробел в начале — тоже имя; обрезает path_of
+    ends = [len(text), *sorted({i for i, char in enumerate(text) if char in ": ("}, reverse=True)]
+    for end in ends:
+        path = context.path_of(text[:end])
+        if path in context.files:
+            rest = text[end:]
+            return shown(path), shown(path) + (rest[:1] + reason_of(rest[1:]))[:TEXT_MAX]
+    return "", ""
+
+
+def flows_of(value: object, known: set[str], context: Context) -> list[RepositoryFlow]:
+    items = value if isinstance(value, list) else []
+    return [flow_of(item, known, context)
+            for item in items if isinstance(item, dict) and text_of(item.get("name"))]
+
+
+def flow_of(item: dict, known: set[str], context: Context) -> RepositoryFlow:
+    entry_file, entry_point = entry_of(item.get("entry_point"), context)
+    steps = item.get("steps") if isinstance(item.get("steps"), list) else []
+    return RepositoryFlow(
+        name=text_of(item.get("name")), entry_point=entry_point, entry_file=entry_file,
+        steps=[FlowStep(description=text_of(step.get("description")),
+                        finding_ids=ids_in(step.get("finding_ids"), known))
+               for step in steps if isinstance(step, dict) and text_of(step.get("description"))])
+
+
+def coverage_of(value: object, known: set[str]) -> list[CoverageArea]:
+    items = value if isinstance(value, list) else []
+    return [CoverageArea(
+        area=text_of(item.get("area")),
+        status=item.get("status") if item.get("status") in COVERAGE else "not_investigated",
+        evidence_ids=ids_in(item.get("evidence_ids"), known), reason=text_of(item.get("reason")))
+        for item in items if isinstance(item, dict) and text_of(item.get("area"))]
+
+
+def unknowns_of(value: object) -> list[RepositoryUnknown]:
+    items = value if isinstance(value, list) else []
+    return [RepositoryUnknown(question=text_of(item.get("question")),
+                              reason=text_of(item.get("reason")),
+                              investigate=strings(item.get("investigate")))
+            for item in items if isinstance(item, dict) and text_of(item.get("question"))]
+
+
+def conflicts_of(value: object) -> list[str]:
+    """Расхождения документации и кода: формат не задан — строка или объект словами."""
+    items = value if isinstance(value, list) else []
+    texts = []
+    for item in items:
+        if isinstance(item, dict):
+            text = " — ".join(text_of(v) for v in item.values() if text_of(v))
+        else:
+            text = text_of(item)
+        if text:
+            texts.append(text)
+    return texts
+
+
+def map_of(data: dict, context: Context) -> RepositoryMap:
+    """Карта из ответа участника или судьи. Без списка findings ответ негодный; пустой
+    список — честное «ничего относящегося к идее не нашлось»."""
+    if not isinstance(data.get("findings"), list):
+        raise BadAnswer("нет списка findings")
+    findings = findings_of(data.get("findings"), context)
+    known = linkable(findings, data.get("findings"))
+    return RepositoryMap(findings=findings, flows=flows_of(data.get("flows"), known, context),
+                         coverage=coverage_of(data.get("coverage"), known),
+                         unknowns=unknowns_of(data.get("unknowns")),
+                         documentation_conflicts=conflicts_of(data.get("documentation_conflicts")))
+
+
+@dataclass(frozen=True)
+class Judged:
+    complete: bool
+    result: RepositoryMap
+    follow_up: tuple[FollowUp, ...]
+
+
+def judged_map(data: dict, context: Context) -> Judged:
+    """Итог судьи: проверенная карта и, если исследование недостаточно, задания follow_up.
+    complete — заданий нет; needs_investigation без заданий — доисследовать нечего, и это
+    тоже конец."""
+    status = data.get("status")
+    if status not in ("complete", "needs_investigation"):
+        raise BadAnswer(f"неизвестный status: {status!r}")
+    result = map_of(data, context)
+    known = linkable(result.findings, data.get("findings"))
+    items = data.get("follow_up") if isinstance(data.get("follow_up"), list) else []
+    follow_up = tuple(FollowUp(objective=text_of(item.get("objective")),
+                               reason=text_of(item.get("reason")),
+                               targets=strings(item.get("targets")),
+                               related_finding_ids=ids_in(item.get("related_finding_ids"), known))
+                      for item in items
+                      if isinstance(item, dict) and text_of(item.get("objective")))
+    if status == "complete" or not follow_up:
+        return Judged(True, result, ())
+    return Judged(False, result, follow_up)
+
+
+def as_prompt(result: RepositoryMap) -> dict:
+    """Карта — в той форме, в какой её просили у моделей."""
+    return result.model_dump(mode="json")
+
+
+def context_prompt(result: RepositoryMap | None,
+                   repositories: Sequence[ScannedRepository] = (), *, complete: bool = True,
+                   follow_up: Sequence[FollowUp] = ()) -> str:
+    """Что получают следующие шаги: проверенная карта или честное «не сканировали». По каждой
+    рабочей копии (repositories): folder — папка её файлов в путях карты ("" — одна копия, пути
+    без папки), commit_sha; uncommitted_changes — карта снята с рабочей копии с
+    незакоммиченными правками, а не с самого коммита: следующие шаги не припишут ему то, чего в
+    нём нет; files_outside_checkout — сколько файлов коммита вне sparse checkout, а
+    not_in_snapshot — чего ещё нет в снимке (нескачанные подмодули, ссылки; первые, всего —
+    _count): этого модели не видели. complete — судья счёл исследование достаточным, а
+    remaining_follow_up — что доисследовать не успели: недоисследованное — не установленное."""
+    if result is None:
+        return "Репозиторий не исследовался: существующей реализации шаг не видел."
+    return json.dumps({"repositories": [{
+                           "folder": source.name, "path": source.path,
+                           "commit_sha": source.commit_sha,
+                           "uncommitted_changes": source.dirty,
+                           "files_outside_checkout": source.outside,
+                           "not_in_snapshot": capped(source.omitted),
+                           "not_in_snapshot_count": max(source.omitted_count,
+                                                        len(source.omitted))}
+                           for source in repositories],
+                       "complete": complete,
+                       "remaining_follow_up": [
+                           {"objective": item.objective, "reason": item.reason,
+                            "targets": item.targets} for item in follow_up[:ABSENT_SHOWN]],
+                       **as_prompt(result)},
+                      ensure_ascii=False, indent=2)

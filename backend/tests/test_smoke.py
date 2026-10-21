@@ -1,0 +1,65 @@
+import gc
+import warnings
+
+import pytest
+from fastapi.testclient import TestClient
+
+from spec_council.app import app
+from spec_council.deps import get_store
+from spec_council.spa import STATIC
+from spec_council.store import InMemoryStore
+
+client = TestClient(app)
+
+
+def test_councils():
+    assert client.get("/api/councils").status_code == 200
+
+
+def test_settings():
+    assert client.get("/api/settings").json()["models"]
+
+
+def test_unknown_council_is_404():
+    assert client.get("/api/councils/missing").status_code == 404
+
+
+def test_created_council_is_readable():
+    council_id = client.post("/api/councils").json()["id"]
+    assert client.get(f"/api/councils/{council_id}").json()["status"] == "brief"
+
+
+def test_unknown_api_path_is_json_404():
+    for url in ("/api", "/api/councils/c1/unknown", "/api/nope"):
+        res = client.get(url)
+        assert res.status_code == 404, url
+        assert res.headers["content-type"].startswith("application/json"), url
+
+
+@pytest.mark.skipif(not (STATIC / "index.html").exists(), reason="фронт не собран")
+def test_spa_fallback_for_page_links():
+    res = client.get("/councils/c1/brief")
+    assert res.status_code == 200
+    assert res.headers["content-type"].startswith("text/html")
+
+
+def test_a_replaced_store_is_left_to_the_requests():
+    # Подменённое хранилище старт не трогает — ни его, ни настоящий каталог данных. FastAPI
+    # получает его на запрос сам, какой бы ни была зависимость: здесь — асинхронная.
+    calls = []
+
+    async def replaced():
+        calls.append(True)
+        return InMemoryStore()
+
+    app.dependency_overrides[get_store] = replaced
+    try:
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            with TestClient(app) as started:
+                assert started.get("/api/councils").json() == []
+            gc.collect()
+    finally:
+        app.dependency_overrides.pop(get_store)
+    assert calls == [True]   # только запрос
+    assert not [w for w in caught if "never awaited" in str(w.message)]

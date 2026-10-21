@@ -29,3 +29,22 @@ jobs:
         if: github.event_name == 'pull_request' || hashFiles('frontend/package.json') != ''
       - run: npm run build
         if: github.event_name == 'pull_request' || hashFiles('frontend/package.json') != ''
+
+  backend:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+          cache-dependency-glob: backend/uv.lock
+      # agent-workers — приватный репозиторий: токен на чтение лежит в секрете AGENT_WORKERS_TOKEN.
+      - run: git config --global url."https://x-access-token:${AGENT_WORKERS_TOKEN}@github.com/RusselSand/agent-workers".insteadOf "https://github.com/RusselSand/agent-workers"
+        env:
+          AGENT_WORKERS_TOKEN: ${{ secrets.AGENT_WORKERS_TOKEN }}
+      - run: uv sync --locked
+      - run: uv run ruff check .
+      - run: uv run pytest

@@ -1,0 +1,137 @@
+# По умолчанию поднимается режим разработки: бек и фронт отдельно, оба с hot reload.
+# Сборка в один контейнер — профиль prod (сервис app).
+name: council
+
+# Где внутри контейнера учётные записи моделей совета и сами советы, и кто в совете (из .env:
+# пусто — по умолчанию). HOME — куда CLI пишут мелочи вне своих каталогов: под произвольным
+# UID без записи в /etc/passwd это «/», а туда писать нельзя.
+x-paths: &paths
+  COUNCIL_ACCOUNTS: /data/accounts
+  COUNCIL_PARTICIPANT_1: ${COUNCIL_PARTICIPANT_1:-}
+  COUNCIL_PARTICIPANT_2: ${COUNCIL_PARTICIPANT_2:-}
+  COUNCIL_JUDGE: ${COUNCIL_JUDGE:-}
+  COUNCIL_DATA: /data/councils
+  COUNCIL_REPOS: /repos
+  # Токен Figma для скана макета (шаг «Дизайн»): только file_content:read, см. README.
+  FIGMA_TOKEN: ${FIGMA_TOKEN:-}
+  # Язык работы совета и язык заметок проекта (пусто — русский и он же), см. README.
+  COUNCIL_LANGUAGE: ${COUNCIL_LANGUAGE:-}
+  COUNCIL_NOTES_LANGUAGE: ${COUNCIL_NOTES_LANGUAGE:-}
+  # Больше не читается — папка документации у проекта. Передаётся, только чтобы сервер
+  # предупредил, если она всё ещё задана в .env.
+  COUNCIL_NOTES: ${COUNCIL_NOTES:-}
+  HOME: /tmp
+  # Пределы хода моделей (agent-workers), если заданы в .env. Без значения здесь: не задан —
+  # переменной в контейнере нет, и действует умолчание; пустая строка сняла бы предел.
+  AGENT_TIMEOUT:
+  AGENT_IDLE_TIMEOUT:
+
+# Под кем работают оба сервиса. CLI и лоток ходов пишут в .accounts с хоста, советы — в .data.
+# - Windows и macOS: root, по умолчанию. Docker Desktop показывает каталоги учётных записей
+#   принадлежащими root и с правами «только владельцу», другой пользователь в них не войдёт.
+# - Linux: впишите в .env свои id -u и id -g как COUNCIL_UID и COUNCIL_GID. Иначе root
+#   оставит в .accounts свои файлы, и login, pending, collect на хосте их не тронут.
+x-user: &user "${COUNCIL_UID:-0}:${COUNCIL_GID:-0}"
+
+services:
+  backend:
+    build:
+      context: ./backend
+      secrets: [agent_workers_token]
+    # agent-workers после хода снимает всю группу процессов CLI; без init убитые потомки
+    # остались бы зомби до перезапуска контейнера.
+    init: true
+    user: *user
+    ports:
+      - "8420:8420"
+    volumes:
+      - ./backend:/app
+      # Учётные записи моделей совета с хоста: по каталогу на модель, <имя> из COUNCIL_PARTICIPANT_*
+      # и COUNCIL_JUDGE, внутри COUNCIL_ACCOUNTS (по умолчанию .accounts). Вход — на хосте, см. README.
+      - type: bind
+        source: ${COUNCIL_ACCOUNTS:-./.accounts}
+        target: /data/accounts
+        bind: { create_host_path: true }
+      # Советы — файлы на хосте (путь в .env): переживают перезапуск и пересборку. Каталог не
+      # создаём: на Linux docker сделал бы его от root, и бэкенд под COUNCIL_UID не смог бы
+      # туда писать. .data есть в репозитории, свой путь создайте заранее.
+      - type: bind
+        source: ${COUNCIL_DATA:-./.data}
+        target: /data/councils
+        bind: { create_host_path: false }
+      # Репозитории проектов (COUNCIL_REPOS в .env) — на запись: в них и папки документации
+      # проектов, куда шаг «Документация» кладёт заметки. Модели читают не сами рабочие копии, а их
+      # снимок. Без настройки — пустой .repos в корне: сканировать нечего, пока не укажете.
+      # Каталог не создаём, как и .data: на Linux от root бэкенд под COUNCIL_UID не записал бы
+      # туда заметки. .repos есть в репозитории, свой каталог у вас уже есть.
+      - type: bind
+        source: ${COUNCIL_REPOS:-./.repos}
+        target: /repos
+        bind: { create_host_path: false }
+    environment:
+      <<: *paths
+      # Bind-mount с Windows не шлёт события файловой системы, без опроса --reload молчит.
+      WATCHFILES_FORCE_POLLING: "true"
+    healthcheck:
+      # Не /api/settings: он спрашивает CLI моделей о входе, а проверка здоровья идёт каждые 5 с.
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8420/api/councils')"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+      start_period: 5s
+
+  frontend:
+    build: ./frontend
+    ports:
+      - "5420:5420"
+    volumes:
+      - ./frontend:/app
+      # node_modules берём из образа: с хоста приедут бинарники под Windows.
+      - /app/node_modules
+    environment:
+      VITE_API_PROXY: http://backend:8420
+      VITE_USE_POLLING: "1"
+    depends_on:
+      backend:
+        condition: service_healthy
+
+  app:
+    profiles: ["prod"]
+    build:
+      context: .
+      dockerfile: Dockerfile
+      secrets: [agent_workers_token]
+    init: true
+    user: *user
+    ports:
+      - "8080:8420"
+    volumes:
+      # Учётные записи моделей совета с хоста: по каталогу на модель, <имя> из COUNCIL_PARTICIPANT_*
+      # и COUNCIL_JUDGE, внутри COUNCIL_ACCOUNTS (по умолчанию .accounts). Вход — на хосте, см. README.
+      - type: bind
+        source: ${COUNCIL_ACCOUNTS:-./.accounts}
+        target: /data/accounts
+        bind: { create_host_path: true }
+      # Советы — файлы на хосте (путь в .env): переживают перезапуск и пересборку. Каталог не
+      # создаём: на Linux docker сделал бы его от root, и бэкенд под COUNCIL_UID не смог бы
+      # туда писать. .data есть в репозитории, свой путь создайте заранее.
+      - type: bind
+        source: ${COUNCIL_DATA:-./.data}
+        target: /data/councils
+        bind: { create_host_path: false }
+      # Репозитории проектов (COUNCIL_REPOS в .env) — на запись: в них и папки документации
+      # проектов, куда шаг «Документация» кладёт заметки. Модели читают не сами рабочие копии, а их
+      # снимок. Без настройки — пустой .repos в корне: сканировать нечего, пока не укажете.
+      # Каталог не создаём, как и .data: на Linux от root бэкенд под COUNCIL_UID не записал бы
+      # туда заметки. .repos есть в репозитории, свой каталог у вас уже есть.
+      - type: bind
+        source: ${COUNCIL_REPOS:-./.repos}
+        target: /repos
+        bind: { create_host_path: false }
+    environment: *paths
+
+# Токен только на чтение приватного agent-workers: нужен сборке образов, в образ не попадает.
+# Compose берёт AGENT_WORKERS_TOKEN из .env рядом с этим файлом (образец — .env.example).
+secrets:
+  agent_workers_token:
+    environment: AGENT_WORKERS_TOKEN

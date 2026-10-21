@@ -5,3 +5,17 @@ dist/
 .env.local
 design/.src/
 design/.shots/
+# Бекенд
+.venv/
+__pycache__/
+.pytest_cache/
+.ruff_cache/
+# Каталоги учётных записей моделей по умолчанию для docker compose: токены входа.
+.accounts/
+# Каталог репозиториев по умолчанию для docker compose (COUNCIL_REPOS). Сам каталог — в репозитории (.gitkeep).
+.repos/*
+!.repos/.gitkeep
+# Советы: по файлу на совет. Сам каталог — в репозитории (.gitkeep).
+.data/*
+!.data/.gitkeep
+.notes/
