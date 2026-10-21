@@ -2,12 +2,13 @@ import type { State } from '../../domain/council';
 import type { StreamOutcome } from '../../domain/outcomes';
 import type { Stream } from '../../domain/stream';
 import { source } from '../config';
-import { ApiError } from '../errors';
+import { ApiError, toApiError } from '../errors';
+import { runLanes, updateLane, useLaneState, type RunLane } from './runLanes';
 import { markStale, type StreamOutcomes } from './stale';
 import { useMutation, type Mutation } from './useMutation';
 import { useQuery, type Query } from './useQuery';
-import { useQueuedSaves, type QueuedSaves } from './useQueuedSaves';
 import { replaceStream } from './useStreams';
+import { without } from './without';
 
 /**
  * Итоги потока — GET /api/councils/<id>/streams/<streamId>/outcomes. state — состояние шага «Итоги» сейчас: оно
@@ -48,37 +49,98 @@ function staleOnRefused(error: unknown) {
   if (['outcomes_not_ready', 'not_found', 'outcome_blocked'].includes(error.code)) markStale('outcomes');
 }
 
-/**
- * «Утвердить → дальше» по id итога: pending — утверждение, на которое сервер ещё не ответил; errors — не вышло, ошибка
- * держится, пока итог не утверждают снова; change(id, true) — утвердить, ответ — утвердился ли; settle() — дождаться
- * ответа на утверждения, которые ещё идут.
- */
-export type OutcomeApprovals = QueuedSaves<true>;
+/** Утверждения итогов одного запуска шага: уходящие и не вышедшие — по id итога. */
+interface ApprovalsState {
+  /** Утверждение, на которое сервер ещё не ответил: пока оно уходит, итог на экране утверждён. */
+  pending: Readonly<Record<string, true>>;
+  /** Не вышло утвердить: ошибка держится, пока итог не утверждают снова. */
+  errors: Readonly<Record<string, ApiError>>;
+}
+
+/** Утверждения итогов одного запуска шага в одном потоке — общие для всех экранов «Итоги». */
+interface Lane extends RunLane<ApprovalsState> {
+  /** Утверждения, которые ещё уходят, — по id итога: каждое отвечает, утвердился ли итог. */
+  sending: Map<string, Promise<boolean>>;
+}
 
 /**
- * Утвердить итог — POST /api/councils/<id>/streams/<streamId>/outcomes/<outcomeId>/approve, сразу по щелчку (см.
- * useQueuedSaves()). Ответ встаёт в итоги сразу, если у них тот же run; итоги, потоки (строка шага в цепочке) и список
- * советов перезапрашиваются. run — номер запуска шага, итоги которого на экране: утверждение уходит с ним, и сервер не
- * примет его, если шаг с тех пор запустили снова; он же — очередь (lane): утверждение в новом запуске не ждёт ответа на
- * прежний. round — набор итогов: шаг сменил состояние или run — итоги другие, хоть id у них те же, и утверждения и
- * ошибки прежних забываются.
+ * Утверждения итогов — по совету, потоку и запуску шага (runLanes()). Ушли с экрана, пока итог утверждался, и вернулись
+ * — итог всё ещё уходит, и «Утвердить итоги» дожидается его; не утвердился — ошибка под итогом и на экране, открытом
+ * снова, и «Утвердить итоги» отправляет его снова. Утверждение в прежнем запуске шага новое не ждёт.
  */
-export function useOutcomeApprovals(councilId: string, streamId: string, run: number, round: unknown): OutcomeApprovals {
-  return useQueuedSaves<true>(
-    async (outcomeId, _approved, fresh) => {
-      try {
-        const outcome = await source.approveOutcome(councilId, streamId, run, outcomeId);
-        markStale('outcomes', fresh() ? putOutcome(councilId, streamId, run, outcome) : undefined);
-        markStale('streams');
-        markStale('councils');
-      } catch (error) {
-        staleOnRefused(error);
-        throw error;
-      }
-    },
-    round,
-    run,
-  );
+const laneOf = runLanes<Lane>(() => ({
+  state: { pending: {}, errors: {} },
+  listeners: new Set(),
+  sending: new Map(),
+}));
+
+function approve(lane: Lane, councilId: string, streamId: string, run: number, outcomeId: string): Promise<boolean> {
+  // Итог уже утверждается — ответ на то утверждение и про это.
+  const sending = lane.sending.get(outcomeId);
+  if (sending) return sending;
+  const { state } = lane;
+  updateLane(lane, { pending: { ...state.pending, [outcomeId]: true }, errors: without(state.errors, outcomeId) });
+  const done = (async () => {
+    let error: ApiError | undefined;
+    try {
+      const outcome = await source.approveOutcome(councilId, streamId, run, outcomeId);
+      markStale('outcomes', putOutcome(councilId, streamId, run, outcome));
+      markStale('streams');
+      markStale('councils');
+    } catch (caught) {
+      staleOnRefused(caught);
+      error = toApiError(caught);
+    }
+    lane.sending.delete(outcomeId);
+    const { pending, errors } = lane.state;
+    updateLane(lane, {
+      pending: without(pending, outcomeId),
+      errors: error ? { ...errors, [outcomeId]: error } : errors,
+    });
+    return error === undefined;
+  })();
+  lane.sending.set(outcomeId, done);
+  return done;
+}
+
+/** Дождаться утверждений запуска шага, которые ещё уходят, — и тех, что ушли, пока ждали. Ответ — утвердились ли все. */
+async function settle(lane: Lane): Promise<boolean> {
+  let saved = true;
+  while (lane.sending.size) {
+    const answers = await Promise.all(lane.sending.values());
+    saved = saved && answers.every(Boolean);
+  }
+  return saved;
+}
+
+export interface OutcomeApprovals extends ApprovalsState {
+  /** То же, что errors[id], но сейчас, а не на прошлом рендере: после settle(). */
+  errorOf: (outcomeId: string) => ApiError | undefined;
+  /** «Утвердить → дальше»: ответ — утвердился ли итог. Итог уже утверждается — ответ на то утверждение. */
+  approve: (outcomeId: string) => Promise<boolean>;
+  /**
+   * Дождаться утверждений, которые ещё уходят в этом запуске шага, — и с экранов, которые закрыли. Ответ — утвердились ли
+   * все; утверждений нет — true.
+   */
+  settle: () => Promise<boolean>;
+}
+
+/**
+ * Утвердить итог — POST /api/councils/<id>/streams/<streamId>/outcomes/<outcomeId>/approve, сразу по щелчку. Утверждения
+ * и их ошибки — общие для всех экранов «Итоги» одного запуска шага: экран, открытый снова, видит, что ещё уходит и что
+ * не вышло. Ответ встаёт в итоги сразу, если у них тот же run; итоги, потоки (строка шага в цепочке) и список советов
+ * перезапрашиваются. run — номер запуска шага, итоги которого на экране: утверждение уходит с ним, и сервер не примет
+ * его, если шаг с тех пор запустили снова; у другого запуска утверждения и ошибки свои.
+ */
+export function useOutcomeApprovals(councilId: string, streamId: string, run: number): OutcomeApprovals {
+  const lane = laneOf(councilId, streamId, run);
+  const state = useLaneState(lane);
+  return {
+    ...state,
+    errorOf: (outcomeId) => lane.state.errors[outcomeId],
+    approve: (outcomeId) => approve(lane, councilId, streamId, run, outcomeId),
+    settle: () => settle(lane),
+  };
 }
 
 /**
