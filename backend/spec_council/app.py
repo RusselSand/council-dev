@@ -1,11 +1,12 @@
-"""Spec Council: сборка приложения. Роуты — в api/, данные — за deps.py."""
+"""Spec Council: сборка приложения. Роуты — в web/ (новый API) и api/ (старый, уходит по
+этапам), данные — за deps.py."""
 
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 
-from . import api
+from . import api, web
 from .agents import shutdown
 from .deps import get_projects, get_store, retired
 from .spa import mount_spa
@@ -28,8 +29,9 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
 def create_app() -> FastAPI:
     app = FastAPI(title="Spec Council", lifespan=lifespan)
+    web.install(app)
     app.include_router(api.router)
-    mount_spa(app, api_prefix=api.API_PREFIX)  # после роутов, иначе перехватит их
+    mount_spa(app, api_prefix=web.API_PREFIX)  # после роутов, иначе перехватит их
     return app
 
 

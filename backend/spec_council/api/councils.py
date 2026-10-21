@@ -1,6 +1,5 @@
 from collections.abc import Callable
 from dataclasses import dataclass
-from threading import Lock
 from typing import Any
 
 from fastapi import APIRouter, HTTPException
@@ -30,6 +29,7 @@ from ..models import (
     TasksDraft,
 )
 from ..pipeline import CouncilRun, GroupingRun, SlicingRun
+from ..store import council_lock
 
 router = APIRouter(prefix="/councils", tags=["councils"])
 
@@ -44,11 +44,6 @@ CANNOT_START = {
     423: {"description": "Идёт другой ход совета, от которого этот зависит"},
     422: {"description": "Нечего обрабатывать или к моделям совета нет подключения"},
 }
-
-# Проверка «уже идёт» и запуск — одним куском, иначе два клика запустили бы два хода.
-# Тот же замок у правки типов и групп: они меняют готовый итог хода. Внутри — только
-# короткое: CLI под замком не запускаем.
-council_lock = Lock()
 
 # Сколько раз проверять вход заново, если состав совета меняют прямо во время проверки.
 PROBE_ATTEMPTS = 3

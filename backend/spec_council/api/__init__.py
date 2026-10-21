@@ -1,17 +1,16 @@
-"""HTTP-ручки под /api. Новый раздел — новый модуль и одна строка include_router."""
+"""Старые HTTP-ручки под /api. Уходят по этапам: этап переезжает в новый API (web/) — его
+модуль отсюда удаляется."""
 
 from fastapi import APIRouter
 
-from . import councils, documents, groups, projects, research, settings, streams, tasks
+from . import councils, documents, groups, research, streams, tasks
 
 API_PREFIX = "/api"
 
 router = APIRouter(prefix=API_PREFIX)
 router.include_router(councils.router)
 router.include_router(groups.router)
-router.include_router(settings.router)
 router.include_router(research.router)
 router.include_router(streams.router)
 router.include_router(documents.router)
 router.include_router(tasks.router)
-router.include_router(projects.router)

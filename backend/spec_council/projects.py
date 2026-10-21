@@ -3,9 +3,11 @@
 подставляет его рабочие копии, «Решения проекта» и «Документация» работают с его папкой, а
 «Документация» кладёт ещё и файлы задач в папку задач.
 
-Пути — как у скана: от каталога репозиториев (COUNCIL_REPOS) и только внутри него, без него —
-абсолютные. Папки документации и задач — там же: в докере каталог репозиториев смонтирован на
-запись, и заметки с задачами ложатся рядом с кодом, в репозиторий проекта.
+Рабочие копии — из каталога репозиториев (COUNCIL_REPOS). Папки документации и задач — пути
+от него и только внутри него, без него — абсолютные: в докере каталог репозиториев смонтирован
+на запись, и заметки с задачами ложатся рядом с кодом, в репозиторий проекта. Папку проверяет
+тот, кто её берёт (deps.council_notes, deps.council_issues): каталог репозиториев могли
+поменять и после сохранения проекта.
 
 Проекты — файлы <id>.json в подкаталоге projects каталога советов: советы читаются из *.json
 самого каталога, и проект за совет не примут.
@@ -16,20 +18,21 @@ from collections.abc import Iterable
 from datetime import UTC, datetime
 from pathlib import Path
 from threading import Lock
+from typing import Any
 from uuid import uuid4
 
-from .models import Project, ProjectDraft, ProjectView, WorkingCopies
-from .repository import RepositoryError, located, placed, top_of
+from .models import Project, ProjectDraft
+from .repository import RepositoryError, placed
 from .store import kept, writable
 
 log = logging.getLogger(__name__)
 
-# Что из формы проекта сохраняется.
-SAVED = {"name", "repositories", "notes", "issues"}
+# Что в проекте задаёт человек.
+DRAFT = set(ProjectDraft.model_fields)
 
 
 class ProjectError(ValueError):
-    """Проект так не сохранить или его папку не найти. Текст — для человека."""
+    """Папку проекта не найти. Текст — для человека."""
 
 
 class Projects:
@@ -40,31 +43,47 @@ class Projects:
         self._lock = Lock()
 
     def list_projects(self) -> list[Project]:
-        """По названию: так их ищут в списке."""
+        """В порядке создания: новый — в конце."""
         with self._lock:
             projects = list(self._projects.values())
-        return sorted(projects, key=lambda project: (project.name.casefold(), project.id))
+        return sorted(projects, key=lambda project: (created(project), project.id))
 
     def get_project(self, project_id: str) -> Project | None:
         with self._lock:
             return self._projects.get(project_id)
 
-    def create_project(self, draft: ProjectDraft) -> Project:
-        project = Project(id=uuid4().hex[:8], updated_at=datetime.now(UTC),
-                          **draft.model_dump(include=SAVED))
+    def keyed(self, key: str) -> Project | None:
+        """Проект, созданный с этим Idempotency-Key. Пустой ключ — ничей."""
         with self._lock:
+            return self._keyed(key)
+
+    def create_project(self, draft: ProjectDraft, key: str = "") -> Project:
+        """Новый проект. С ключом, по которому проект уже создан, второй не создаётся — в ответ
+        тот, что есть: два одновременных повтора одного запроса создадут один проект."""
+        now = datetime.now(UTC)
+        project = Project(id=uuid4().hex[:8], created_at=now, updated_at=now,
+                          idempotency_key=key, **draft.model_dump())
+        with self._lock:
+            existing = self._keyed(key)
+            if existing is not None:
+                return existing
             self._keep(project)
             self._projects[project.id] = project
         return project
 
-    def update_project(self, project_id: str, draft: ProjectDraft) -> Project | None:
+    def update_project(self, project_id: str, changes: dict[str, Any]) -> Project | None:
+        """changes — поля ProjectDraft, уже проверенные; остальные остаются как были. Нечего
+        менять — тот же проект."""
         with self._lock:
             before = self._projects.get(project_id)
-            if before is None:
-                return None
-            project = Project(id=project_id, revision=before.revision + 1,
-                              updated_at=datetime.now(UTC),
-                              **draft.model_dump(include=SAVED))
+            if before is None or not changes:
+                return before
+            project = before.model_copy(update={
+                **ProjectDraft(**{**before.model_dump(include=DRAFT), **changes}).model_dump(),
+                "revision": before.revision + 1,
+                "created_at": created(before),        # порядок в списке правка не меняет
+                "updated_at": datetime.now(UTC),
+            })
             self._keep(project)
             self._projects[project_id] = project
             return project
@@ -76,6 +95,12 @@ class Projects:
             self._drop(project_id)
             del self._projects[project_id]
             return True
+
+    def _keyed(self, key: str) -> Project | None:
+        if not key:
+            return None
+        return next((project for project in self._projects.values()
+                     if project.idempotency_key == key), None)
 
     def _keep(self, project: Project) -> None:
         """Сохранить проект — под замком, до того как его увидят. В памяти хранить нечего."""
@@ -107,32 +132,10 @@ class FileProjects(Projects):
         (self._folder / f"{project_id}.json").unlink(missing_ok=True)
 
 
-def checked[D: ProjectDraft](draft: D, base: Path | None) -> D:
-    """Проект, каким его сохранить: название без пробелов по краям; каждая рабочая копия есть,
-    её корень — внутри каталога репозиториев, и ни одна не указана дважды; папка документации —
-    там же. Иначе ProjectError. Пути остаются как их ввели: пробелы по краям — часть имени."""
-    name = draft.name.strip()
-    if not name:
-        raise ProjectError("Назовите проект")
-    roots: dict[Path, str] = {}
-    for path in draft.repositories:
-        try:
-            root = top_of(located(path, base))
-        except RepositoryError as exc:
-            raise ProjectError(f"{path}: {exc}") from None
-        if base is not None and not root.is_relative_to(base.resolve()):
-            raise ProjectError(f"{path}: корень рабочей копии {root} вне каталога "
-                               f"репозиториев {base}")
-        if root in roots:
-            raise ProjectError(f"{roots[root]} и {path} — одна и та же рабочая копия {root}")
-        roots[root] = path
-    notes = notes_root(draft.notes, base) if draft.notes else None
-    if draft.issues:
-        if notes is None:
-            raise ProjectError("Папка задач — только вместе с папкой документации: задачи "
-                               "выгружаются вместе с заметками")
-        issues_root(draft.issues, base, notes)
-    return draft.model_copy(update={"name": name})
+def created(project: Project) -> datetime:
+    """Когда проект создан. У проекта прежней версии этого не записано — время его последней
+    правки."""
+    return project.created_at or project.updated_at
 
 
 def notes_root(text: str, base: Path | None) -> Path:
@@ -158,32 +161,6 @@ def issues_root(text: str, base: Path | None, notes: Path) -> Path:
     return path
 
 
-def clashing(draft: ProjectDraft, others: Iterable[Project], base: Path | None) -> None:
-    """Папки проекта не мешают папкам других проектов, иначе ProjectError. Общая папка задач —
-    только у проектов с одной папкой документации: номера задач у каждого каталога заметок свои,
-    и задачи двух каталогов легли бы в одни файлы. И ни одна папка задач — не внутри чужой папки
-    документации: Causa прочла бы задачи заметками. Чужие папки, которые больше не годятся, не в
-    счёт: их проект сам их не найдёт."""
-    notes = notes_root(draft.notes, base) if draft.notes else None
-    issues = issues_root(draft.issues, base, notes) if draft.issues and notes else None
-    for other in others:
-        try:
-            theirs = notes_root(other.notes, base) if other.notes else None
-            tasks = issues_root(other.issues, base, theirs) if other.issues and theirs else None
-        except ProjectError:
-            continue
-        if issues is not None and issues == tasks and notes != theirs:
-            raise ProjectError(f"Папка задач {issues} уже у проекта «{other.name}» с другой папкой "
-                               "документации: номера задач у каждого каталога свои, и задачи "
-                               "легли бы в одни файлы")
-        if issues is not None and theirs is not None and issues.is_relative_to(theirs):
-            raise ProjectError(f"Папка задач {issues} — внутри папки документации проекта "
-                               f"«{other.name}»: Causa прочла бы задачи заметками")
-        if notes is not None and tasks is not None and tasks.is_relative_to(notes):
-            raise ProjectError(f"Внутри папки документации {notes} — папка задач проекта "
-                               f"«{other.name}»: Causa прочла бы его задачи заметками")
-
-
 def folder_of(text: str, base: Path | None) -> Path:
     try:
         path = placed(text, base)
@@ -195,35 +172,15 @@ def folder_of(text: str, base: Path | None) -> Path:
     return path
 
 
-def viewed(project: Project, base: Path | None) -> ProjectView:
-    """Проект для экрана: с папками документации и задач, как их найдёт сервер, или с тем,
-    почему одну из них больше не найти."""
-    view = ProjectView(**project.model_dump())
-    if not project.notes:
-        return view
-    try:
-        notes = notes_root(project.notes, base)
-    except ProjectError as exc:
-        return view.model_copy(update={"problem": str(exc)})
-    view = view.model_copy(update={"notes_root": str(notes)})
-    if not project.issues:
-        return view
-    try:
-        return view.model_copy(update={"issues_root": str(issues_root(project.issues, base,
-                                                                      notes))})
-    except ProjectError as exc:
-        return view.model_copy(update={"problem": str(exc)})
-
-
-def working_copies(base: Path | None) -> WorkingCopies:
-    """Рабочие копии git в каталоге репозиториев: он сам и каталоги прямо в нём — те, где есть
-    .git (у подмодулей и worktree это файл), и не по ссылке наружу. Глубже не ищем: такую
-    копию вписывают путём. Без каталога предлагать нечего."""
+def working_copies(base: Path | None) -> list[str]:
+    """Рабочие копии git в каталоге репозиториев: он сам (".") и каталоги прямо в нём — те, где
+    есть .git (у подмодулей и worktree это файл), и не по ссылке наружу. Глубже не ищем. Без
+    каталога предлагать нечего."""
     if base is None:
-        return WorkingCopies()
+        return []
     root = base.resolve()
     if not root.is_dir():
-        return WorkingCopies(root=str(base))
+        return []
     paths = ["."] if (root / ".git").exists() else []
     try:
         children = sorted(root.iterdir(), key=lambda child: (child.name.casefold(), child.name))
@@ -236,5 +193,5 @@ def working_copies(base: Path | None) -> WorkingCopies:
                     and child.resolve().is_relative_to(root)):
                 paths.append(child.name)
         except OSError:
-            continue        # нет доступа — не предлагаем, путём его всё равно не взять
-    return WorkingCopies(root=str(base), paths=paths)
+            continue        # нет доступа — не предлагаем: скан его всё равно не прочтёт
+    return paths

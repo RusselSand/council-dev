@@ -1249,27 +1249,15 @@ class ApproveOutcomes(GroupsEdit):
     outcomes_run: str
 
 
-# Сколько символов в названии проекта: его выбирают из списка на «Вводе».
-PROJECT_NAME_MAX = 100
-
-
 class ProjectDraft(BaseModel):
-    """Проект, как его задаёт человек. Пути — как у скана: от каталога репозиториев
-    (COUNCIL_REPOS) или, без него, абсолютные."""
+    """Проект, как его сохранить: поля уже проверены (web/projects.py)."""
 
     model_config = ConfigDict(extra="forbid")
 
-    name: str = Field(max_length=PROJECT_NAME_MAX)
-    repositories: list[str] = Field(default=[], max_length=REPOSITORIES_MAX)
+    name: str
+    repositories: list[str] = []
     notes: str = ""
     issues: str = ""
-
-
-class ProjectEdit(ProjectDraft):
-    """Правка проекта: revision — версия, которую человек правил. Проект с тех пор поправили
-    (другая вкладка) — 409: целиком присланная форма молча вернула бы прежнее."""
-
-    revision: int
 
 
 class Project(BaseModel):
@@ -1278,9 +1266,11 @@ class Project(BaseModel):
 
     id: str
     name: str
-    # Сколько раз проект правили: правка несёт версию, к которой сделана.
+    # Сколько раз проект правили.
     revision: int = 0
-    # Рабочие копии: шаг «Репозиторий» подставляет их все, лишние в потоке снимают.
+    # Рабочие копии — имена из каталога репозиториев (COUNCIL_REPOS). У проектов прежней версии
+    # здесь и пути от него или абсолютные: они остаются, пока их не снимут. Шаг «Репозиторий»
+    # подставляет их все, лишние в потоке снимают.
     repositories: list[str] = []
     # Папка документации: туда шаг «Документация» выгружает заметки потоков, оттуда «Решения
     # проекта» берут прошлые решения. Пусто — папки нет, и потоки не выгрузить.
@@ -1288,25 +1278,12 @@ class Project(BaseModel):
     # Папка задач: туда же, на «Документации», ложится файл на каждую задачу — для coding agent.
     # Только вместе с папкой документации и не внутри неё. Пусто — задачи только строками в итогах.
     issues: str = ""
+    # Когда проект создан: по нему порядок списка. None — проект прежней версии, создан до этого
+    # поля: вместо него — время его последней правки, а первая правка его закрепляет.
+    created_at: datetime | None = None
     updated_at: datetime
-
-
-class ProjectView(Project):
-    """Проект на экране. notes_root и issues_root — папки документации и задач, как их находит
-    сервер: по этим путям выгрузка помнит, куда записала. None — папки у проекта нет или путь
-    больше не годится (problem — почему: например, каталог репозиториев поменяли)."""
-
-    notes_root: str | None = None
-    issues_root: str | None = None
-    problem: str | None = None
-
-
-class WorkingCopies(BaseModel):
-    """Рабочие копии git в каталоге репозиториев — прямо в нём и он сам: из них отмечают
-    репозитории проекта. root None — каталог не задан, пути абсолютные и вводятся руками."""
-
-    root: str | None = None
-    paths: list[str] = []
+    # Idempotency-Key запроса, которым проект создан: повтор с тем же ключом второго не создаёт.
+    idempotency_key: str = ""
 
 
 class SettleTouch(GroupsEdit):
@@ -1324,18 +1301,3 @@ class Model(BaseModel):
     short_name: str
     display_name: str
     cli: str
-    # Есть подключение к CLI: провайдер известен и каталог учётной записи задан.
-    available: bool = False
-
-
-class Settings(BaseModel):
-    models: list[Model]
-    # Каталог репозиториев для скана (COUNCIL_REPOS): пути — от него. None — путь абсолютный.
-    repositories: str | None = None
-    # Задан ли токен Figma (FIGMA_TOKEN): без него макет не сканировать.
-    figma: bool = False
-    # Проекты: их репозитории и папки документации — совет на экране берёт свой.
-    projects: list[ProjectView] = []
-    min_participants: int
-    default_participants: list[str]
-    default_judge: str

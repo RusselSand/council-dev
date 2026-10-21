@@ -187,7 +187,7 @@ def test_a_folder_changed_while_the_write_waits_for_the_lock_is_not_written_into
             worker.start()
             worker.join(0.3)                                       # запись ждёт замка
             # А папку проекта тем временем сменили — под тем же замком, что и запись.
-            projects.update_project(project.id, ProjectDraft(name="Кромка", notes="second"))
+            projects.update_project(project.id, {"notes": "second"})
         worker.join(10)
     finally:
         app.dependency_overrides.pop(get_projects)
@@ -209,7 +209,7 @@ def test_a_draft_waiting_for_the_lock_is_built_for_the_folder_it_finds_there(age
             worker = threading.Thread(target=lambda: result.append(drafts(council_id)))
             worker.start()
             worker.join(0.3)                                       # сборка ждёт замка
-            projects.update_project(project.id, ProjectDraft(name="Кромка", notes="second"))
+            projects.update_project(project.id, {"notes": "second"})
         worker.join(10)
         assert result[0].status_code == 202
         assert streams_of(council_id)["C"].notes_draft.root == str((tmp_path / "second").resolve())
