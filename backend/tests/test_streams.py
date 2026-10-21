@@ -1,5 +1,6 @@
-"""Потоки: подтверждение групп запускает поиск идеи, утверждение идеи — поиск вопросов,
-отбор — поиск вариантов, выбор — его проверку; повторы ходов и фиксация решений."""
+"""Потоки старых ручек — у групп, подтверждённых, как это делала прежняя версия (confirm): поиск
+идеи, утверждение идеи — поиск вопросов, отбор — поиск вариантов, выбор — его проверку; повторы
+ходов и фиксация решений."""
 
 import json
 import re
@@ -22,7 +23,7 @@ from spec_council.deps import (
     get_store,
 )
 from spec_council.figma import FigmaError
-from spec_council.groups import arranged
+from spec_council.groups import marked
 from spec_council.models import (
     CouncilStatus,
     DecisionAnalysis,
@@ -33,6 +34,7 @@ from spec_council.models import (
     QuestionAnalysis,
     Research,
     Slicing,
+    Stream,
     Structure,
     StructureProposal,
 )
@@ -75,7 +77,7 @@ def grp(gid, fragments, ideas=()):
 
 
 # A — с идеей в тексте, B и C — без; F4 общий у B и C.
-GROUPS = arranged([grp("A", [1, 2], ideas=[1]), grp("B", [3, 4]), grp("C", [4, 5])])
+GROUPS = marked([grp("A", [1, 2], ideas=[1]), grp("B", [3, 4]), grp("C", [4, 5])])
 
 
 class Agents:
@@ -225,9 +227,16 @@ def grouped():
     return council_id
 
 
-def confirm(council_id, revision=0):
-    return client.post(f"/api/councils/{council_id}/structure/confirm",
-                       json={"run": "g1", "revision": revision})
+def confirm(council_id):
+    """Группы подтверждены, как их подтверждала прежняя версия: поток на каждую группу, и у групп
+    без идеи совет сразу её ищет. Старые ручки потоков и исследования ждут именно этого, а новое
+    «Подтвердить группы» (web/structure.py) потоков не заводит."""
+    groups = get_store().get_council(council_id).structure.groups
+    get_store().update_council(council_id, {"streams": [Stream(group=group.id) for group in groups],
+                                            "status": CouncilStatus.review})
+    for group in groups:
+        if group.missing_idea:
+            seek(council_id, group.id)
 
 
 def approve(council_id, group, text=None, revision=0):
@@ -243,35 +252,17 @@ def streams_of(council_id):
     return {s.group: s for s in get_store().get_council(council_id).streams}
 
 
-def test_confirming_starts_the_search_for_groups_without_an_idea(agents):
-    council_id = grouped()
-    res = confirm(council_id)
-    assert res.status_code == 200
-    started = {s["group"]: s["discovery"] for s in res.json()["streams"]}
-    assert started["A"] is None
-    assert started["B"]["state"] == started["C"]["state"] == "running"
-
-    streams = streams_of(council_id)
-    assert streams["B"].discovery.state == "done"
-    assert streams["B"].discovery.proposal.idea == IDEA_B
-    assert streams["C"].discovery.proposal.idea == IDEA_C
-    assert len([key for key in agents.asked if "-idea_discovery-" in key]) == 4
-
-
-def test_without_models_the_groups_are_confirmed_and_the_search_can_be_retried(agents):
+def test_the_search_for_an_idea_goes_once_the_models_are_back(agents):
     council_id = grouped()
     agents.online = set()
-    res = confirm(council_id)
-    assert res.status_code == 200 and res.json()["status"] == "review"
-    failed = streams_of(council_id)["B"].discovery
-    assert failed.state == "failed"
-    assert failed.error.startswith("Нет подключения к моделям")
-    assert seek(council_id, "B").status_code == 422      # всё ещё нет подключения
+    confirm(council_id)
+    assert streams_of(council_id)["B"].discovery is None
+    assert seek(council_id, "B").status_code == 422      # нет подключения
 
     agents.online = {"sol", "fable"}
     assert seek(council_id, "B").status_code == 202
     assert streams_of(council_id)["B"].discovery.proposal.idea == IDEA_B
-    assert streams_of(council_id)["C"].discovery.state == "failed"   # повтор — только у B
+    assert streams_of(council_id)["C"].discovery is None  # только у B
     assert seek(council_id, "A").status_code == 422      # идея записана в тексте
 
 
@@ -319,33 +310,36 @@ def test_an_idea_for_other_groups_is_refused(agents):
     assert seek(council_id, "X").status_code == 409
 
 
-def test_regrouping_waits_for_the_search_and_takes_the_confirmation_back(agents):
-    council_id = grouped()
-    confirm(council_id)
-    streams = streams_of(council_id)
-    running = [s.model_copy(update={"discovery": start_idea(["sol"], "sol")})
-               if s.group == "C" else s for s in streams.values()]
-    get_store().update_council(council_id, {"streams": running})
-    assert client.post(f"/api/councils/{council_id}/structure").status_code == 423
-
-    get_store().update_council(council_id, {"streams": list(streams.values())})
-    res = client.post(f"/api/councils/{council_id}/structure")
-    assert res.status_code == 202
-    assert (res.json()["status"], res.json()["streams"]) == ("structure", None)
-
-
 def test_a_search_whose_stream_is_gone_does_not_write_it_back(agents):
     council_id = grouped()
-    agents.online = set()
     confirm(council_id)
+    found = streams_of(council_id)["B"].discovery
     report = reporter(get_store(), council_id, discovery("B"))
-    stranger = start_idea(["sol"], "sol").model_copy(update={"state": "done"})
+    stranger = start_idea(["sol"], "sol").model_copy(update={"state": "failed"})
     report(stranger)                                      # не тот ход
-    assert streams_of(council_id)["B"].discovery.state == "failed"
+    assert streams_of(council_id)["B"].discovery == found
 
     get_store().update_council(council_id, {"streams": None})
     report(stranger)                                      # потоков уже нет
     assert get_store().get_council(council_id).streams is None
+
+
+def test_streams_keep_their_groups_when_the_groups_are_merged_or_split(agents):
+    # Решение q-002: правки групп потоки не меняют — поток работает со своей группой, какой
+    # она была: B — и когда её объединили с C, C — и когда к ней добавили B и вынесли из неё F4.
+    council_id = grouped()
+    agents.online = set()
+    confirm(council_id)
+    assert client.post(f"/api/councils/{council_id}/groups/B/merge",
+                       json={"into": "C"}).status_code == 200
+    assert client.post(f"/api/councils/{council_id}/groups/C/split",
+                       json={"fragmentIds": ["F4"], "title": "Новая"}).status_code == 200
+    agents.online = {"sol", "fable"}
+    assert seek(council_id, "B").status_code == 202
+    assert seek(council_id, "C").status_code == 202
+    streams = streams_of(council_id)
+    assert streams["B"].discovery.proposal.idea == IDEA_B
+    assert streams["C"].discovery.proposal.idea == IDEA_C
 
 
 # --- вопросы
@@ -507,7 +501,6 @@ def test_the_idea_does_not_change_while_its_questions_are_sought(agents):
     assert approve(council_id, "B", IDEA_B).status_code == 200
     assert streams_of(council_id)["B"].questions.state == "running"
     assert choose(council_id, "B", ["Q1"]).status_code == 409
-    assert client.post(f"/api/councils/{council_id}/structure").status_code == 423
 
 
 def test_the_scope_keeps_chosen_questions_and_adds_own_ones(agents):
@@ -645,7 +638,6 @@ def test_nothing_upstream_changes_while_proposals_are_sought(agents):
     assert approve(council_id, "C", "Другая идея").status_code == 423
     assert choose(council_id, "C", ["Q1", "Q2"]).status_code == 200   # тот же отбор — повтор
     assert chose(council_id, "C", [("Q1", None), ("Q2", None)]).status_code == 409
-    assert client.post(f"/api/councils/{council_id}/structure").status_code == 423
 
 
 def test_a_choice_per_question_from_its_own_options(agents):
@@ -957,7 +949,6 @@ def test_nothing_upstream_changes_while_the_choice_is_checked(agents):
     assert approve(council_id, "C", "Другая идея").status_code == 423
     assert chose(council_id, "C", [("Q1", "P1"), ("Q2", None)]).status_code == 200  # тот же
     assert decide(council_id, "C", [("Q1", None, None), ("Q2", None, None)]).status_code == 409
-    assert client.post(f"/api/councils/{council_id}/structure").status_code == 423
 
 
 def test_decisions_take_any_option_and_tell_whose_rationale_it_is(agents):
@@ -1436,7 +1427,6 @@ def test_nothing_upstream_changes_while_the_outcomes_are_assembled(agents):
     assert approve(council_id, "C", "Другая идея").status_code == 423
     assert decide(council_id, "C", DECIDED).status_code == 200                 # те же решения
     assert assembles(council_id, "C").status_code == 409                       # уже идёт
-    assert client.post(f"/api/councils/{council_id}/structure").status_code == 423
 
 
 def test_without_models_the_decisions_are_fixed_and_the_outcomes_can_be_retried(agents):
@@ -1776,7 +1766,6 @@ def test_a_running_scan_is_not_started_twice_and_holds_the_groups(agents, repos)
     assert scans(council_id, "C").status_code == 409                   # уже идёт
     assert takes(council_id, "C").status_code == 409                   # карты ещё нет
     assert skip(council_id).status_code == 409                         # и пропустить нельзя
-    assert client.post(f"/api/councils/{council_id}/structure").status_code == 423
     assert client.post(f"/api/councils/{council_id}/research/reset",
                        json={"run": "g1", "revision": 0}).status_code == 423
 
@@ -2116,4 +2105,3 @@ def test_a_running_design_scan_is_not_started_twice(agents, figma):
                        json={"run": "g1", "revision": 0, "scan_run": None}).status_code == 409
     assert client.post(f"/api/councils/{council_id}/research/reset",
                        json={"run": "g1", "revision": 0}).status_code == 423
-    assert client.post(f"/api/councils/{council_id}/structure").status_code == 423

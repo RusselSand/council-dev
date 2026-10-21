@@ -1,22 +1,57 @@
-"""Готовые группы: буквы и правки человека — объединить, разделить, переименовать, вернуть
-как предложил совет. Без ввода-вывода: к той ли раскладке правка, проверяет API.
+"""Готовые группы: идея группы, её фрагменты и связи, правки человека — объединить, разделить.
+Без ввода-вывода: ручки — web/structure.py.
 
-Буквы правки не переставляют: у объединённой группы — буква той, где нажали, у новой — первая
-свободная. Порядок на экране — по первому фрагменту.
+Правки — как в контракте (docs/api-contract.md, «Группы» совета): буквы и порядок групп они не
+меняют, новая группа встаёт за той, из которой её выделили, под первой свободной буквой. У
+объединённой группы — её название и идея, а нет идеи — идея той, что к ней присоединили; связи
+пропавшей группы переходят к ней. У групп остаётся след правки — связи merged и split. Потоки,
+которые уже есть, держат свои группы, какими они были до правок (решение q-002).
 """
 
-from collections.abc import Iterable
+from collections import Counter
+from collections.abc import Collection, Iterable
+from dataclasses import dataclass
 from itertools import count
 from string import ascii_uppercase
-from typing import Any
+from typing import Literal
 
-from .models import Group, GroupRelation, Structure
+from .models import (
+    Council,
+    Group,
+    GroupOrigin,
+    GroupRelation,
+    IdeaDiscovery,
+    LabeledFragment,
+    Stream,
+    Structure,
+)
 
-TITLE_MAX = 200
+IdeaBy = Literal["text", "ai", "user"]
+LinkKind = Literal["depends_on", "required_by", "related", "shared", "merged", "split"]
+
+# Чья идея потока у совета прежней версии: из текста, совета или человека.
+STREAM_IDEA: dict[str, IdeaBy] = {"text": "text", "council": "ai", "human": "user"}
+
+
+@dataclass(frozen=True)
+class Idea:
+    """Идея группы и откуда она. Пустая — идеи нет; пустая от ИИ — её ещё восстановит ИИ."""
+
+    text: str
+    by: IdeaBy
+
+
+@dataclass(frozen=True)
+class Link:
+    """Связь группы с другой группой; fragment — номер общего фрагмента, только у shared."""
+
+    kind: LinkKind
+    group: str
+    fragment: int | None = None
 
 
 class EditRefused(ValueError):
-    """Правка без смысла: нет такой группы, делить нечего, название пустое. Для человека — 422."""
+    """Правка без смысла: выносить нечего или выносят всё. Для человека — 422."""
 
 
 def letter_for(n: int) -> str:
@@ -25,101 +60,205 @@ def letter_for(n: int) -> str:
     return letter if n < len(ascii_uppercase) else f"{letter}{n // len(ascii_uppercase) + 1}"
 
 
-def merged(structure: Structure, group_id: str, other_id: str) -> dict[str, Any]:
-    """Две группы в одну. Остаётся group — с буквой и названием; связь между ними исчезает,
-    связи other переходят к ней. Разошлись связи с одной и той же группой — остаётся связь
-    group: там человек и нажал."""
-    group, other = group_in(structure, group_id), group_in(structure, other_id)
-    if group.id == other.id:
-        raise EditRefused("Группу не объединить с самой собой")
-    ideas = sorted({*group.idea_fragment_ids, *other.idea_fragment_ids})
-    union = group.model_copy(update={
-        "fragment_ids": sorted({*group.fragment_ids, *other.fragment_ids}),
-        "idea_fragment_ids": ideas, "missing_idea": not ideas,
+def confirmed(council: Council) -> bool:
+    """Группы подтверждены. Прежняя версия подтверждала их, заводя потоки: у её советов
+    подтверждение — потоки."""
+    return council.groups_confirmed or council.streams is not None
+
+
+# Идея группы.
+
+def idea_of(council: Council, group: Group) -> Idea:
+    """Своя идея группы (вписал человек, осталась после правки); у совета прежней версии —
+    утверждённая в потоке группы; иначе из текста — фрагменты-идеи группы; иначе та, что
+    восстановил совет. Никакой нет — пустая, от ИИ: он её ещё восстановит."""
+    if group.idea is not None:
+        return Idea(group.idea, group.idea_by or "user")
+    stream = next((stream for stream in council.streams or [] if stream.group == group.id), None)
+    if stream is not None and stream.idea is not None:
+        return Idea(stream.idea.text, STREAM_IDEA[stream.idea.by])
+    if group.idea_fragment_ids:
+        texts = {fragment.id: fragment.text for fragment in fragments_in(council)}
+        return Idea(" ".join(texts[i] for i in group.idea_fragment_ids if i in texts), "text")
+    return Idea(found(group.discovery or (stream.discovery if stream else None)), "ai")
+
+
+def found(discovery: IdeaDiscovery | None) -> str:
+    """Идея, которую восстановил совет; не нашёл или ещё ищет — пустая."""
+    if discovery is None or discovery.state != "done" or discovery.proposal is None:
+        return ""
+    return discovery.proposal.idea or ""
+
+
+def seeks_idea(council: Council, group: Group) -> bool:
+    """Идею группы ищет совет: её нет ни у человека, ни в тексте."""
+    return group.idea is None and not idea_of(council, group).text
+
+
+def own_idea(idea: Idea) -> dict:
+    """Идея группы после правки, которая поменяла её состав, — своя: из фрагментов-идей и
+    поиска совета её уже не посчитать. Пустая идея от ИИ своей не становится — её ещё
+    восстановит ИИ."""
+    if idea.text or idea.by == "user":
+        return {"idea": idea.text, "idea_by": idea.by}
+    return {"idea": None, "idea_by": None}
+
+
+# Фрагменты и связи.
+
+def fragments_in(council: Council) -> list[LabeledFragment]:
+    return council.slicing.fragments if council.slicing else []
+
+
+def fragments_of(council: Council, group: Group) -> list[LabeledFragment]:
+    """Фрагменты группы по её порядку — из нарезки, с типом, который выбрал человек."""
+    by_id = {fragment.id: fragment for fragment in fragments_in(council)}
+    return [by_id[i] for i in group.fragment_ids if i in by_id]
+
+
+def links_of(structure: Structure, group: Group) -> list[Link]:
+    """Связи группы: из раскладки — зависит от, от неё зависит, связана; общие фрагменты; след
+    правок. У общего фрагмента своя группа — первая по порядку, где он есть: в остальных он
+    копия, и связь shared — у них."""
+    ids = {one.id for one in structure.groups}
+    links: list[Link] = []
+    for relation in structure.relations:
+        if group.id not in (relation.source, relation.target):
+            continue
+        source = relation.source == group.id
+        other = relation.target if source else relation.source
+        if other not in ids:
+            continue
+        if relation.type == "related":
+            links.append(Link("related", other))
+        else:
+            links.append(Link("depends_on" if source else "required_by", other))
+    for i in group.fragment_ids:
+        first = next(one for one in structure.groups if i in one.fragment_ids)
+        if first.id != group.id:
+            links.append(Link("shared", first.id, i))
+    return [*links, *(Link(origin.kind, origin.group) for origin in group.origins)]
+
+
+def marked(groups: list[Group]) -> list[Group]:
+    """Группы с отмеченными общими фрагментами — теми, что есть и в других группах."""
+    seen = Counter(i for group in groups for i in set(group.fragment_ids))
+    return [group.model_copy(update={
+        "shared_fragment_ids": sorted(i for i in set(group.fragment_ids) if seen[i] > 1)})
+        for group in groups]
+
+
+# Правки.
+
+def group_in(structure: Structure | None, group_id: str) -> Group | None:
+    if structure is None:
+        return None
+    return next((group for group in structure.groups if group.id == group_id), None)
+
+
+def merged(council: Council, source: Group, target: Group) -> Structure:
+    """Группа source — в группу target, другую группу раскладки совета. Фрагменты source встают в
+    конец target, те, что там уже есть, не повторяются; название — у target; идея — у target, а
+    нет её — у source, вместе с тем, откуда она. Связи source переходят к target (разошлись
+    связи с одной и той же группой — остаётся связь target), ссылки на source ведут на target,
+    связи группы с самой собой нет; у target — след: с ней объединили source."""
+    structure = council.structure
+    ours = idea_of(council, target)
+    idea, ideas = ((ours, target.idea_fragment_ids) if ours.text
+                   else (idea_of(council, source), source.idea_fragment_ids))
+    union = target.model_copy(update={
+        "fragment_ids": [*target.fragment_ids,
+                         *(i for i in source.fragment_ids if i not in target.fragment_ids)],
+        "idea_fragment_ids": list(ideas), "missing_idea": not ideas, **own_idea(idea),
+        "origins": [*moved(target.origins, source.id, target.id, target.id),
+                    GroupOrigin(kind="merged", group=source.id)],
     })
-    groups = [union if g.id == group.id else g for g in structure.groups if g.id != other.id]
-    # Сначала связи без other: при расхождении останутся они.
-    ordered = sorted(structure.relations, key=lambda r: other.id in (r.source, r.target))
-    moved = (r.model_copy(update={"source": group.id if r.source == other.id else r.source,
-                                  "target": group.id if r.target == other.id else r.target})
-             for r in ordered)
-    return {"groups": arranged(groups), "relations": one_per_pair(moved)}
+    groups = [union if group.id == target.id else group.model_copy(update={
+        "origins": moved(group.origins, source.id, target.id, group.id)})
+        for group in structure.groups if group.id != source.id]
+
+    def swap(group: str) -> str:
+        return target.id if group == source.id else group
+
+    # Сначала связи без пропавшей: при расхождении останутся они.
+    ordered = sorted(structure.relations, key=lambda r: source.id in (r.source, r.target))
+    relations = one_per_pair(relation.model_copy(update={
+        "source": swap(relation.source), "target": swap(relation.target)}) for relation in ordered)
+    return structure.model_copy(update={"groups": marked(groups), "relations": relations,
+                                        "stream_groups": kept(council)})
 
 
-def split(structure: Structure, group_id: str, fragment_ids: Iterable[int],
-          title: str) -> dict[str, Any]:
-    """Отмеченные фрагменты — в новую группу. Связи остаются у прежней: к новой их никто не
-    проводил. Общий фрагмент так и остаётся общим — теперь с новой группой."""
-    group = group_in(structure, group_id)
-    moving = set(fragment_ids)
-    if not moving:
-        raise EditRefused("Отметьте, что уходит в новую группу")
-    alien = sorted(moving - set(group.fragment_ids))
+def split(council: Council, source: Group, fragment_ids: Collection[int], title: str) -> Structure:
+    """Отмеченные фрагменты группы source — в новую группу сразу за ней: хотя бы один, но не
+    все. У новой — название title без пробелов по краям, первая свободная буква, фрагменты в
+    порядке группы, идеи нет (её восстановит ИИ) и след: её выделили из source. Связи из
+    раскладки остаются у source, её идея — тоже; общие фрагменты отмечаются заново."""
+    structure = council.structure
+    wanted = set(fragment_ids)
+    if not wanted:
+        raise EditRefused("Не отмечено ни одного фрагмента")
+    alien = wanted - set(source.fragment_ids)
     if alien:
-        raise EditRefused(f"В группе {group.id} нет {', '.join(f'F{i}' for i in alien)}")
-    staying = [i for i in group.fragment_ids if i not in moving]
+        raise EditRefused(f"В группе {source.id} нет фрагментов: "
+                          f"{', '.join(f'F{i}' for i in sorted(alien))}")
+    staying = [i for i in source.fragment_ids if i not in wanted]
     if not staying:
-        raise EditRefused("В группе должно что-то остаться — иначе это переименование")
-    ideas = [i for i in group.idea_fragment_ids if i in moving]
-    new = Group(id=free_letter(structure.groups), title=title_of(title),
-                fragment_ids=sorted(moving), idea_fragment_ids=ideas, missing_idea=not ideas)
-    left = [i for i in group.idea_fragment_ids if i not in moving]
-    rest = group.model_copy(update={"fragment_ids": staying, "idea_fragment_ids": left,
-                                    "missing_idea": not left})
-    return {"groups": arranged([*(rest if g.id == group.id else g for g in structure.groups),
-                                new])}
+        raise EditRefused(f"Отмечены все фрагменты группы {source.id}: в ней ничего не останется")
+    ideas = [i for i in source.idea_fragment_ids if i in staying]
+    rest = source.model_copy(update={"fragment_ids": staying, "idea_fragment_ids": ideas,
+                                     "missing_idea": not ideas,
+                                     **own_idea(idea_of(council, source))})
+    new = Group(id=free_letter(council), title=title.strip(),
+                fragment_ids=[i for i in source.fragment_ids if i in wanted],
+                idea_fragment_ids=[], missing_idea=True,
+                origins=[GroupOrigin(kind="split", group=source.id)])
+    groups = [one for group in structure.groups
+              for one in ((rest, new) if group.id == source.id else (group,))]
+    return structure.model_copy(update={"groups": marked(groups),
+                                        "stream_groups": kept(council)})
 
 
-def renamed(structure: Structure, group_id: str, title: str) -> dict[str, Any]:
-    group = group_in(structure, group_id)
-    named = group.model_copy(update={"title": title_of(title)})
-    return {"groups": [named if g.id == group.id else g for g in structure.groups]}
+def kept(council: Council) -> dict[str, Group]:
+    """Группы потоков совета перед объединением или разделением групп — какими они были:
+    правки групп потоки не меняют (решение q-002)."""
+    groups: dict[str, Group] = {}
+    for stream in council.streams or []:
+        group = stream_group(council, stream)
+        if group is not None:
+            groups[stream.group] = group
+    return groups
 
 
-def restored(structure: Structure) -> dict[str, Any]:
-    """Как предложил совет: правки человека отменяются."""
-    if structure.proposal is None:
-        raise EditRefused("Предложения совета нет — возвращаться не к чему")
-    return {"groups": structure.proposal.groups, "relations": structure.proposal.relations}
+def stream_group(council: Council, stream: Stream) -> Group | None:
+    """Группа потока: какой она была до правок состава групп, а их не было — из раскладки."""
+    structure = council.structure
+    if structure is None:
+        return None
+    return structure.stream_groups.get(stream.group) or group_in(structure, stream.group)
 
 
-def group_in(structure: Structure, group_id: str) -> Group:
-    found = next((group for group in structure.groups if group.id == group_id), None)
-    if found is None:
-        raise EditRefused(f"Нет группы {group_id}")
-    return found
+def moved(origins: list[GroupOrigin], old: str, new: str, own: str) -> list[GroupOrigin]:
+    """След правок, когда группу old объединили с new: он ведёт на new; след группы own на саму
+    себя — не след."""
+    result: list[GroupOrigin] = []
+    for origin in origins:
+        origin = origin.model_copy(update={"group": new}) if origin.group == old else origin
+        if origin.group != own and origin not in result:
+            result.append(origin)
+    return result
 
 
-def title_of(title: str) -> str:
-    title = title.strip()
-    if not title:
-        raise EditRefused("Нужно название группы")
-    if len(title) > TITLE_MAX:
-        raise EditRefused(f"Название длиннее {TITLE_MAX} знаков")
-    return title
-
-
-def free_letter(groups: list[Group]) -> str:
-    used = {group.id for group in groups}
+def free_letter(council: Council) -> str:
+    """Первая буква, которой нет ни у группы, ни в связях и следах правок, ни у потока: новая
+    группа не должна стать той, о которой они говорят."""
+    structure = council.structure
+    used = {stream.group for stream in council.streams or []}
+    if structure is not None:
+        for group in structure.groups:
+            used |= {group.id, *(origin.group for origin in group.origins)}
+        for relation in structure.relations:
+            used |= {relation.source, relation.target}
     return next(letter for letter in map(letter_for, count()) if letter not in used)
-
-
-def arranged(groups: list[Group]) -> list[Group]:
-    """Группы по порядку первого фрагмента, общие фрагменты отмечены заново. Две группы с
-    одним составом — одна и та же группа дважды: такую правку не принимаем."""
-    seen: set[int] = set()
-    twice: set[int] = set()
-    kinds: dict[frozenset[int], str] = {}
-    for group in groups:
-        members = frozenset(group.fragment_ids)
-        if members in kinds:
-            raise EditRefused(f"Группы {kinds[members]} и {group.id} совпали бы по составу")
-        kinds[members] = group.id
-        twice |= seen & members
-        seen |= members
-    marked = (group.model_copy(update={
-        "shared_fragment_ids": sorted(twice & set(group.fragment_ids))}) for group in groups)
-    return sorted(marked, key=lambda group: min(group.fragment_ids))
 
 
 def one_per_pair(relations: Iterable[GroupRelation]) -> list[GroupRelation]:

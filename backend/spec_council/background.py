@@ -43,6 +43,7 @@ class Slot:
 
 
 SLICING = Slot(lambda council: council.slicing, lambda council, state: {"slicing": state})
+STRUCTURE = Slot(lambda council: council.structure, lambda council, state: {"structure": state})
 
 
 def launched(launch: Launcher, pipeline: CouncilRun, report: Callable[[RunState], None]) -> bool:
@@ -76,9 +77,12 @@ def running(state: RunState | None) -> bool:
 
 
 def seeking(council: Council) -> bool:
-    """Совет работает хоть над одним потоком — ищет идею, вопросы, варианты, проверяет выбор
-    или собирает итоги, — исследует код и макет или строит и выгружает план задач: новая
-    нарезка, раскладка или другой состав групп стёрли бы потоки из-под него."""
+    """Совет ищет идею группы, работает хоть над одним потоком — ищет идею, вопросы, варианты,
+    проверяет выбор или собирает итоги, — исследует код и макет или строит и выгружает план
+    задач: новая нарезка стёрла бы группы и потоки из-под него."""
+    structure = council.structure
+    if structure is not None and any(running(group.discovery) for group in structure.groups):
+        return True
     research = council.research
     if research is not None and (running(research.scan) or running(research.design_scan)):
         return True

@@ -13,7 +13,7 @@ from spec_council.api import tasks as tasks_api
 from spec_council.app import app
 from spec_council.deps import get_agents, get_issues_of, get_launcher, get_notes_of
 from spec_council.export import Shelf, words_for
-from spec_council.groups import arranged
+from spec_council.groups import marked
 from spec_council.issue_files import rendered as issue_rendered
 from spec_council.models import (
     CouncilStatus,
@@ -105,12 +105,12 @@ def single():
     slicing = Slicing(state="done", run="s1", steps=[], fragments=[
         Fragment(id=i, text=TEXTS[i], label=label, reason="", council_label=label)
         for i, label in LABELS.items()])
-    groups = arranged([grp("C", [1, 2, 3, 4, 5])])
+    groups = marked([grp("C", [1, 2, 3, 4, 5])])
     structure = Structure(state="done", run="g1", slicing_run="s1", labels=LABELS, steps=[],
                           groups=groups, proposal=StructureProposal(groups=groups, relations=[]))
     get_store().update_council(council_id, {"slicing": slicing, "structure": structure,
                                             "status": CouncilStatus.structure})
-    assert confirm(council_id).status_code == 200
+    confirm(council_id)
     return council_id
 
 

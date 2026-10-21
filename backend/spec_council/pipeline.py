@@ -725,6 +725,8 @@ class GroupingRun(CouncilRun[Structure]):
         self.slicing = slicing
 
     def work(self) -> dict[str, Any]:
+        if not self.slicing.fragments:
+            self._nothing_to_group()
         labels = {f.id: f.label for f in self.slicing.fragments}
         fragments = as_json([{"id": f.id, "text": f.text, "type": f.label}
                              for f in self.slicing.fragments])
@@ -752,6 +754,16 @@ class GroupingRun(CouncilRun[Structure]):
             StructureDecision(issue=d.issue, decision=d.decision, reason=d.reason)
             for d in decisions
         ])
+
+    def _nothing_to_group(self) -> None:
+        """Фрагментов нет — текст не нарезан или нарезка остановилась: «Предложить группы →»
+        доступна и тогда. Раскладывать нечего, и раскладка останавливается сразу, моделей не
+        зовя, — как нарезка текста без единого слова."""
+        reason = "раскладывать нечего: фрагментов нет"
+        for model in self.participants:
+            self._set_run(StepName.structure, model, "failed", reason)
+        self._set_step(StepName.structure, "failed")
+        raise StageFailed(reason)
 
 
 def as_variant(option: StructureOption) -> dict[str, Any]:

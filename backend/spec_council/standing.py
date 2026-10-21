@@ -16,6 +16,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Literal
 
+from .groups import confirmed
 from .models import (
     Council,
     DecisionAnalysis,
@@ -116,30 +117,38 @@ def standing(council: Council, folders: Folders) -> Standing:
 # Этапы.
 
 def brief_of(council: Council) -> State:
-    """«Ввод» готов, когда текст начали резать; до того совет — черновик."""
-    return "done" if council.slicing is not None else "idle"
+    """«Ввод» готов, когда текст начали резать или совет ушёл дальше — предложили или
+    подтвердили группы (это можно и без нарезки); до того совет — черновик."""
+    if council.slicing is not None or council.structure is not None or confirmed(council):
+        return "done"
+    return "idle"
 
 
 def slices_of(council: Council) -> State:
-    """«Нарезка»: модели режут или остановились; дорезали — ждёт, пока не предложат группы."""
+    """«Нарезка»: модели режут или остановились; дорезали — ждёт, пока не предложат группы.
+    Группы предложили или подтвердили — готова, даже если её не было или она остановилась:
+    «Предложить группы →» доступна и тогда."""
     slicing = council.slicing
+    if slicing is not None and slicing.state == "running":
+        return "running"
+    if council.structure is not None or confirmed(council):
+        return "done"
     if slicing is None:
         return "idle"
-    if slicing.state != "done":
-        return slicing.state
-    return "done" if council.structure is not None else "waiting"
+    return "failed" if slicing.state == "failed" else "waiting"
 
 
 def structure_of(council: Council) -> State:
     """«Группы»: модели раскладывают или остановились; разложили — ждут, пока группы не
-    подтвердят. Подтверждённые группы в хранении — это потоки совета (streams не None)."""
+    подтвердят; подтверждены — готовы. Подтвердить можно и не начатую раскладку, и
+    остановившуюся."""
     structure = council.structure
+    if structure is not None and structure.state == "running":
+        return "running"
+    if confirmed(council):
+        return "done"
     if structure is None:
         return "idle"
-    if structure.state == "running":
-        return "running"
-    if council.streams is not None:
-        return "done"
     return "failed" if structure.state == "failed" else "waiting"
 
 
@@ -151,7 +160,7 @@ def research_of(council: Council) -> State:
         return "running"
     if approved(council.research):
         return "done"
-    if council.streams is not None or council.research is not None:
+    if confirmed(council) or council.research is not None:
         return "waiting"
     return "idle"
 
@@ -367,7 +376,7 @@ def research_waiting(council: Council) -> str:
     """Что нужно от человека — как пояснение на плашке «Утвердить исследование». Находок, которые
     ждут решения, хранение пока не знает: у старых сканов решений по находкам нет."""
     if all(block in ("done", "skipped") for block in blocks_of(council.research or Research())):
-        if council.streams is None:
+        if not confirmed(council):
             return "Подтвердите группы — потом они станут потоками."
         return "Утвердите исследование — потом группы станут потоками."
     return "Начните или пропустите оба исследования — потом группы станут потоками."

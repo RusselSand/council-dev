@@ -1,29 +1,41 @@
-"""Правки готовых групп человеком: объединить, разделить, переименовать, вернуть как было,
-подтвердить."""
+"""Готовые группы без HTTP (groups.py): идея группы, её связи, объединение и разделение."""
+
+from datetime import UTC, datetime
 
 import pytest
-from fastapi.testclient import TestClient
 
-from spec_council.app import app
-from spec_council.deps import get_store
-from spec_council.groups import EditRefused, arranged, letter_for, merged, renamed, restored, split
+from spec_council.groups import (
+    EditRefused,
+    Idea,
+    Link,
+    confirmed,
+    idea_of,
+    letter_for,
+    links_of,
+    marked,
+    merged,
+    seeks_idea,
+    split,
+)
 from spec_council.models import (
+    Council,
     CouncilStatus,
     Group,
     GroupRelation,
+    IdeaDiscovery,
+    IdeaProposal,
     LabeledFragment,
     Slicing,
     Stream,
+    StreamIdea,
     Structure,
-    StructureProposal,
 )
-from spec_council.pipeline import start_idea
 
-client = TestClient(app)
+LABELS = {1: "idea", 2: "proposal", 3: "risk", 4: "constraint", 5: "idea"}
 
 
-def grp(gid, fragments, ideas=(), title=None):
-    return Group(id=gid, title=title or f"Группа {gid}", fragment_ids=list(fragments),
+def grp(gid, fragments, ideas=()):
+    return Group(id=gid, title=f"Группа {gid}", fragment_ids=list(fragments),
                  idea_fragment_ids=list(ideas), missing_idea=not ideas)
 
 
@@ -31,244 +43,207 @@ def rel(source, target, kind="related"):
     return GroupRelation(source=source, target=target, type=kind, reason=f"{source}-{target}")
 
 
-LABELS = {1: "idea", 2: "proposal", 3: "risk", 4: "constraint", 5: "idea"}
+# A = {F1, F2, F3}, B = {F3, F4} (F3 общий, своя группа у него — A), C = {F5}.
+GROUPS = marked([grp("A", [1, 2, 3], ideas=[1]), grp("B", [3, 4]), grp("C", [5], ideas=[5])])
+RELATIONS = [rel("B", "A", "depends_on"), rel("C", "A"), rel("C", "B", "depends_on")]
 
 
-def done(groups, relations=()):
-    groups, relations = arranged(list(groups)), list(relations)
-    return Structure(state="done", run="g1", slicing_run="s1", labels=LABELS, steps=[],
-                     groups=groups, relations=relations,
-                     proposal=StructureProposal(groups=groups, relations=relations))
+def council_with(groups=GROUPS, relations=RELATIONS, **fields):
+    slicing = Slicing(state="done", run="s1", steps=[], fragments=[
+        LabeledFragment(id=i, text=f"Текст F{i}", label=label, reason="", council_label=label)
+        for i, label in LABELS.items()])
+    structure = Structure(state="done", run="g1", slicing_run="s1", labels=LABELS, steps=[],
+                          groups=list(groups), relations=list(relations))
+    return Council(id="c1", name="", status=CouncilStatus.structure, brief="",
+                   participants=["sol", "fable"], judge="fable",
+                   updated_at=datetime(2026, 10, 20, tzinfo=UTC), slicing=slicing,
+                   structure=structure, **fields)
 
 
-def sliced(labels=LABELS):
-    return Slicing(state="done", run="s1", steps=[], fragments=[
-        LabeledFragment(id=i, text=f"F{i}", label=label, reason="", council_label=label)
-        for i, label in labels.items()])
+def with_structure(council, structure):
+    return council.model_copy(update={"structure": structure})
 
 
-# A = {F1, F2, F3}, B = {F3, F4} (F3 общий), C = {F5}.
-BASE = done([grp("A", [1, 2, 3], ideas=[1]), grp("B", [3, 4]), grp("C", [5], ideas=[5])],
-            [rel("B", "A", "depends_on"), rel("C", "A"), rel("C", "B", "depends_on")])
-
-
-def apply(structure, changes):
-    return structure.model_copy(update=changes)
+def group(council, gid):
+    return next(one for one in council.structure.groups if one.id == gid)
 
 
 def view(structure):
-    return [(g.id, g.fragment_ids, g.shared_fragment_ids) for g in structure.groups]
+    return [(one.id, one.fragment_ids, one.shared_fragment_ids) for one in structure.groups]
 
 
-def test_merged_group_keeps_the_letter_and_title_of_the_one_clicked():
-    result = apply(BASE, merged(BASE, "A", "B"))
-    assert view(result) == [("A", [1, 2, 3, 4], []), ("C", [5], [])]
-    assert result.groups[0].title == "Группа A"
-    assert result.groups[0].idea_fragment_ids == [1]
-    assert result.edited
+def found_idea(text):
+    return IdeaDiscovery(state="done", steps=[], proposal=IdeaProposal(
+        idea=text, reason="так", decided_by="agreed"))
 
 
-def test_merge_drops_the_link_between_them_and_keeps_the_clicked_groups_links():
-    # C→B переходит к C и расходится со связью C–A группы, где нажали: остаётся та.
-    result = apply(BASE, merged(BASE, "C", "B"))
-    assert view(result) == [("A", [1, 2, 3], [3]), ("C", [3, 4, 5], [3])]
+# Идея группы
+
+def test_the_idea_from_the_text_is_the_idea_fragments_of_the_group():
+    council = council_with()
+    assert idea_of(council, group(council, "A")) == Idea("Текст F1", "text")
+    assert not seeks_idea(council, group(council, "A"))
+
+
+def test_a_group_without_an_idea_waits_for_the_council_to_find_one():
+    council = council_with()
+    assert idea_of(council, group(council, "B")) == Idea("", "ai")
+    assert seeks_idea(council, group(council, "B"))
+    searched = council_with([GROUPS[0], GROUPS[1].model_copy(update={
+        "discovery": found_idea("Сверять версии")}), GROUPS[2]])
+    assert idea_of(searched, group(searched, "B")) == Idea("Сверять версии", "ai")
+    assert not seeks_idea(searched, group(searched, "B"))
+    nothing = council_with([GROUPS[0], GROUPS[1].model_copy(update={
+        "discovery": found_idea(None)}), GROUPS[2]])
+    assert idea_of(nothing, group(nothing, "B")) == Idea("", "ai")
+
+
+def test_the_idea_of_a_person_wins_and_may_be_empty():
+    council = council_with([GROUPS[0].model_copy(update={"idea": "", "idea_by": "user"}),
+                            GROUPS[1].model_copy(update={"idea": "Своя", "idea_by": "user",
+                                                         "discovery": found_idea("Совета")}),
+                            GROUPS[2]])
+    assert idea_of(council, group(council, "A")) == Idea("", "user")
+    assert idea_of(council, group(council, "B")) == Idea("Своя", "user")
+    assert not seeks_idea(council, group(council, "A"))
+
+
+def test_a_council_of_the_old_version_has_the_ideas_approved_in_its_streams():
+    council = council_with(streams=[
+        Stream(group="A", idea=StreamIdea(text="Текст F1", by="text", evidence=[1])),
+        Stream(group="B", idea=StreamIdea(text="Совета", by="council")),
+        Stream(group="C", idea=StreamIdea(text="Своя", by="human"))])
+    assert [idea_of(council, one) for one in council.structure.groups] == [
+        Idea("Текст F1", "text"), Idea("Совета", "ai"), Idea("Своя", "user")]
+    found = council_with(streams=[Stream(group="B", discovery=found_idea("Найдена"))])
+    assert idea_of(found, group(found, "B")) == Idea("Найдена", "ai")
+
+
+def test_groups_are_confirmed_by_the_flag_or_by_the_streams_of_the_old_version():
+    assert not confirmed(council_with())
+    assert confirmed(council_with(groups_confirmed=True))
+    assert confirmed(council_with(streams=[]))
+
+
+# Связи
+
+def test_links_come_from_the_relations_then_the_shared_fragments():
+    council = council_with()
+    assert [links_of(council.structure, one) for one in council.structure.groups] == [
+        [Link("required_by", "B"), Link("related", "C")],
+        [Link("depends_on", "A"), Link("required_by", "C"), Link("shared", "A", 3)],
+        [Link("related", "A"), Link("depends_on", "B")],
+    ]
+
+
+def test_a_shared_fragment_is_a_copy_in_every_group_but_the_first():
+    council = council_with(marked([grp("A", [1, 2]), grp("B", [2, 3]), grp("C", [2, 4])]), [])
+    assert [links_of(council.structure, one) for one in council.structure.groups] == [
+        [], [Link("shared", "A", 2)], [Link("shared", "A", 2)]]
+    assert [one.shared_fragment_ids for one in council.structure.groups] == [[2], [2], [2]]
+
+
+# Объединение
+
+def test_merged_group_takes_the_fragments_of_the_other_at_its_end():
+    council = council_with()
+    result = merged(council, group(council, "A"), group(council, "C"))
+    assert view(result) == [("B", [3, 4], [3]), ("C", [5, 1, 2, 3], [3])]
+    union = result.groups[1]
+    assert union.title == "Группа C"
+    assert idea_of(with_structure(council, result), union) == Idea("Текст F5", "text")
+    assert union.origins[-1].model_dump() == {"kind": "merged", "group": "A"}
+
+
+def test_merged_group_without_an_idea_takes_the_idea_of_the_other():
+    council = council_with()
+    result = merged(council, group(council, "C"), group(council, "B"))
+    union = group(with_structure(council, result), "B")
+    assert union.fragment_ids == [3, 4, 5]
+    assert idea_of(with_structure(council, result), union) == Idea("Текст F5", "text")
+    # Идея, которую вписал человек, остаётся: её не заменяет идея другой группы.
+    own = council_with([GROUPS[0], GROUPS[1].model_copy(update={"idea": "Своя",
+                                                                "idea_by": "user"}), GROUPS[2]])
+    result = merged(own, group(own, "C"), group(own, "B"))
+    assert idea_of(with_structure(own, result), group(with_structure(own, result), "B")) == Idea(
+        "Своя", "user")
+
+
+def test_links_of_the_merged_group_move_and_point_at_the_one_left():
+    council = council_with()
+    result = merged(council, group(council, "B"), group(council, "C"))
+    # B→A переходит к C и расходится со связью C–A: остаётся та, что у C; C→B — с самой собой.
     assert [(r.source, r.target, r.type) for r in result.relations] == [("C", "A", "related")]
+    after = with_structure(council, result)
+    assert links_of(result, group(after, "C")) == [
+        Link("related", "A"), Link("shared", "A", 3), Link("merged", "B")]
+    assert links_of(result, group(after, "A")) == [Link("related", "C")]
 
 
-@pytest.mark.parametrize(("group", "other", "problem"), [
-    ("A", "A", "с самой собой"),
-    ("A", "X", "Нет группы X"),
-])
-def test_merge_that_makes_no_sense_is_refused(group, other, problem):
-    with pytest.raises(EditRefused, match=problem):
-        merged(BASE, group, other)
+def test_traces_of_edits_follow_the_merge():
+    council = council_with()
+    first = with_structure(council, split(council, group(council, "A"), [2], "Новая"))
+    assert group(first, "D").origins[0].model_dump() == {"kind": "split", "group": "A"}
+    second = with_structure(first, merged(first, group(first, "A"), group(first, "B")))
+    assert links_of(second.structure, group(second, "D")) == [Link("split", "B")]
+    third = with_structure(second, merged(second, group(second, "D"), group(second, "B")))
+    # Выделенную из B группу вернули в B: следа на саму себя нет, следы объединений — оба.
+    assert [o.model_dump() for o in group(third, "B").origins] == [
+        {"kind": "merged", "group": "A"}, {"kind": "merged", "group": "D"}]
 
 
-def test_split_takes_the_first_free_letter_and_leaves_links_with_the_old_group():
-    result = apply(BASE, split(BASE, "A", [2], "  Хранение "))
+# Разделение
+
+def test_split_puts_the_new_group_right_after_the_old_one():
+    council = council_with()
+    result = split(council, group(council, "A"), [2], "  Хранение ")
     assert view(result) == [("A", [1, 3], [3]), ("D", [2], []), ("B", [3, 4], [3]),
                             ("C", [5], [])]
-    new = result.groups[1]
-    assert (new.title, new.missing_idea) == ("Хранение", True)
-    assert result.relations == BASE.relations
+    after = with_structure(council, result)
+    new = group(after, "D")
+    assert (new.title, idea_of(after, new)) == ("Хранение", Idea("", "ai"))
+    assert links_of(result, new) == [Link("split", "A")]
+    assert seeks_idea(after, new)
+    assert result.relations == council.structure.relations
 
 
-def test_a_shared_fragment_stays_shared_after_a_split():
-    result = apply(BASE, split(BASE, "A", [1, 3], "Идея"))
-    assert view(result) == [("D", [1, 3], [3]), ("A", [2], []), ("B", [3, 4], [3]),
-                            ("C", [5], [])]
-    assert result.groups[0].idea_fragment_ids == [1]
-    assert result.groups[1].missing_idea
+def test_the_old_group_keeps_its_idea_even_when_the_idea_fragment_leaves():
+    council = council_with()
+    after = with_structure(council, split(council, group(council, "A"), [1], "Идея"))
+    assert idea_of(after, group(after, "A")) == Idea("Текст F1", "text")
+    assert idea_of(after, group(after, "D")) == Idea("", "ai")
 
 
-@pytest.mark.parametrize(("fragments", "title", "problem"), [
-    ([], "Новая", "Отметьте"),
-    ([4], "Новая", "нет F4"),
-    ([1, 2, 3], "Новая", "должно что-то остаться"),
-    ([2], "   ", "Нужно название"),
-    ([2], "я" * 201, "длиннее 200"),
+def test_a_shared_fragment_that_left_the_group_takes_its_link_along():
+    council = council_with()
+    result = split(council, group(council, "B"), [3], "")
+    after = with_structure(council, result)
+    assert links_of(result, group(after, "B")) == [Link("depends_on", "A"),
+                                                   Link("required_by", "C")]
+    assert links_of(result, group(after, "D")) == [Link("shared", "A", 3), Link("split", "B")]
+    assert group(after, "D").title == ""
+
+
+@pytest.mark.parametrize(("fragments", "problem"), [
+    ([], "Не отмечено"),
+    ([4], "нет фрагментов: F4"),
+    ([1, 2, 3], "все фрагменты"),
 ])
-def test_split_that_makes_no_sense_is_refused(fragments, title, problem):
+def test_split_that_makes_no_sense_is_refused(fragments, problem):
+    council = council_with()
     with pytest.raises(EditRefused, match=problem):
-        split(BASE, "A", fragments, title)
+        split(council, group(council, "A"), fragments, "Новая")
 
 
-def test_an_edit_may_not_make_two_groups_of_the_same_fragments():
-    structure = done([grp("A", [1, 2], ideas=[1]), grp("B", [2])])
-    with pytest.raises(EditRefused, match="совпали бы по составу"):
-        split(structure, "A", [2], "Вторая B")
-
-
-def test_rename_and_restore():
-    result = apply(BASE, renamed(BASE, "B", "Хранение"))
-    assert result.groups[1].title == "Хранение"
-    with pytest.raises(EditRefused, match="Нужно название"):
-        renamed(BASE, "B", "")
-    back = apply(result, restored(result))
-    assert back.groups == BASE.groups
-    assert not back.edited
+def test_a_new_group_does_not_take_a_letter_its_neighbours_speak_of():
+    council = council_with()
+    gone = with_structure(council, merged(council, group(council, "A"), group(council, "C")))
+    # A пропала, но у C — след «объединена с группой A»: новая группа — не A.
+    result = split(gone, group(gone, "C"), [5], "Новая")
+    assert [one.id for one in result.groups] == ["B", "C", "D"]
+    streamed = council_with(streams=[Stream(group="D")])
+    assert split(streamed, group(streamed, "A"), [2], "Новая").groups[1].id == "E"
 
 
 def test_letters_go_on_after_z():
     assert [letter_for(n) for n in (0, 25, 26, 27)] == ["A", "Z", "A2", "B2"]
-
-
-# --- API
-
-def council_with(structure, slicing=None):
-    council_id = client.post("/api/councils").json()["council"]["id"]
-    get_store().update_council(council_id, {"slicing": slicing or sliced(),
-                                            "structure": structure,
-                                            "status": CouncilStatus.structure})
-    return council_id
-
-
-def post(council_id, action, revision=0, **body):
-    return client.post(f"/api/councils/{council_id}/structure/{action}",
-                       json={"revision": revision, **body})
-
-
-def test_edits_are_saved_and_can_be_undone():
-    council_id = council_with(BASE)
-    res = post(council_id, "merge", run="g1", group="A", other="B")
-    assert res.status_code == 200
-    structure = res.json()["structure"]
-    assert [g["id"] for g in structure["groups"]] == ["A", "C"]
-    assert structure["edited"] is True
-
-    res = post(council_id, "split", 1, run="g1", group="A", fragment_ids=[4], title="Хранение")
-    assert [g["id"] for g in res.json()["structure"]["groups"]] == ["A", "B", "C"]
-    res = post(council_id, "rename", 2, run="g1", group="C", title="Другое")
-    assert res.json()["structure"]["groups"][2]["title"] == "Другое"
-
-    res = post(council_id, "restore", 3, run="g1")
-    assert res.json()["structure"]["edited"] is False
-    assert res.json()["structure"]["revision"] == 4
-    assert get_store().get_council(council_id).structure.groups == BASE.groups
-
-
-@pytest.mark.parametrize("structure", [
-    None,
-    BASE.model_copy(update={"run": "g2"}),                       # разложили заново
-    BASE.model_copy(update={"state": "running", "groups": []}),  # раскладка идёт
-])
-def test_an_edit_for_other_groups_is_refused_with_409(structure):
-    council_id = council_with(structure)
-    res = post(council_id, "merge", run="g1", group="A", other="B")
-    assert res.status_code == 409
-    assert get_store().get_council(council_id).structure == structure
-
-
-def test_an_edit_to_an_earlier_revision_is_refused():
-    # Другая вкладка объединила A с B и вынесла F4 в новую B: старая «B» — уже не та группа.
-    council_id = council_with(BASE)
-    post(council_id, "merge", run="g1", group="A", other="B")
-    post(council_id, "split", 1, run="g1", group="A", fragment_ids=[4], title="Новая B")
-    res = post(council_id, "rename", 0, run="g1", group="B", title="Хранение")
-    assert res.status_code == 409
-    assert "уже поменяли" in res.json()["detail"]
-    assert get_store().get_council(council_id).structure.groups[1].title == "Новая B"
-
-
-@pytest.mark.parametrize("slicing", [
-    sliced({**LABELS, 2: "idea"}),                          # тип поменяли после раскладки
-    sliced().model_copy(update={"run": "s2"}),              # нарезку переделали
-])
-def test_an_outdated_grouping_is_not_edited(slicing):
-    council_id = council_with(BASE, slicing)
-    res = post(council_id, "split", run="g1", group="A", fragment_ids=[2], title="Новая")
-    assert res.status_code == 409
-    assert "сначала разложите заново" in res.json()["detail"]
-    assert get_store().get_council(council_id).structure == BASE
-
-
-def test_a_senseless_edit_is_422_and_changes_nothing():
-    council_id = council_with(BASE)
-    res = post(council_id, "split", run="g1", group="A", fragment_ids=[], title="Новая")
-    assert res.status_code == 422
-    assert "Отметьте" in res.json()["detail"]
-    assert post(council_id, "rename", run="g1", group="A", title="x", extra=1).status_code == 422
-    assert get_store().get_council(council_id).structure == BASE
-
-
-def test_edit_of_unknown_council_is_404():
-    assert post("missing", "restore", run="g1").status_code == 404
-    assert post("missing", "confirm", run="g1").status_code == 404
-
-
-def status_of(council_id):
-    return get_store().get_council(council_id).status
-
-
-def test_confirmed_groups_become_streams():
-    council_id = council_with(BASE)
-    res = post(council_id, "confirm", run="g1")
-    assert res.status_code == 200
-    assert res.json()["status"] == "review"
-    assert res.json()["structure"]["revision"] == 0   # подтверждение — не правка групп
-    assert [s["group"] for s in res.json()["streams"]] == ["A", "B", "C"]
-    again = post(council_id, "confirm", run="g1").json()
-    assert again["streams"] == res.json()["streams"]
-
-
-def test_renaming_keeps_the_streams_and_a_new_composition_takes_the_confirmation_back():
-    council_id = council_with(BASE)
-    post(council_id, "confirm", run="g1")
-    assert post(council_id, "rename", run="g1", group="A", title="Воркер").status_code == 200
-    assert status_of(council_id) == "review"
-    assert get_store().get_council(council_id).streams is not None
-
-    res = post(council_id, "merge", 1, run="g1", group="A", other="B")
-    assert res.status_code == 200
-    assert (res.json()["status"], res.json()["streams"]) == ("structure", None)
-
-
-def test_composition_does_not_change_while_the_council_seeks_ideas():
-    council_id = council_with(BASE)
-    streams = [Stream(group="A"), Stream(group="B", discovery=start_idea(["sol"], "sol")),
-               Stream(group="C")]
-    get_store().update_council(council_id, {"streams": streams, "status": CouncilStatus.review})
-    res = post(council_id, "merge", run="g1", group="A", other="B")
-    assert res.status_code == 423
-    assert get_store().get_council(council_id).structure == BASE
-    assert post(council_id, "rename", run="g1", group="A", title="Воркер").status_code == 200
-
-
-@pytest.mark.parametrize(("run", "revision", "problem"), [
-    ("g0", 0, "разложили заново"),
-    ("g1", 1, "уже поменяли"),
-])
-def test_only_the_groups_on_screen_are_confirmed(run, revision, problem):
-    council_id = council_with(BASE)
-    res = post(council_id, "confirm", revision, run=run)
-    assert res.status_code == 409
-    assert problem in res.json()["detail"]
-    assert status_of(council_id) == "structure"
-
-
-def test_an_outdated_grouping_is_not_confirmed():
-    council_id = council_with(BASE, sliced({**LABELS, 2: "idea"}))
-    res = post(council_id, "confirm", run="g1")
-    assert res.status_code == 409
-    assert "сначала разложите заново" in res.json()["detail"]
-    assert status_of(council_id) == "structure"
