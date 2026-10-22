@@ -18,7 +18,8 @@
 
 Поток прежней версии своих вариантов и выбора отдельно не помнит — только утверждённый выбор
 (свой вариант жил в нём текстом), а до утверждения — выбор прежней работы по тем же вопросам
-(work.earlier_choices): с него начинал и старый фронт.
+(work.earlier_choices): с него начинал и старый фронт. Вопрос, который убрали из отбора, а на
+«Вопросах» вернули, — тоже с выбором прежней работы: он там с тех пор, как вопрос убрали.
 """
 
 from collections.abc import Mapping
@@ -26,6 +27,7 @@ from dataclasses import dataclass
 from typing import Literal
 
 from .models import Choice, OpenQuestion, OwnOption, Pick, Proposal, QuestionOptions, Stream
+from .pipeline import question_key
 from .scope import kept_of, number
 from .work import earlier_choices, last_used
 
@@ -149,19 +151,31 @@ def approved(stream: Stream, sets: list[OptionSet]) -> Stream:
 
 def own_of(stream: Stream) -> list[OwnOption]:
     """Свои варианты человека в порядке, как их сохранили. У потока прежней версии — свои
-    варианты утверждённого выбора, а до утверждения — выбора прежней работы."""
+    варианты его выбора (prior_of)."""
     if stream.own_options is not None:
         return stream.own_options
     return [OwnOption(question_id=choice.question_id, id=choice.proposal, text=choice.text,
                       based_on=choice.based_on)
-            for choice in earlier_choices(stream).values()
+            for choice in prior_of(stream)
             if choice.text is not None and choice.proposal is not None]
 
 
 def picks_of(stream: Stream) -> dict[str, Pick]:
-    """Выбор по каждому вопросу, где он есть. У потока прежней версии — утверждённый, а до
-    утверждения — выбор прежней работы."""
+    """Выбор по каждому вопросу, где он есть. У потока прежней версии — его выбор (prior_of)."""
     if stream.picks is not None:
         return {pick.question_id: pick for pick in stream.picks}
     return {choice.question_id: Pick(question_id=choice.question_id, option=choice.proposal)
-            for choice in earlier_choices(stream).values()}
+            for choice in prior_of(stream)}
+
+
+def prior_of(stream: Stream) -> list[Choice]:
+    """Выбор потока прежней версии: утверждённый, а до утверждения — выбор прежней работы по
+    вопросам отбора (work.earlier_choices). Вопрос, который он убрал из отбора, а на «Вопросах»
+    его вернули, — с выбором прежней работы: убирая вопрос, отбор её запомнил (work.kept_work)."""
+    choices = earlier_choices(stream)
+    works = {work.key: work for work in stream.earlier}
+    for question in kept_of(stream):
+        work = works.get(question_key(question))
+        if question.id not in choices and work is not None:
+            choices[question.id] = work.choice
+    return list(choices.values())
