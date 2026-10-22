@@ -15,8 +15,8 @@
 
 Поток прежней версии решений на экране отдельно не помнит — только зафиксированные, а до них —
 решения прежней работы к тому же выбору (work.known_decisions): с них начинал и старый фронт.
-Зафиксированное с вариантом — зафиксировано, без варианта — открыто. Первая правка записывает их
-все.
+Зафиксированное с вариантом — зафиксировано, без варианта — открыто; с вариантом, которого модели
+не проверяли, — черновик моделей (решение q-007 бекенда). Первая правка записывает их все.
 """
 
 from dataclasses import dataclass
@@ -117,13 +117,17 @@ def rulings_of(stream: Stream) -> dict[str, Ruling]:
 
 
 def prior_of(decision: Decision, found: QuestionAnalysis | None) -> Ruling:
-    """Решение потока прежней версии: с вариантом — зафиксировано, как его зафиксировал человек
-    (вариант — его, хоть совет проверял и другой); без варианта — открыто, с вариантом и «почему»
-    совета: вернуть его в черновик — решение моделей."""
-    if decision.proposal is not None:
-        return Ruling(question_id=decision.question_id, option=decision.proposal,
-                      rationale=decision.rationale or "",
-                      rationale_by=decision.rationale_by or "ai", status="fixed")
+    """Решение потока прежней версии: с вариантом — зафиксировано, как его зафиксировал человек;
+    без варианта — открыто, с вариантом и «почему» совета: вернуть его в черновик — решение
+    моделей. Прежняя версия давала зафиксировать и вариант, которого модели не проверяли; решение
+    выбирают после проверки (решение q-007 бекенда) — такой выбор пропадает, и решение — черновик
+    моделей с их вариантом: чужая проверка к нему не встаёт."""
     first = first_ruling(found) if found is not None else Ruling(
         question_id=decision.question_id)
-    return first.model_copy(update={"status": "open"})
+    if decision.proposal is None:
+        return first.model_copy(update={"status": "open"})
+    if found is not None and decision.proposal != found.proposal:
+        return first
+    return Ruling(question_id=decision.question_id, option=decision.proposal,
+                  rationale=decision.rationale or "",
+                  rationale_by=decision.rationale_by or "ai", status="fixed")

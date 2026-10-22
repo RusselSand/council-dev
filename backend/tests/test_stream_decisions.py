@@ -463,3 +463,32 @@ def test_a_stream_of_the_prior_version_shows_its_fixed_decisions(store):
     assert [(r.question_id, r.option, r.status) for r in stream.rulings] == [
         ("Q1", "P1", "fixed"), ("Q2", "P2", "draft")]
     assert [(d.question_id, d.proposal) for d in stream.decisions] == [("Q1", "P1"), ("Q2", None)]
+
+
+def test_a_prior_option_the_models_did_not_check_gives_way_to_their_check(store):
+    """Прежняя версия давала зафиксировать любой вариант. Вариант, которого модели не проверяли,
+    с чужой проверкой не показывается: решение — черновик моделей с их вариантом (решение q-007
+    бекенда). Зафиксированные решения не меняются."""
+    council_id = streaming(store)
+    questions = [OpenQuestion(id="Q1", text=SEARCH, source="inferred", proposal_ids=[2])]
+    found = [QuestionOptions(question_id="Q1", verdict="recommended", proposals=[
+        Proposal(id="P1", text=ONE, reason="так проще", recommended=True),
+        Proposal(id="P2", text=SHARE, reason="мерило")])]
+    put(store, council_id, project_decisions=[],
+        questions=QuestionDiscovery(state="done", run="q1", steps=[], questions=questions),
+        scope=questions, proposals=ProposalDiscovery(state="done", run="p1", steps=[],
+                                                     options=found),
+        choices=[Choice(question_id="Q1", proposal="P1")],
+        analysis=DecisionAnalysis(state="done", run="a1", steps=[], analyses=[
+            QuestionAnalysis(question_id="Q1", verdict="conflict", proposal="P1",
+                             reason=PROBLEM)]),
+        decisions=[Decision(question_id="Q1", proposal="P2", rationale=MINE,
+                            rationale_by="human")])
+    (q1,) = round_of(council_id)["decisions"]
+    assert (q1["option"]["id"], q1["verdict"], q1["problem"]["text"], q1["rationale"],
+            q1["rationaleBy"], q1["status"]) == ("P1", "conflict", PROBLEM, "", "ai", "draft")
+    assert steps_of(stream_of(council_id))["decisions"]["note"] == "решено 0 из 1"
+    assert edits(council_id, "Q1", WHY, "fixed").status_code == 200
+    stream = stored(store, council_id)
+    assert [(r.option, r.rationale, r.status) for r in stream.rulings] == [("P1", WHY, "fixed")]
+    assert [(d.proposal, d.rationale) for d in stream.decisions] == [("P2", MINE)]
