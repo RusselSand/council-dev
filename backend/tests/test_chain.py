@@ -315,6 +315,75 @@ def test_a_stopped_judge_is_run_again_alone(store, pool):
     assert len(pool.jobs) == 1
 
 
+def watched(agents, council_id) -> dict[tuple[str, str], dict[str, list[str]]]:
+    """Что видно в ходе «Вопросов», когда модель зовут: по шагу и модели — состояния моделей
+    в каждой части хода."""
+    seen: dict[tuple[str, str], dict[str, list[str]]] = {}
+    answer = agents.ask
+
+    def ask(model, prompt, key, workspace=None, stop=None):
+        progress = steps_of(streams_of(council_id)["A"])["questions"]["progress"]
+        seen[(key.split("-")[1], model)] = {
+            part["phase"]: [run["state"] for run in part["runs"]] for part in progress}
+        return answer(model, prompt, key, workspace, stop)
+
+    agents.ask = ask
+    return seen
+
+
+def test_a_retried_judge_does_not_show_the_saved_models_working_again(store, pool, agents):
+    council_id = streaming(store)
+    put(store, council_id, questions=QuestionDiscovery(
+        state="failed", run="q1", error="судья fable: пустой ответ", steps=[
+            Step(name=StepName.question_discovery, state="done",
+                 runs=[ModelRun(model="sol", state="done"), ModelRun(model="fable", state="done")]),
+            Step(name=StepName.question_judge, state="failed",
+                 runs=[ModelRun(model="fable", state="failed", error="пустой ответ")])]))
+    assert retries(council_id, "A").status_code == 200
+    seen = watched(agents, council_id)
+    pool.run()
+    # Ответы sol и fable ход берёт из лотка — и пока берёт, они готовы: работает только судья.
+    assert seen[("question_discovery", "sol")] == seen[("question_discovery", "fable")] == {
+        "question_discovery": ["done", "done"], "question_judge": ["running"]}
+    assert steps_of(streams_of(council_id)["A"])["questions"]["state"] == "waiting"
+
+
+def test_a_retry_shows_a_saved_answer_done_while_taking_it(store, pool, agents):
+    council_id = streaming(store)
+    agents.failing = {("question_discovery", "sol"), ("question_judge", "fable")}
+    asking(store, pool, agents, council_id)
+    pool.run()
+    agents.failing = set()
+    assert retries(council_id, "A").status_code == 200
+    seen = watched(agents, council_id)
+    pool.run()
+    # fable уже ответила — её ответ берут из лотка, и она готова; sol работает заново.
+    assert seen[("question_discovery", "fable")]["question_discovery"][1] == "done"
+    assert seen[("question_discovery", "sol")]["question_discovery"][0] == "running"
+
+
+def test_a_retry_while_the_server_stops_leaves_no_model_working(store, pool, agents):
+    council_id = streaming(store)
+    agents.failing = {("question_discovery", "sol"), ("question_judge", "fable")}
+    asking(store, pool, agents, council_id)
+    pool.run()
+
+    def closed_pool(job):
+        raise RuntimeError("cannot schedule new futures after shutdown")
+
+    app.dependency_overrides[get_launcher] = lambda: closed_pool
+    assert error_of(retries(council_id, "A")) == (500, "internal")
+    questions = steps_of(streams_of(council_id)["A"])["questions"]
+    # Повтор не начался: sol, которую он записал работающей, — тоже не начала.
+    assert (questions["state"], questions["text"]) == (
+        "failed", "sol не справилась: не запущен: cannot schedule new futures after shutdown.")
+    work, judge = questions["progress"]
+    assert work["runs"] == [{"model": "sol", "state": "failed", "startedAt": None},
+                            {"model": "fable", "state": "done", "startedAt": None}]
+    assert judge["runs"] == [{"model": "fable", "state": "waiting", "startedAt": None}]
+    assert summary_of(council_id)["streams"][0] == {"id": "A", "step": "questions"}
+
+
 def test_a_step_stopped_without_its_models_tells_why(store):
     council_id = streaming(store)
     put(store, council_id, questions=QuestionDiscovery(

@@ -290,11 +290,13 @@ def running(state: Slicing | Structure | IdeaDiscovery | RepositoryScan | Design
 
 def halted[S: (Slicing, Structure, IdeaDiscovery, RepositoryScan, DesignScan,
                DecisionsSearch, QuestionDiscovery, ProposalDiscovery, DecisionAnalysis,
-               OutcomeDiscovery, TaskPlan, NotesDraft, TasksDraft)](state: S) -> S:
-    """Ход, прерванный остановкой: упал, и шаги с моделями, что работали, — тоже."""
+               OutcomeDiscovery, TaskPlan, NotesDraft, TasksDraft)](
+        state: S, error: str = INTERRUPTED) -> S:
+    """Ход, прерванный остановкой: упал, и шаги с моделями, что работали, — тоже. error —
+    почему: по умолчанию сервер остановился, пока шёл ход."""
     steps = [step.model_copy(update={
         "state": "failed" if step.state == "running" else step.state,
-        "runs": [run.model_copy(update={"state": "failed", "error": INTERRUPTED})
+        "runs": [run.model_copy(update={"state": "failed", "error": error})
                  if run.state == "running" else run for run in step.runs],
     }) for step in state.steps]
-    return state.model_copy(update={"state": "failed", "error": INTERRUPTED, "steps": steps})
+    return state.model_copy(update={"state": "failed", "error": error, "steps": steps})

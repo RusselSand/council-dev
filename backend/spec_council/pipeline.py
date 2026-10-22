@@ -443,6 +443,9 @@ class CouncilRun[S: (Slicing, Structure, IdeaDiscovery, RepositoryScan, DesignSc
         self._lock = Lock()
         self._keys: dict[StepName, list[str]] = {}  # принятые ответы по шагам
         self._halt = Event()
+        # Кто на каком шаге уже ответил, когда ход — повтор (chain.resumed): в ходе эти модели
+        # сразу готовы, а их ответы ход берёт из лотка, не показывая их работающими заново.
+        self.replayed: set[tuple[StepName, str]] = set()
 
     def stop(self) -> None:
         """Ход остановил человек: моделей больше не зовут, идущий вызов CLI обрывается. Его
@@ -530,8 +533,11 @@ class CouncilRun[S: (Slicing, Structure, IdeaDiscovery, RepositoryScan, DesignSc
     def _ask_all[T](self, step: StepName, prompt: str, parse: Callable[[dict], T]) -> dict[str, T]:
         """Все участники параллельно. Упавший выбывает из шага, остальные идут дальше. Моделей
         в совете нет (на «Вводе» их можно снять все) — шаг делать некому: он останавливается,
-        как если бы не справились все, и судья за участников не работает."""
-        self._set_step(step, "running")
+        как если бы не справились все, и судья за участников не работает. Повтор, где все
+        участники шага уже ответили, берёт их ответы, и шаг остаётся готовым."""
+        if not self.participants or not all((step, model) in self.replayed
+                                            for model in self.participants):
+            self._set_step(step, "running")
         if not self.participants:
             self._set_step(step, "failed")
             raise StageFailed(f"в совете нет моделей — шаг {step} делать некому")
@@ -546,7 +552,8 @@ class CouncilRun[S: (Slicing, Structure, IdeaDiscovery, RepositoryScan, DesignSc
         return answers
 
     def _ask_judge[T](self, step: StepName, prompt: str, parse: Callable[[dict], T]) -> T:
-        self._set_step(step, "running")
+        if (step, self.judge) not in self.replayed:
+            self._set_step(step, "running")
         answer = self._ask(step, self.judge, prompt, parse)
         if answer is None:
             self._set_step(step, "failed")
@@ -563,7 +570,8 @@ class CouncilRun[S: (Slicing, Structure, IdeaDiscovery, RepositoryScan, DesignSc
         if self._halt.is_set():
             self._set_run(step, model, "failed", "ход остановлен")
             return None
-        self._set_run(step, model, "running")
+        if not self._replaying(step, model):
+            self._set_run(step, model, "running")
         try:
             reply = self.runner.ask(model, prompt, key, workspace=self.workspace,
                                     stop=self._halt.is_set)
@@ -592,6 +600,16 @@ class CouncilRun[S: (Slicing, Structure, IdeaDiscovery, RepositoryScan, DesignSc
             self._keys.setdefault(step, []).append(key)
         self._set_run(step, model, "done")
         return answer
+
+    def _replaying(self, step: StepName, model: str) -> bool:
+        """Повтор зовёт модель за ответом, который она уже дала (replayed): его берут из лотка, а
+        модель остаётся готовой — даже если ждёт, пока её CLI занята другим ходом. Такой вызов
+        один: следующие на том же шаге (вопрос за вопросом) — уже новая работа."""
+        with self._lock:
+            if (step, model) not in self.replayed:
+                return False
+            self.replayed.discard((step, model))
+            return True
 
     # --- состояние
 

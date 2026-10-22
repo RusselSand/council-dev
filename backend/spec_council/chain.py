@@ -151,7 +151,8 @@ def retried(council: Council, stream: Stream, runner: Runner, store: Store,
 def launch_of(council: Council, stream: Stream, step: Step, runner: Runner, store: Store,
               notes: str | None, *, again: bool) -> Launch:
     """Ход шага: запуск — следующий за прежним ходом шага, если тот был; повтор (again) берёт
-    ответы прежнего хода."""
+    ответы прежнего хода: модели, что уже ответили, так и остаются готовыми, пока ход берёт их
+    ответы из лотка (CouncilRun.replayed)."""
     field = STEP_RUNS[step]
     before: Work | None = getattr(stream, field)
     report = reporter(store, council.id, stream_slot(stream.group, field))
@@ -159,6 +160,8 @@ def launch_of(council: Council, stream: Stream, step: Step, runner: Runner, stor
     state = pipeline.state
     state.launch = before.launch + 1 if before is not None else 1
     state.reused = resumed(state, before if again else None, datetime.now(UTC))
+    pipeline.replayed = {(part.name, run.model) for part in state.steps for run in part.runs
+                         if run.state == "done"}
     return Launch(stream.model_copy(update={field: state.model_copy(deep=True)}), pipeline,
                   report)
 
