@@ -774,6 +774,14 @@ class DecisionFix(BaseModel):
     why: str = ""
 
 
+class DecisionClash(BaseModel):
+    """Действующее решение проекта, с которым расходится выбор: номер в каталоге (adr_id) и чем
+    (text)."""
+
+    adr_id: str
+    text: str = ""
+
+
 class QuestionAnalysis(BaseModel):
     """Что совет сказал по вопросу перед решением: проверил выбор человека или, если вопрос
     unresolved, сравнил его варианты. Новых вариантов здесь нет, выбор человека не меняется."""
@@ -790,6 +798,8 @@ class QuestionAnalysis(BaseModel):
     constraint_conflicts: list[int] = []
     risk_ids: list[int] = []
     depends_on: list[str] = []
+    # С какими действующими решениями проекта, отобранными для потока, вариант расходится.
+    project_conflicts: list[DecisionClash] = []
     # Выбор по вопросам из depends_on и из правок (fixes), каким он был при проверке («Q2: P5»):
     # поменялся — проблема могла уйти или появиться, и проверку не переносят, а повторяют.
     context: list[str] = []
@@ -826,6 +836,19 @@ class Decision(BaseModel):
     rationale: str | None = None
     # ai — обоснование совета, человек подтвердил его как есть; human — своё или поправленное.
     rationale_by: Literal["ai", "human"] | None = None
+
+
+class Ruling(BaseModel):
+    """Решение по вопросу на шаге «Решения», как оно на экране: какой вариант берёт (option —
+    Fn или Pn; None — вопрос передан как unresolved, и варианта нет), «почему» как его прислали,
+    кто его написал (ai — совет, human — человек его поправил) и где решение: draft — черновик,
+    fixed — зафиксировано, open — вопрос оставлен открытым."""
+
+    question_id: str
+    option: str | None = None
+    rationale: str = ""
+    rationale_by: Literal["ai", "human"] = "ai"
+    status: Literal["draft", "fixed", "open"] = "draft"
 
 
 class QuestionWork(BaseModel):
@@ -1126,6 +1149,12 @@ class Stream(BaseModel):
     # на готовом шаге его не меняет (picks).
     choices: list[Choice] | None = None
     analysis: DecisionAnalysis | None = None
+    # Шаг «Решения» (stream_decisions.py): решение по каждому вопросу, как оно на экране, — и до
+    # «Зафиксировать решения», и после. None — их ещё не записывали; поток прежней версии помнит
+    # их только зафиксированными (decisions).
+    rulings: list[Ruling] | None = None
+    # Решения, зафиксированные «Зафиксировать решения»: из них модели собирают итоги. Правка
+    # решений на готовом шаге их не меняет (rulings).
     decisions: list[Decision] | None = None
     # Работа по вопросам до последней правки отбора или выбора: по тем же вопросам и тому же
     # выбору она переносится, а не делается заново.
@@ -1280,25 +1309,6 @@ class RenameGroup(GroupsEdit):
 # Сколько рабочих копий можно сканировать разом: у каждой свои вызовы git. Столько же их и у
 # проекта.
 REPOSITORIES_MAX = 10
-
-
-class DecisionDraft(BaseModel):
-    """Решение по вопросу, как его фиксирует человек: вариант и обоснование, или None —
-    вопрос остаётся открытым, и обоснование тогда не нужно."""
-
-    model_config = ConfigDict(extra="forbid")
-
-    question_id: str
-    proposal: str | None = None
-    rationale: str | None = None
-
-
-class ApproveDecisions(GroupsEdit):
-    """Человек фиксирует решения: по каждому отобранному вопросу — вариант с обоснованием или
-    открытый вопрос. analysis_run — к какой проверке выбора (DecisionAnalysis.run)."""
-
-    analysis_run: str
-    decisions: list[DecisionDraft]
 
 
 class ApproveOutcomes(GroupsEdit):

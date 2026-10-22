@@ -38,6 +38,12 @@ Check the chosen PROPOSAL:
 - whether it depends on another unresolved OPEN QUESTION;
 - which existing risks substantially affect the decision.
 
+Name every conflict by ID in `validation`: constraints in `constraint_conflicts`; accepted
+decisions in `adr_conflicts` — the `adr_id` of an `active` decision from ACCEPTED DECISIONS and
+`text`, a few words on what in it the choice goes against, for example
+`{"adr_id": "ADR-0003", "text": "background tasks are deferred"}`. A decision that is not
+`active` is not in force: the choice cannot conflict with it.
+
 If the choice is correct, prepare a draft ADR.
 
 Use the user's rationale if it is given.
@@ -92,6 +98,7 @@ If the user has already made a choice:
   "validation": {
     "valid": true,
     "constraint_conflicts": [],
+    "adr_conflicts": [],
     "risk_ids": [],
     "depends_on_question_ids": ["Q2"]
   },

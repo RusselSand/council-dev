@@ -72,6 +72,7 @@ from tests.test_streams import (
     grouped,
     grp,
     passes,
+    reopened,
     repos,  # noqa: F401 — фикстура
     scans,
     section,
@@ -245,6 +246,7 @@ def test_a_changed_stream_leaves_the_plan_to_the_human_who_resets_it(agents, fol
     council_id = ready()
     plans(council_id)
     first = council(council_id).tasks
+    reopened(council_id)                     # поток прежней версии: решения снова ждут вас
     decide(council_id, "C", [ALL_DECIDED[0], ("Q2", "P2", "Иначе.")])
     stream = streams_of(council_id)["C"]
     assert not stream.outcomes.approved

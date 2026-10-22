@@ -132,7 +132,8 @@ def approved(stream: Stream, sets: list[OptionSet]) -> Stream:
     """Поток, где выбор утверждён: по каждому вопросу шага (sets) — его выбор; без выбора —
     первый вариант, вариантов нет — unresolved («Решения» берут выбор, а нет его — первый
     вариант). Этот выбор и на экране, и утверждён; свой вариант в утверждённом — с текстом, как
-    его видят модели. Вопросы шага — отбор: по ним модели проверяют решения."""
+    его видят модели. Вопросы шага — отбор: по ним модели проверяют решения, и решения на экране
+    — к этой проверке."""
     picks = picks_of(stream)
     choices = []
     for item in sets:
@@ -146,7 +147,8 @@ def approved(stream: Stream, sets: list[OptionSet]) -> Stream:
     scope = [item.question for item in sets]
     return stream.model_copy(update={
         "own_options": own_of(stream), "picks": list(picks.values()), "choices": choices,
-        "scope": scope, "asked": max([stream.asked, *(number(question.id) for question in scope)])})
+        "rulings": None, "scope": scope,
+        "asked": max([stream.asked, *(number(question.id) for question in scope)])})
 
 
 # Как это хранится.

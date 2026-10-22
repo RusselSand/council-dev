@@ -39,6 +39,7 @@ from ..standing import (
     working,
 )
 from ..store import council_lock
+from ..stream_decisions import counted as decided
 from .councils import folders_of, missing
 from .errors import ApiError, ContractRoute, not_found
 from .runs import StepRun, judge_of, step_runs_of
@@ -250,12 +251,10 @@ def options_note(stream: Stored, done: bool, notes: str | None) -> str:
 
 
 def decisions_note(stream: Stored, done: bool, notes: str | None) -> str:
-    """Сколько решений зафиксировано из всех: «решено 3 из 4»; открытый вопрос — не решён."""
-    if not done:
-        return f"решено 0 из {len(stream.scope or [])}"
-    decisions = stream.decisions or []
-    fixed = sum(1 for decision in decisions if decision.proposal is not None)
-    return f"решено {fixed} из {len(decisions)}"
+    """Сколько решений шага зафиксировано из всех: «решено 3 из 4» — и у готового шага: решения
+    на нём правят дальше."""
+    fixed, total = decided(stream)
+    return f"решено {fixed} из {total}"
 
 
 def outcomes_note(stream: Stored, done: bool, notes: str | None) -> str:

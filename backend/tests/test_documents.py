@@ -17,7 +17,7 @@ from spec_council.deps import (
     get_projects,
     get_repositories,
 )
-from spec_council.models import ExportedNote, NotesDraft, ProjectDraft
+from spec_council.models import ExportedNote, ProjectDraft
 from spec_council.notes import Catalog, Note, path_of, rendered
 from spec_council.projects import Projects
 from tests.test_project import put
@@ -26,7 +26,6 @@ from tests.test_streams import (
     approves,
     client,
     confirm,
-    decide,
     decided_c,
     free_c,
     get_store,
@@ -337,16 +336,6 @@ def test_a_failed_save_of_the_export_puts_the_notes_back(agents, notes_dir, monk
     with pytest.raises(OSError):
         writes(council_id)
     assert [path for path in notes_dir.rglob("*") if path.is_file()] == []
-
-
-def test_decisions_wait_for_the_notes_translation(agents, notes_dir):
-    council_id = approved_c()
-    get_store().update_council(council_id, {"streams": [
-        s.model_copy(update={"notes_draft": NotesDraft(state="running", run="n1",
-                                                       outcomes=s.outcomes.run)})
-        if s.group == "C" else s for s in get_store().get_council(council_id).streams]})
-    res = decide(council_id, "C", [("Q1", None, None), ("Q2", None, None)])
-    assert res.status_code == 423
 
 
 def test_a_draft_that_cannot_be_built_says_why(agents, notes_dir):
