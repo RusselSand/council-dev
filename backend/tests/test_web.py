@@ -117,7 +117,7 @@ def test_a_crash_is_internal_and_tells_no_details(things):
 
 
 def test_old_handles_keep_their_errors_until_they_move():
-    assert client.post("/api/councils/missing/streams/A/notes/draft",
+    assert client.post("/api/councils/missing/tasks/reset",
                        json={"run": "g1", "revision": 0}).json() == {"detail": "Совет не найден"}
 
 

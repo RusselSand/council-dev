@@ -266,9 +266,12 @@ def outcomes_note(stream: Stored, done: bool, notes: str | None) -> str:
 
 
 def notes_note(stream: Stored, done: bool, notes: str | None) -> str:
-    """Готова — сколько заметок выгружено; ждёт вас — черновик."""
+    """Готова — сколько заметок выгружено, а без папки документации — что выгружать было некуда;
+    ждёт вас — черновик."""
     if not done:
         return "черновик ждёт вас"
+    if notes is None:
+        return "у проекта нет папки документации"
     export = stream.notes
     written = sum(1 for note in export.notes if not note.kept and note.type != "issue") \
         if export else 0

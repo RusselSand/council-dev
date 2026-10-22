@@ -11,7 +11,14 @@ from fastapi import HTTPException
 
 from spec_council.api import tasks as tasks_api
 from spec_council.app import app
-from spec_council.deps import get_agents, get_issues_of, get_launcher, get_notes_of
+from spec_council.deps import (
+    get_agents,
+    get_issues_of,
+    get_launcher,
+    get_notes_of,
+    get_projects,
+    get_repositories,
+)
 from spec_council.export import Shelf, words_for
 from spec_council.groups import marked
 from spec_council.issue_files import rendered as issue_rendered
@@ -25,6 +32,7 @@ from spec_council.models import (
     Outcome,
     OutcomeDiscovery,
     ProjectDecision,
+    ProjectDraft,
     RepositoryFinding,
     RepositoryMap,
     RepositoryScan,
@@ -92,13 +100,17 @@ def models():
 
 @pytest.fixture
 def folders(tmp_path):
-    """Папка документации и папка задач проекта совета."""
+    """Папка документации и папка задач проекта совета. Старые ручки «Задач» берут их по совету
+    (get_notes_of), «Записать в каталог» — по проекту совета, от каталога репозиториев
+    (written_notes)."""
     notes, issues = tmp_path / "notes", tmp_path / "issues"
     app.dependency_overrides[get_notes_of] = lambda: lambda council: notes
     app.dependency_overrides[get_issues_of] = lambda: lambda council: issues
+    app.dependency_overrides[get_repositories] = lambda: tmp_path
     yield notes, issues
     app.dependency_overrides.pop(get_notes_of)
     app.dependency_overrides.pop(get_issues_of)
+    app.dependency_overrides.pop(get_repositories, None)
 
 
 def single():
@@ -123,13 +135,18 @@ def exported(council_id, group="C"):
 
 
 def written_notes(council_id, group="C"):
-    """Поток, где шаг «Итоги» утверждён, выгружен в заметки."""
-    body = {"run": "g1", "revision": 0}
-    assert client.post(f"/api/councils/{council_id}/streams/{group}/notes/draft",
-                       json=body).status_code == 202
-    run = streams_of(council_id)[group].notes_draft.run
-    assert client.post(f"/api/councils/{council_id}/streams/{group}/notes",
-                       json={**body, "draft": run}).status_code == 200
+    """Поток, где шаг «Итоги» утверждён, записан в каталог — «Записать в каталог» новой ручкой
+    (web/notes.py), в папку документации проекта совета: та же, что у старых ручек «Задач»
+    (folders, get_notes_of), от каталога репозиториев."""
+    folder = app.dependency_overrides[get_notes_of]()(council(council_id))
+    base = app.dependency_overrides[get_repositories]()
+    projects = app.dependency_overrides.get(get_projects, get_projects)()
+    project = projects.get_project(council(council_id).project) or projects.create_project(
+        ProjectDraft(name="Проект"))
+    projects.update_project(project.id, {"notes": folder.relative_to(base).as_posix()})
+    get_store().update_council(council_id, {"project": project.id})
+    assert client.post(f"/api/councils/{council_id}/streams/{group}/notes/approve",
+                       json={}).status_code == 200
 
 
 def all_decided(council_id):
@@ -479,7 +496,12 @@ def test_a_plan_whose_stream_was_exported_again_is_not_exported(agents, folders)
     plans(council_id)
     drafts(council_id)
     run = council(council_id).tasks_draft.run
-    exported(council_id)                                  # поток выгрузили заново после плана
+    # Поток выгрузили заново после плана: прежняя выгрузка устарела (у прежней версии — когда
+    # поменяли, какие варианты правят свои), и «Документация» снова ждала вас.
+    get_store().update_council(council_id, {"streams": [
+        s.model_copy(update={"notes": s.notes.model_copy(update={"outcomes": ""})})
+        for s in council(council_id).streams]})
+    exported(council_id)
     assert drafts(council_id).status_code == 409
     res = writes(council_id, draft=run)
     assert res.status_code == 409 and "План устарел" in res.json()["detail"]

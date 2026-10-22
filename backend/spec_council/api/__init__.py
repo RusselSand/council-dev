@@ -3,10 +3,9 @@
 
 from fastapi import APIRouter
 
-from . import documents, tasks
+from . import tasks
 
 API_PREFIX = "/api"
 
 router = APIRouter(prefix=API_PREFIX)
-router.include_router(documents.router)
 router.include_router(tasks.router)

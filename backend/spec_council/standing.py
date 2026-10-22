@@ -260,12 +260,10 @@ def outcomes_of(stream: Stream, notes: str | None) -> State:
 
 
 def notes_of(stream: Stream, notes: str | None) -> State:
-    """«Документация»: черновик новее выгрузки — его ход (перевод идёт, упал или ждёт записи);
-    иначе выгружено — готово."""
-    draft, export = stream.notes_draft, stream.notes
-    if draft is not None and (export is None or draft.run != export.run):
-        return run_state(draft)
-    return "done" if exported(stream, notes) else run_state(draft)
+    """«Документация»: модели на ней не работают — поток выгружен или его прошли без папки
+    документации — готово; иначе ждёт вас (stream_notes.py). Черновик, который собирала прежняя
+    версия, — и его перевод, — шаг не держит: черновик сервер собирает сам."""
+    return "done" if exported(stream, notes) or nowhere(stream, notes) else "waiting"
 
 
 def exported(stream: Stream, notes: str | None) -> bool:
@@ -274,6 +272,14 @@ def exported(stream: Stream, notes: str | None) -> bool:
     export, outcomes = stream.notes, stream.outcomes
     return (export is not None and notes is not None and export.root == notes
             and outcomes is not None and outcomes.approved and export.outcomes == outcomes.run)
+
+
+def nowhere(stream: Stream, notes: str | None) -> bool:
+    """«Документацию» прошли без папки документации — к нынешним утверждённым итогам, и папки всё
+    ещё нет: появилась — поток выгружают в неё."""
+    outcomes = stream.outcomes
+    return (notes is None and outcomes is not None and outcomes.approved
+            and bool(stream.notes_nowhere) and stream.notes_nowhere == outcomes.run)
 
 
 STEP_STATES: dict[Step, Callable[[Stream, str | None], State]] = {
