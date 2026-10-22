@@ -44,6 +44,8 @@ from spec_council.repository import STALE_MAP
 from spec_council.tasks import (
     Names,
     adr_entry,
+    basis_of,
+    ideas_text,
     names_of,
     outcome_entry,
     outcome_names,
@@ -267,6 +269,52 @@ def test_research_passed_again_after_the_plan_makes_it_stale(agents, folders):
     res = drafts(council_id)
     assert res.status_code == 409 and "План устарел" in res.json()["detail"]
     assert council(council_id).tasks is not None                       # сам план не сброшен
+
+
+def test_a_decision_on_a_finding_after_the_plan_makes_it_stale(agents, folders, repos):  # noqa: F811
+    """План читал карту кода с решениями человека по её находкам: решение поменяли — план к
+    прежнему, и его не выгрузить, пока не сбросят."""
+    council_id = single()
+    scans(council_id, "C")
+    research = council(council_id).research
+    inferred = RepositoryFinding(id="R2", statement="Очередь можно хранить в SQLite.",
+                                 status="inferred")
+    result = research.scan.result.model_copy(
+        update={"findings": [*research.scan.result.findings, inferred]})
+    get_store().update_council(council_id, {"research": research.model_copy(
+        update={"scan": research.scan.model_copy(update={"result": result})})})
+    takes(council_id, "C")
+    passes(council_id, "C")
+    all_decided(council_id)
+    exported(council_id)
+    assert plans(council_id).status_code == 202
+    assert council(council_id).tasks.state == "done"
+    res = client.patch(f"/api/councils/{council_id}/research/findings/R2",
+                       json={"decision": "accept"})
+    assert res.status_code == 200
+    res = drafts(council_id)
+    assert res.status_code == 409 and "План устарел" in res.json()["detail"]
+    # Без решений основание — как у планов прежней версии: они не устаревают от этого.
+    assert council(council_id).tasks.basis["research"] == \
+        f"scan:{research.scan.run}|skipped:"
+    assert basis_of(council(council_id))["research"] == \
+        f"scan:{research.scan.run}:R2=accept|skipped:"
+
+
+def test_the_plan_names_a_stream_by_its_title_not_by_its_edited_group(agents, folders):
+    """Название потока — с которым группа стала потоком: правки групп его не меняют (решение
+    q-002). У потока прежней версии названия нет — оно у его группы."""
+    council_id = ready()
+    before = council(council_id)
+    structure = before.structure.model_copy(update={"groups": [
+        group.model_copy(update={"title": "Переименована"}) for group in before.structure.groups]})
+    edited = before.model_copy(update={"structure": structure})
+    assert "C. Переименована:" in ideas_text(edited)
+    titled = edited.model_copy(update={"streams": [
+        stream.model_copy(update={"title": "Группа C"}) for stream in edited.streams]})
+    assert "C. Группа C:" in ideas_text(titled)
+    gone = titled.model_copy(update={"structure": structure.model_copy(update={"groups": []})})
+    assert "C. Группа C:" in ideas_text(gone)
 
 
 def test_a_running_plan_is_not_reset_or_started_twice(agents, folders):
