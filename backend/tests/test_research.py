@@ -795,6 +795,60 @@ def test_approved_research_makes_every_group_a_stream(store, projects, pool):
     assert again.status_code == 200 and again.json()["council"] == council
 
 
+def test_a_map_that_read_the_council_folders_is_not_approved(store, projects, pool, repos):
+    """Решение q-004 бекенда: папку документации проекта задали в репозитории после
+    исследования кода — карта читала заметки совета, а потоки взяли бы их как факты о коде.
+    «К потокам →» не проходит; код исследуют заново — и проходит."""
+    (repos / "docs" / "council").mkdir(parents=True)
+    (repos / "docs" / "council" / "ADR-0047.md").write_text("Пока не делаем.\n", encoding="utf-8")
+    council_id = confirmed(store, projects)
+    researched_code(council_id, pool)
+    acts(council_id, "design", "skip")
+    decides(council_id, "R2", "accept")
+    decides(council_id, "C1", "text")
+    app.dependency_overrides[get_notes_of] = lambda: lambda council: repos / "docs" / "council"
+    try:
+        res = approves(council_id)
+        assert error_of(res) == (409, "stale_map")
+        assert res.json()["error"]["message"] == ("Карта кода читала папки совета — исследуйте "
+                                                  "код заново")
+        assert store.get_council(council_id).streams is None
+        assert listed(council_id)["stages"]["research"] == "waiting"
+
+        acts(council_id, "code", "reset")
+        researched_code(council_id, pool)
+        decides(council_id, "R2", "accept")
+        decides(council_id, "C1", "text")
+        assert approves(council_id).status_code == 200
+    finally:
+        app.dependency_overrides.pop(get_notes_of)
+    assert store.get_council(council_id).streams[0].scan.repositories[0].skipped == [
+        "docs/council/"]
+
+
+def test_folders_changed_while_the_map_is_checked_are_checked_again(store, projects, pool,
+                                                                     repos):
+    """Сверка карты зовёт git не под замком советов: папки проекта поменяли, пока сверяли, —
+    research_not_ready, исследование не утверждено. Без исследования кода сверять нечего."""
+    (repos / "docs" / "council").mkdir(parents=True)
+    council_id = confirmed(store, projects)
+    researched_code(council_id, pool)
+    acts(council_id, "design", "skip")
+    decides(council_id, "R2", "accept")
+    decides(council_id, "C1", "text")
+    first = iter([None])
+    app.dependency_overrides[get_notes_of] = lambda: lambda council: next(
+        first, repos / "docs" / "council")
+    try:
+        assert error_of(approves(council_id)) == (409, "research_not_ready")
+        assert store.get_council(council_id).streams is None
+        acts(council_id, "code", "reset")
+        acts(council_id, "code", "skip")
+        assert approves(council_id).status_code == 200
+    finally:
+        app.dependency_overrides.pop(get_notes_of)
+
+
 NO_IDEA = {"idea": None, "idea_by": None, "idea_fragment_ids": [], "missing_idea": True}
 
 

@@ -522,6 +522,7 @@ export const en = translation({
   'error.bad_decision': 'This decision doesn’t fit this finding.',
   'error.research_not_ready':
     'The research can’t be approved yet: wait for it to finish, decide on the findings and confirm the groups. The research has been refreshed.',
+  'error.stale_map': 'The code map read the council’s folders — research the code again.',
   'error.unknown_decision': 'One of the checked decisions is no longer in the catalog. The list has been refreshed — check your selection.',
   'error.questions_not_ready':
     'The questions can’t be changed right now: the step hasn’t started or the models are collecting questions again. The stream has been refreshed.',

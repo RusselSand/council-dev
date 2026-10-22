@@ -538,6 +538,7 @@ id); `QuestionHead` — открытый вопрос крупно, метка �
 | репозиторий     | repository        |
 | рабочая копия git | git working copy |
 | папка документации | documentation folder |
+| папки совета    | council’s folders |
 | Название        | Name              |
 | Создать проект  | Create project    |
 | Сохранить       | Save              |
