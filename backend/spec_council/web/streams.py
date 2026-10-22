@@ -40,6 +40,7 @@ from ..standing import (
 )
 from ..store import council_lock
 from ..stream_decisions import counted as decided
+from ..stream_outcomes import counted as approved_outcomes
 from .councils import folders_of, missing
 from .errors import ApiError, ContractRoute, not_found
 from .runs import StepRun, judge_of, step_runs_of
@@ -258,9 +259,10 @@ def decisions_note(stream: Stored, done: bool, notes: str | None) -> str:
 
 
 def outcomes_note(stream: Stored, done: bool, notes: str | None) -> str:
-    """Готовы — «итоги утверждены · 6»; ждут вас — «утверждено 0 из 3»."""
-    count = len(stream.outcomes.outcomes) if stream.outcomes else 0
-    return f"итоги утверждены · {count}" if done else f"утверждено 0 из {count}"
+    """Сколько итогов шага утверждено: готовы — «итоги утверждены · 2», ждут вас — «утверждено
+    2 из 3»."""
+    approved, total = approved_outcomes(stream)
+    return f"итоги утверждены · {approved}" if done else f"утверждено {approved} из {total}"
 
 
 def notes_note(stream: Stored, done: bool, notes: str | None) -> str:

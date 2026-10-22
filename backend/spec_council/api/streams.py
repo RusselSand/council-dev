@@ -1,38 +1,23 @@
-"""Старые ручки шагов потока — уходят по шагам в новый API (web/streams.py и ручки шагов). Потоки
-заводит «К потокам →» (web/research.py): с идеей группы и копией исследования совета — с картой
-кода, которую там сверили с папками совета (решение q-004 бекенда). Прошлые решения проекта
-отбирают и отмечают уже в новом API (web/project_decisions.py), и с отмеченными совет сразу
-ищет открытые вопросы (chain.py). Вопросы человек убирает, добавляет свои и утверждает тоже в
-новом API (web/questions.py) — и совет сразу ищет к ним новые варианты ответа. Человек выбирает
-по варианту на вопрос или оставляет его unresolved и утверждает выбор тоже в новом API
-(web/options.py) — и совет сразу проверяет выбор. Решения человек правит и фиксирует тоже в новом
-API (web/decisions.py) — и совет сразу собирает из них итоги; повтор сборки и утверждение итогов —
-ещё здесь. Готовые итоги на тех же решениях закрепляются (work.py), а не собираются снова."""
+"""Общее для старых ручек «Документации» (documents.py) и «Задач» (tasks.py) — уходит вместе с
+ними. Ручек шагов потока здесь больше нет: все шаги до «Итогов» включительно — в новом API
+(web/streams.py и ручки шагов), и действие человека на шаге само запускает модели на следующем
+(chain.py)."""
 
 from collections.abc import Callable
 from pathlib import Path
 from uuid import uuid4
 
-from fastapi import APIRouter, HTTPException
+from fastapi import HTTPException
 
 from ..agents import AgentRunner
-from ..chain import find_stream, replaced, stream_slot
+from ..background import launched, running
+from ..chain import find_stream, replaced
 from ..config import AppConfig
-from ..deps import (
-    AgentsDep,
-    ConfigDep,
-    Launcher,
-    LauncherDep,
-    NotesOfDep,
-    Store,
-    StoreDep,
-)
-from ..export import design_map, repository_map
+from ..deps import Launcher, Store
 from ..groups import stream_group
 from ..models import (
     SKIPPED,
     STREAM_RUNS,
-    ApproveOutcomes,
     Council,
     DecisionAnalysis,
     DecisionsSearch,
@@ -42,52 +27,24 @@ from ..models import (
     IdeaDiscovery,
     LabeledFragment,
     NotesDraft,
-    Outcome,
     OutcomeDiscovery,
     ProjectDecision,
     ProposalDiscovery,
     QuestionDiscovery,
     RepositoryScan,
     RepositoryStep,
-    SettleTouch,
     Stream,
     TaskPlan,
     TasksDraft,
 )
 from ..notes import Catalog
-from ..pipeline import (
-    CouncilRun,
-    OutcomeRun,
-    Runner,
-    start_decisions,
-    start_outcomes,
-)
+from ..pipeline import CouncilRun, start_decisions
 from ..project import catalog_at, own_ids, project_catalog, records
-from ..work import (
-    kept_outcomes,
-    remembered,
-)
-from .councils import (
-    CANNOT_START,
-    MISSING,
-    NOT_FOUND,
-    PROBE_ATTEMPTS,
-    Slot,
-    council_lock,
-    launched,
-    lineup,
-    offline,
-    reporter,
-    running,
-    start_run,
-)
-from .groups import NOT_THESE_GROUPS, current, outdated
-
-router = APIRouter(prefix="/councils", tags=["streams"])
+from ..store import council_lock
+from .councils import MISSING, PROBE_ATTEMPTS, lineup, offline
 
 NO_STREAM = {409: {"description": "Групп уже других: потока нет, или группы не подтверждены"}}
 CHANGING = {503: {"description": "Состав совета меняется прямо сейчас"}}
-RESLICED = "Типы фрагментов поменялись после раскладки — сначала разложите заново"
 # Всё, что ниже отбора решений проекта: другой отбор это сбрасывает.
 BELOW_DECISIONS = {"questions": None, "own_questions": [], "dropped": [], "dropped_run": "",
                    "scope": None, "proposals": None, "own_options": [], "picks": [],
@@ -152,11 +109,6 @@ def notes_key(notes: Path | None) -> str:
     return str(notes) if notes is not None else ""
 
 
-def refused(message: str | None) -> None:
-    if message is not None:
-        raise HTTPException(409, message)
-
-
 def expired(store: Store, council: Council, stream: Stream, message: str | None) -> None:
     """Под замком: отметка решений проекта устарела (message) — отбор упал, отметка и всё ниже
     сняты (unselected), и 409. Пока ход ниже вопросов идёт — 423: его отчёт вернул бы снятое."""
@@ -167,147 +119,6 @@ def expired(store: Store, council: Council, stream: Stream, message: str | None)
     store.update_council(council.id, {"streams": replaced(
         council, unselected(council, stream, message))})
     raise HTTPException(409, message)
-
-
-def expired_before(store: Store, council_id: str, group: str, slot: Slot,
-                   why: Callable[[Council], str | None]) -> None:
-    """Перед повтором хода, которому нужна отметка решений проекта: сверка под замком, как и
-    запуск (выгрузка другого потока ждёт этот замок). why — проверки входа и что не так с
-    отметкой. Ход уже идёт — пусть отвечает запуск."""
-    with council_lock:
-        council = store.get_council(council_id)
-        if council is not None and not running(slot.get(council)):
-            expired(store, council, stream_in(council, group), why(council))
-
-
-@router.post("/{council_id}/streams/{group}/outcomes/discovery", status_code=202,
-             responses={**NOT_FOUND, **CANNOT_START, **NO_STREAM})
-def start_outcome_discovery(council_id: str, group: str, store: StoreDep, config: ConfigDep,
-                            agents: AgentsDep, launch: LauncherDep,
-                            notes_of: NotesOfDep) -> Council:
-    """Собирает итоги заново: после сбоя или если при фиксации решений не было подключения к
-    моделям. Повтор не платит второй раз за уже данные ответы. Собранные итоги он не трогает:
-    за них заплачено, а заново они соберутся, когда поменяются решения. Решения проекта с тех
-    пор поменялись или проект сменили — 409, как и при фиксации решений."""
-    def checked(council: Council) -> Stream:
-        stream = stream_in(council, group)
-        if stream.decisions is None:
-            raise HTTPException(409, "Сначала зафиксируйте решения")
-        if stream.outcomes is not None and stream.outcomes.state == "done":
-            raise HTTPException(409, "Итоги уже собраны — заново они соберутся по другим решениям")
-        if outdated(council.slicing, council.structure):
-            raise HTTPException(409, RESLICED)
-        return stream
-
-    def ready(council: Council) -> None:
-        refused(changed_choice(notes_of(council), checked(council)))
-
-    def build(council: Council, report: Callable) -> OutcomeRun:
-        stream = stream_in(council, group)
-        return OutcomeRun(council.id, stream.idea.text, stream.scope, stream.decisions,
-                          stream.proposals, fragments_of(council, group_of(council, group)),
-                          council.participants, council.judge, agents, report,
-                          choices=stream.choices or (), repository=repository_map(stream),
-                          design=design_map(stream), accepted=stream.project_decisions or (),
-                          kept=kept_outcomes(stream, stream.scope, stream.decisions))
-
-    expired_before(store, council_id, group, assembling(group),
-                   lambda council: changed_choice(notes_of(council), checked(council)))
-    return start_run(council_id, store, config, agents, launch, assembling(group), ready, None,
-                     build)
-
-
-@router.post("/{council_id}/streams/{group}/outcomes",
-             responses={**NOT_FOUND, **NOT_THESE_GROUPS, **NO_STREAM,
-                        409: {"description": "Групп уже других, итоги собрали заново, их ещё нет "
-                                             "или какой-то итог держит открытый вопрос или "
-                                             "пробел"}})
-def approve_outcomes(council_id: str, group: str, edit: ApproveOutcomes, store: StoreDep,
-                     notes_of: NotesOfDep) -> Council:
-    """Человек утверждает итоги потока — и поток можно выгружать в заметки; задачи по ним режет
-    этап «Задачи», на весь совет. Утвердить можно, только если ни один итог не держит открытый
-    вопрос или пробел: задачи режут по готовым итогам. Утвердить те же итоги ещё раз — ничего
-    не меняется; итоги — те, что были на экране: собрали заново — 409. Решения проекта с тех
-    пор поменялись или проект сменили — 409, поток снова у отбора, как и на шагах выше."""
-    with council_lock:
-        council = current(council_id, store, edit)
-        stream = stream_in(council, group)
-        approvable(stream, edit.outcomes_run)
-        if stream.outcomes.approved:
-            return council
-        if stream.outcomes.touched:
-            raise HTTPException(409, "Новые решения задевают закреплённые итоги — сначала решите "
-                                     "по каждому: оставить как есть или пересобрать")
-        held = [outcome.id for outcome in stream.outcomes.outcomes
-                if outcome.blocked_by or outcome.gaps]
-        if held:
-            raise HTTPException(409, f"Итоги {', '.join(held)} держит открытый вопрос или пробел "
-                                     "— сначала решите их")
-        expired(store, council, stream, changed_choice(notes_of(council), stream))
-        council = store.update_council(council_id, {"streams": replaced(council, stream.model_copy(
-            update={"outcomes": stream.outcomes.model_copy(update={"approved": True})}))})
-    if council is None:
-        raise HTTPException(404, MISSING)
-    return council
-
-
-@router.post("/{council_id}/streams/{group}/outcomes/touched", status_code=200,
-             responses={**NOT_FOUND, **NOT_THESE_GROUPS, **NO_STREAM, **CHANGING,
-                        409: {"description": "Итоги уже собрали заново или пометки нет"},
-                        423: {"description": "Совет ещё работает с итогами"}})
-def settle_touch(council_id: str, group: str, edit: SettleTouch, store: StoreDep,
-                 config: ConfigDep, agents: AgentsDep, launch: LauncherDep,
-                 notes_of: NotesOfDep) -> Council:
-    """Новое решение задевает закреплённый итог — человек решает: оставить итог как есть
-    (пометка снимается) или пересобрать его — итоги собираются заново без этого итога
-    среди закреплённых, задачи нарежут заново к новым итогам."""
-    def plan() -> tuple[Council, bool]:
-        council = current(council_id, store, edit)
-        stream = stream_in(council, group)
-        approvable(stream, edit.outcomes_run)
-        if not any(t.outcome_id == edit.outcome_id for t in stream.outcomes.touched):
-            raise HTTPException(409, f"Итог {edit.outcome_id} уже ничто не задевает")
-        if edit.rebuild and below_running(stream, "outcomes"):
-            raise HTTPException(423, "Совет ещё работает с итогами — дождитесь его")
-        if edit.rebuild:
-            expired(store, council, stream, changed_choice(notes_of(council), stream))
-        return council, edit.rebuild
-
-    def apply(council: Council, missing: list[str]) -> tuple[Council, list[CouncilRun]]:
-        stream = stream_in(council, group)
-        runs: list[CouncilRun] = []
-        if not edit.rebuild:
-            touched = [t for t in stream.outcomes.touched if t.outcome_id != edit.outcome_id]
-            changes: dict = {"outcomes": stream.outcomes.model_copy(update={"touched": touched})}
-        else:
-            kept = [outcome for outcome in kept_outcomes(stream, stream.scope, stream.decisions)
-                    if outcome.id != edit.outcome_id]
-            if missing:
-                outcomes = unconnected(start_outcomes(
-                    council.participants, council.judge, stream.decisions, kept), missing)
-            else:
-                runs = [outcome_run(council, group, stream, agents, store, kept)]
-                outcomes = runs[0].state.model_copy(deep=True)
-            changes = {"outcomes": outcomes, **remembered(stream)}
-        return store.update_council(council_id, {
-            "streams": replaced(council, stream.model_copy(update=changes))}), runs
-
-    return launched_all(store, council_id, launch, *probed(config, agents, plan, apply))
-
-
-def approvable(stream: Stream, outcomes_run: str) -> None:
-    """Итоги, которые утверждают: собранные, к нынешней сборке, и они есть."""
-    run = stream.outcomes
-    if stream.decisions is None or run is None:
-        raise HTTPException(409, "Итогов ещё нет: сначала зафиксируйте решения")
-    if running(run):
-        raise HTTPException(409, "Совет ещё собирает итоги — дождитесь его")
-    if run.run != outcomes_run:
-        raise HTTPException(409, "Итоги уже собрали заново — утверждали прежние")
-    if run.state != "done":
-        raise HTTPException(409, "Итоги не собрались — соберите их заново")
-    if not run.outcomes:
-        raise HTTPException(409, "Итогов нет — утверждать нечего")
 
 
 def probed[T](config: AppConfig, agents: AgentRunner, plan: Callable[[], tuple[Council, bool]],
@@ -348,25 +159,9 @@ def unconnected[S: (IdeaDiscovery, RepositoryScan, DesignScan, DecisionsSearch,
         "state": "failed", "error": f"Нет подключения к моделям: {', '.join(missing)}"})
 
 
-def assembling(group: str) -> Slot:
-    """Сборка итогов потока как место хода."""
-    return stream_slot(group, "outcomes")
-
-
 def below_running(stream: Stream, field: str) -> bool:
     """Совет работает над этим звеном цепочки потока или над тем, что ниже него."""
     return any(running(getattr(stream, name)) for name in STREAM_RUNS[STREAM_RUNS.index(field):])
-
-
-def outcome_run(council: Council, group: str, stream: Stream, runner: Runner,
-                store: Store, kept: list[Outcome]) -> OutcomeRun:
-    return OutcomeRun(council.id, stream.idea.text, stream.scope, stream.decisions,
-                      stream.proposals, fragments_of(council, group_of(council, group)),
-                      council.participants, council.judge, runner,
-                      reporter(store, council.id, assembling(group)),
-                      choices=stream.choices or (), repository=repository_map(stream),
-                      design=design_map(stream), accepted=stream.project_decisions or (),
-                      kept=kept)
 
 
 def stream_in(council: Council, group: str) -> Stream:

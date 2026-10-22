@@ -15,6 +15,7 @@ from uuid import uuid4
 
 from fastapi import APIRouter, HTTPException
 
+from ..background import RunState, Slot, reporter, running
 from ..deps import (
     AgentsDep,
     ConfigDep,
@@ -63,6 +64,7 @@ from ..repository import (
     same_copy,
     working_copy,
 )
+from ..store import council_lock
 from ..tasks import (
     basis_of,
     inputs_of,
@@ -73,7 +75,7 @@ from ..tasks import (
     research_texts,
 )
 from ..tasks_export import aligned, drafted_tasks
-from .councils import MISSING, NOT_FOUND, RunState, Slot, council_lock, reporter, running
+from .councils import MISSING, NOT_FOUND
 from .documents import NO_NOTES, WriteNotes
 from .groups import NOT_THESE_GROUPS, current
 from .streams import CHANGING, launched_all, probed, unconnected

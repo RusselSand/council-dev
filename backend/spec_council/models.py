@@ -921,17 +921,33 @@ class OutcomeDiscovery(BaseModel):
     # Закреплённые итоги (их номера): были готовы, и их решения с тех пор те же — их не
     # пересобирают, модели видят их как данность и собирают только остальное.
     kept: list[str] = []
-    # Какие закреплённые итоги задевают новые решения — ждут решения человека.
+    # Какие закреплённые итоги задевают новые решения. Прежняя версия ждала решения человека —
+    # оставить итог или пересобрать; у контракта такого выбора нет (stream_outcomes.py).
     touched: list[OutcomeTouch] = []
     # Принятые решения, не вошедшие ни в один итог.
     uncovered_adr_ids: list[str] = []
     # Прошлые решения проекта, к которым собирали: номер — отпечаток того, что видели модели
     # (project.fingerprint). Решение с тех пор поправили — итог на нём не закрепляется.
     projects: dict[str, str] = {}
-    # Человек утвердил эти итоги: поток выгружают в заметки к ним. Собрали заново — новая сборка
-    # не утверждена.
+    # Человек утвердил шаг («Утвердить итоги»): поток выгружают в заметки к этим итогам. Собрали
+    # заново — новая сборка не утверждена.
     approved: bool = False
+    # Итоги, которые человек утвердил по одному («Утвердить → дальше»), — их номера: в задачи
+    # уходят они. Собрали заново — в новой сборке не утверждён ни один.
+    approved_ids: list[str] = []
     error: str | None = None
+
+    @model_validator(mode="before")
+    @classmethod
+    def approved_before(cls, data: object) -> object:
+        """Прежняя версия утверждала итоги все разом, утверждая сборку: утверждена — утверждён
+        каждый её итог."""
+        if isinstance(data, dict) and "approved_ids" not in data:
+            outcomes = (data.get("outcomes") or []) if data.get("approved") else []
+            return {**data, "approved_ids": [
+                outcome["id"] if isinstance(outcome, dict) else outcome.id
+                for outcome in outcomes]}
+        return data
 
 
 class Issue(BaseModel):
@@ -1311,13 +1327,6 @@ class RenameGroup(GroupsEdit):
 REPOSITORIES_MAX = 10
 
 
-class ApproveOutcomes(GroupsEdit):
-    """Человек утверждает итоги потока — и совет нарезает их на задачи. outcomes_run — какие
-    итоги были на экране (OutcomeDiscovery.run): собрали заново — 409."""
-
-    outcomes_run: str
-
-
 class ProjectDraft(BaseModel):
     """Проект, как его сохранить: поля уже проверены (web/projects.py)."""
 
@@ -1353,16 +1362,6 @@ class Project(BaseModel):
     updated_at: datetime
     # Idempotency-Key запроса, которым проект создан: повтор с тем же ключом второго не создаёт.
     idempotency_key: str = ""
-
-
-class SettleTouch(GroupsEdit):
-    """Человек решает о закреплённом итоге, который задевают новые решения: rebuild — пересобрать
-    итоги без него среди закреплённых, иначе — оставить его как есть. outcomes_run — итоги, что
-    были на экране."""
-
-    outcomes_run: str
-    outcome_id: str
-    rebuild: bool = False
 
 
 class Model(BaseModel):
