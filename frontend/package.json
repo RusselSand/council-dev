@@ -8,6 +8,7 @@
   },
   "scripts": {
     "dev": "vite",
+    "dev:mock": "vite --mode mock",
     "typecheck": "tsc --noEmit",
     "build": "tsc --noEmit && vite build",
     "preview": "vite preview",

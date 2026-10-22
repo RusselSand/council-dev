@@ -1,7 +1,8 @@
 # Фронтенд Совета
 
-React 18, TypeScript, Vite. Экраны собираются по макету `design/Совет - прототип.html`, данные — из моков, пока нет
-бекенда. Что бекенд должен уметь — `docs/api-contract.md`. Правила работы — `CLAUDE.md` в корне.
+React 18, TypeScript, Vite. Экраны собираются по макету `design/Совет - прототип.html`, данные — с настоящего сервера
+(`backend/`) или из моков. Что сервер умеет — `docs/api-contract.md`. Правила работы — `CLAUDE.md` в корне; как
+поставить и запустить всё приложение — `README.md` в корне.
 
 ## Запуск
 
@@ -9,7 +10,8 @@ React 18, TypeScript, Vite. Экраны собираются по макету 
 
 ```
 npm --prefix frontend install
-npm --prefix frontend run dev          # http://localhost:5173
+npm --prefix frontend run dev          # http://localhost:5173, запросы /api — на бекенд, localhost:8420
+npm --prefix frontend run dev:mock     # то же на моках, без бекенда
 npm --prefix frontend run typecheck    # проверка типов, в том числе словарей
 npm --prefix frontend run build        # typecheck + сборка в frontend/dist
 npm --prefix frontend run proto        # распаковать код макета в design/.src/
@@ -21,10 +23,15 @@ npm --prefix frontend run shot -- …    # снимки макета и наше
 Настройки — переменные окружения или файл `frontend/.env` (образец — `frontend/.env.example`, сам `.env` в git не
 попадает).
 
-| Переменная         | Что                                                                       | По умолчанию |
-| ------------------ | ------------------------------------------------------------------------- | ------------ |
-| `VITE_DATA_SOURCE` | откуда брать данные: `mock` — моки из макета, `http` — настоящий сервер    | `mock`       |
-| `VITE_API_URL`     | адрес API для `http`                                                      | `/api`       |
+| Переменная         | Что                                                                       | По умолчанию            |
+| ------------------ | ------------------------------------------------------------------------- | ----------------------- |
+| `VITE_DATA_SOURCE` | откуда брать данные: `http` — настоящий сервер, `mock` — моки из макета    | `http`                  |
+| `VITE_API_URL`     | адрес API для `http`                                                      | `/api`                  |
+| `VITE_API_PROXY`   | куда `dev` передаёт запросы `/api`: бекенд                                | `http://localhost:8420` |
+| `VITE_USE_POLLING` | `1` — `dev` опрашивает файлы, а не ждёт событий (докер на Windows)        | —                       |
+
+Собранный фронт (`build`) ходит в настоящий сервер: его отдаёт сам бекенд, и `/api` — на том же адресе. Моки — для
+разработки экранов (`dev:mock` — режим `mock`, `frontend/.env.mock`) и снимков (`shot` всегда на моках).
 
 ## Устройство
 
@@ -400,7 +407,7 @@ id); `QuestionHead` — открытый вопрос крупно, метка �
   готовыми, «Запустить снова» запускает остановившийся план.
   Моки отдают копию данных: экран не может их испортить.
 - `data/http/` — настоящий сервер: `request()` разбирает ответ и ошибку по контракту.
-- `data/config.ts` — какой источник взять, по `VITE_DATA_SOURCE`.
+- `data/config.ts` — какой источник взять, по `VITE_DATA_SOURCE`: без неё — настоящий сервер.
 - `data/hooks/` — хуки запросов: `useCouncils()`, `useCouncilBrief(id)`, `useCouncilSlicing(id, running)`,
   `useCouncilStructure(id, running)`, `useCouncilResearch(id, running)`, `useCouncilStreams(id, running)`,
   `useProjectDecisions(id, streamId)`, `useStreamQuestions(id, streamId, state)`, `useStreamOptions(id, streamId,
