@@ -95,18 +95,27 @@ def test_runs_that_were_going_on_come_back_failed_and_can_be_started_again(tmp_p
     assert saved["slicing"]["state"] == "failed"
 
 
-def test_what_is_computed_is_not_written_and_is_there_after_reading(tmp_path):
+def test_what_an_older_version_computed_for_its_frontend_is_read_and_dropped(tmp_path):
+    # Прежние версии считали для старого фронта, правили ли группы (structure.edited), и
+    # сохранённые итоги потока (saved_outcomes, saved_issues). Совет с ними в файле открывается,
+    # а следующая запись их уже не несёт.
     store = FileStore(tmp_path)
     council = store.create_council(participants=["sol", "fable"], judge="fable")
     structure = Structure(state="done", run="g1", slicing_run="s1", labels={1: "idea"}, steps=[])
     before = store.update_council(council.id, {"structure": structure,
                                                "streams": [Stream(group="A")]})
-    data = json.loads((tmp_path / f"{council.id}.json").read_text(encoding="utf-8"))
+    path = tmp_path / f"{council.id}.json"
+    data = json.loads(path.read_text(encoding="utf-8"))
+    data["structure"]["edited"] = False
+    data["streams"][0].update(saved_outcomes=[], saved_issues=[])
+    path.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
+
+    reread = FileStore(tmp_path)
+    assert reread.get_council(council.id) == before
+    reread.update_council(council.id, {"brief": "Хочу базу знаний."})
+    data = json.loads(path.read_text(encoding="utf-8"))
     assert "edited" not in data["structure"]
     assert not {"saved_outcomes", "saved_issues"} & set(data["streams"][0])
-    after = FileStore(tmp_path).get_council(council.id)
-    assert after == before
-    assert after.streams[0].saved_outcomes == []
 
 
 def test_a_council_with_nothing_running_is_read_as_it_was(tmp_path):

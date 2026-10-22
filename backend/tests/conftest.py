@@ -23,7 +23,7 @@ from spec_council.deps import get_agents  # noqa: E402
 
 
 class OfflineAgents:
-    """Модели без входа. Тесты не зовут настоящие CLI: иначе /api/settings проверял бы вход
+    """Модели без входа. Тесты не зовут настоящие CLI: иначе /api/models проверял бы вход
     в чью-то подписку и зависел бы от машины."""
 
     def availability(self, aliases, *, fresh=False):

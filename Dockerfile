@@ -1,8 +1,11 @@
 # Один процесс: собранный фронт отдаёт FastAPI. Фронт собирается у себя, сюда его кладёт COPY.
+# Собранный фронт ходит в этот же сервер: VITE_DATA_SOURCE не задан — настоящий сервер, /api.
 
 FROM node:24-alpine AS ui
 WORKDIR /src/frontend
 COPY frontend/package.json frontend/package-lock.json ./
+# Браузеры playwright нужны только снимкам (npm run shot), не сборке.
+ENV PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1
 RUN npm ci
 COPY frontend/ ./
 RUN npm run build          # -> /src/frontend/dist

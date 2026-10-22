@@ -2,11 +2,13 @@ import gc
 import warnings
 
 import pytest
+from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
+from spec_council import web
 from spec_council.app import app
 from spec_council.deps import get_store
-from spec_council.spa import STATIC
+from spec_council.spa import STATIC, mount_spa
 from spec_council.store import InMemoryStore
 
 client = TestClient(app)
@@ -39,9 +41,46 @@ def test_unknown_api_path_is_json_404():
 
 @pytest.mark.skipif(not (STATIC / "index.html").exists(), reason="фронт не собран")
 def test_spa_fallback_for_page_links():
-    res = client.get("/councils/c1/brief")
+    res = client.get("/c/c1/brief")
     assert res.status_code == 200
     assert res.headers["content-type"].startswith("text/html")
+
+
+@pytest.fixture(name="built")
+def built_frontend(tmp_path):
+    """Приложение с собранным фронтом, как его кладёт vite: index.html и assets/."""
+    (tmp_path / "assets").mkdir()
+    (tmp_path / "index.html").write_text('<div id="root"></div>', encoding="utf-8")
+    (tmp_path / "assets" / "index-1.js").write_text("console.log(1)", encoding="utf-8")
+    served = FastAPI()
+    web.install(served)
+    mount_spa(served, api_prefix=web.API_PREFIX, static=tmp_path)
+    return TestClient(served)
+
+
+@pytest.mark.parametrize("url", ["/", "/home", "/projects", "/c/g1/brief",
+                                 "/c/g1/streams/A/options", "/c/g1/tasks"])
+def test_pages_of_the_built_frontend_open_by_direct_link(built, url):
+    res = built.get(url)
+    assert res.status_code == 200
+    assert res.headers["content-type"].startswith("text/html")
+    assert res.text == '<div id="root"></div>'
+
+
+def test_the_built_frontend_gets_its_assets(built):
+    res = built.get("/assets/index-1.js")
+    assert res.status_code == 200
+    assert res.text == "console.log(1)"
+
+
+def test_the_built_frontend_talks_to_the_api_of_the_same_server(built):
+    # Рядом с фронтом — настоящий API, а неизвестный /api — ошибка API, а не страница.
+    res = built.get("/api/councils")
+    assert res.status_code == 200 and "councils" in res.json()
+    for url in ("/api", "/api/nope", "/api/councils/c1/unknown"):
+        res = built.get(url)
+        assert res.status_code == 404, url
+        assert res.json()["error"]["code"] == "not_found", url
 
 
 def test_a_replaced_store_is_left_to_the_requests():
