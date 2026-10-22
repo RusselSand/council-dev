@@ -3,7 +3,8 @@
 План строят, когда во всех потоках итоги утверждены и выгружены в заметки: тогда у каждого
 итога и решения есть номер заметки (OUT-…, ADR-…), и модели называют их им — те же номера ложатся
 в файлы задач, и ссылки в тексте задачи сразу верные. Итог, что в заметки не лёг (у него нет
-решений своей идеи), в план не входит — это видно.
+решений своей идеи), в план не входит — это видно. Не входит и итог, которого человек не утвердил:
+«Утвердить итоги» оставляет неутверждённые и заблокированные такими, а в задачи уходят утверждённые.
 
 Ответ модели проверяет код: у задачи ровно один итог — из плана; решения, ограничения и риски —
 только те, что есть у её итога; зависимости — только на задачи раньше неё по плану (на задачу
@@ -164,13 +165,23 @@ def names_of(stream: Stream, fragments: Mapping[int, LabeledFragment],
                  frozenset(note.id for note in notes if not note.note_numbers), owned)
 
 
+def planned_outcomes(stream: Stream) -> list[Outcome]:
+    """Итоги потока, что уходят в план, по порядку сборки: те, что человек утвердил
+    («Утвердить → дальше»)."""
+    run = stream.outcomes
+    if run is None:
+        return []
+    approved = set(run.approved_ids)
+    return [outcome for outcome in run.outcomes if outcome.id in approved]
+
+
 def planner_notes(stream: Stream) -> set[str]:
     """Заметки потока, чьи тексты видит план (inputs_of → adr_entry): решения, что итоги
-    реализуют или на которые опираются, и вопросы этих решений. Итог, что в заметки не лёг, в
-    план не входит — и его решения план не видит."""
+    реализуют или на которые опираются, и вопросы этих решений. Итог, что в заметки не лёг или
+    не утверждён, в план не входит — и его решения план не видит."""
     refs = stream.notes.refs if stream.notes else {}
     scope = stream.scope or []
-    adrs = {name for outcome in (stream.outcomes.outcomes if stream.outcomes else [])
+    adrs = {name for outcome in planned_outcomes(stream)
             if outcome.id in refs for name in (*outcome.adr_ids, *outcome.relies_on_adr_ids)}
     asked = [scope[n - 1].id for name in adrs
              if (n := int(name.split("-")[1])) and 0 < n <= len(scope)]
@@ -211,7 +222,7 @@ def outcome_names(council: Council, fragments: Mapping[int, LabeledFragment],
     for stream in council.streams or []:
         names = names_of(stream, own_fragments(council, stream, fragments), research, exported,
                          cited, maps)
-        for outcome in stream.outcomes.outcomes if stream.outcomes else []:
+        for outcome in planned_outcomes(stream):
             if outcome.id in names.numbers:
                 found[names.numbers[outcome.id]] = names
     return found
@@ -245,10 +256,19 @@ def basis_of(council: Council) -> dict[str, str]:
     research = council.research
     steps = ([(research.repository, research.scan), (research.design, research.design_scan)]
              if research else [(None, None), (None, None)])
-    return {**{stream.group: f"{stream.outcomes.run if stream.outcomes else ''}:"
-                             f"{stream.notes.run if stream.notes else ''}"
-               for stream in council.streams or []},
+    return {**{stream.group: stream_basis(stream) for stream in council.streams or []},
             RESEARCH: "|".join(step_basis(step, scan) for step, scan in steps)}
+
+
+def stream_basis(stream: Stream) -> str:
+    """«сборка:выгрузка»; утверждены не все итоги сборки — и какие: утвердили ещё один уже после
+    плана — план к прежнему. Утверждены все (и у планов прежней версии) — как было."""
+    run, notes = stream.outcomes, stream.notes
+    basis = f"{run.run if run else ''}:{notes.run if notes else ''}"
+    planned = [outcome.id for outcome in planned_outcomes(stream)]
+    if run is not None and len(planned) != len(run.outcomes):
+        basis += ":" + ",".join(planned)
+    return basis
 
 
 def step_basis(step: RepositoryStep | DesignStep | None,
@@ -298,8 +318,8 @@ def ideas_text(council: Council) -> str:
 
 
 def inputs_of(council: Council) -> Inputs:
-    """Итоги всех потоков с номерами заметок, их решения, решения проекта, на которые они
-    опираются, ограничения и риски."""
+    """Утверждённые итоги всех потоков с номерами заметок, их решения, решения проекта, на
+    которые они опираются, ограничения и риски."""
     fragments = {f.id: f for f in council.slicing.fragments} if council.slicing else {}
     outcomes: list[dict] = []
     allowed: dict[str, Allowed] = {}
@@ -312,7 +332,7 @@ def inputs_of(council: Council) -> Inputs:
         refs = stream.notes.refs if stream.notes else {}
         names = names_of(stream, own_fragments(council, stream, fragments), exported=exported)
         written = {note.id: note.written for note in stream.notes.notes} if stream.notes else {}
-        for outcome in stream.outcomes.outcomes if stream.outcomes else []:
+        for outcome in planned_outcomes(stream):
             note = refs.get(outcome.id)
             if note is None:
                 skipped.append(f"Поток {stream.group}: {outcome.id} «{outcome.title}» не лёг в "

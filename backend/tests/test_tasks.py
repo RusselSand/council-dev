@@ -119,6 +119,11 @@ def single():
 def exported(council_id, group="C"):
     """Итоги потока утверждены и выгружены в заметки."""
     assert approves(council_id, group).status_code == 200
+    written_notes(council_id, group)
+
+
+def written_notes(council_id, group="C"):
+    """Поток, где шаг «Итоги» утверждён, выгружен в заметки."""
     body = {"run": "g1", "revision": 0}
     assert client.post(f"/api/councils/{council_id}/streams/{group}/notes/draft",
                        json=body).status_code == 202
@@ -240,6 +245,33 @@ def test_approved_outcomes_not_yet_exported_are_not_planned(agents, folders):
     approves(council_id, "C")
     res = plans(council_id)
     assert res.status_code == 409 and "не выгружен" in res.json()["detail"]
+
+
+def test_only_approved_outcomes_go_into_the_plan(agents, folders):
+    """«Утвердить итоги» оставляет неутверждённый итог таким — в заметки он ложится, а в задачи
+    уходят утверждённые. Утвердили его уже после плана — план к прежним итогам."""
+    council_id = single()
+    free_c(council_id)
+    path = f"/api/councils/{council_id}/streams/C/outcomes"
+    run = client.get(path).json()["run"]
+    assert client.post(f"{path}/approve", json={"run": run}).status_code == 200
+    written_notes(council_id)
+    assert "O1" in streams_of(council_id)["C"].notes.refs
+    assert plans(council_id).status_code == 202
+    plan = council(council_id).tasks
+    assert plan.state == "done", plan.error
+    assert (plan.issues, plan.uncovered, plan.skipped) == ([], [], [])
+    prompt = agents.prompts["task_plan"]
+    assert json.loads(section(prompt, "OUTCOMES")) == []
+    assert json.loads(section(prompt, "ACCEPTED DECISIONS").split("\n\n")[-1]) == []
+
+    assert client.post(f"{path}/O1/approve", json={"run": run}).status_code == 200
+    res = drafts(council_id)
+    assert res.status_code == 409 and "План устарел" in res.json()["detail"]
+    # Утверждены все итоги — основа плана та же, что у планов прежней версии.
+    stream = streams_of(council_id)["C"]
+    assert basis_of(council(council_id))["C"] == f"{stream.outcomes.run}:{stream.notes.run}"
+    assert plan.basis["C"] == f"{stream.outcomes.run}:{stream.notes.run}:"
 
 
 def test_a_changed_stream_leaves_the_plan_to_the_human_who_resets_it(agents, folders):
@@ -771,7 +803,8 @@ def seen_by_plan(notes, refs):
     """Поток, где решение ADR-0001 (ADR-1) — решение итога, что лёг в заметки (OUT-0001): его
     текст план видит."""
     return Stream(group="C", outcomes=OutcomeDiscovery(state="done", run="o1", steps=[], outcomes=[
-        Outcome(id="O1", title="Итог", behavior="Работает.", adr_ids=["ADR-1"])]),
+        Outcome(id="O1", title="Итог", behavior="Работает.", adr_ids=["ADR-1"])],
+        approved_ids=["O1"]),
         notes=NotesExport(run="n1", language="Russian", notes=notes,
                           refs={**refs, "ADR-1": "ADR-0001", "O1": "OUT-0001"}))
 
@@ -785,7 +818,8 @@ def test_phrases_come_only_from_note_bodies_the_planner_saw():
                           written="Решение про R5 storage", digest="d", note_numbers=True)]
     stream = Stream(group="C", scope=[OpenQuestion(id="Q1", text="Где?", source="discovered")],
                     outcomes=OutcomeDiscovery(state="done", run="o1", steps=[], outcomes=[
-                        Outcome(id="O1", title="Кэш", behavior="Быстро.", adr_ids=["ADR-1"])]),
+                        Outcome(id="O1", title="Кэш", behavior="Быстро.", adr_ids=["ADR-1"])],
+                        approved_ids=["O1"]),
                     notes=NotesExport(run="n1", language="Russian", notes=notes,
                                       refs={"I1": "IDEA-0001", "Q1": "OQ-0001", "P1": "PRO-0001",
                                             "ADR-1": "ADR-0001", "O1": "OUT-0001"}))
@@ -797,11 +831,21 @@ def test_phrases_come_only_from_note_bodies_the_planner_saw():
     stream = stream.model_copy(update={
         "outcomes": stream.outcomes.model_copy(update={"outcomes": [
             *stream.outcomes.outcomes,
-            Outcome(id="O2", title="Прогрев", behavior="Тепло.", adr_ids=["ADR-2"])]}),
+            Outcome(id="O2", title="Прогрев", behavior="Тепло.", adr_ids=["ADR-2"])],
+            "approved_ids": ["O1", "O2"]}),
         "notes": stream.notes.model_copy(update={
             "notes": [*stream.notes.notes, skipped],
             "refs": {**stream.notes.refs, "ADR-2": "ADR-0002"}})})
     assert "I2 cache" not in names_of(stream, {}).phrases
+    # Итог лёг в заметки, но человек его не утвердил — так же.
+    stream = stream.model_copy(update={
+        "outcomes": stream.outcomes.model_copy(update={"approved_ids": ["O1"]}),
+        "notes": stream.notes.model_copy(update={
+            "refs": {**stream.notes.refs, "O2": "OUT-0002"}})})
+    assert "I2 cache" not in names_of(stream, {}).phrases
+    assert "I2 cache" in names_of(stream.model_copy(update={
+        "outcomes": stream.outcomes.model_copy(update={"approved_ids": ["O1", "O2"]})}),
+        {}).phrases
 
 
 def test_a_prerequisite_title_is_checked_with_its_own_phrases(tmp_path):
