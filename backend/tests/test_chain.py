@@ -23,8 +23,10 @@ from spec_council.models import (
     Outcome,
     OutcomeDiscovery,
     ProjectDecision,
+    Proposal,
     ProposalDiscovery,
     QuestionDiscovery,
+    QuestionOptions,
     RepositoryStep,
     Slicing,
     Step,
@@ -510,8 +512,10 @@ def test_done_steps_tell_what_was_taken_and_the_notes_wait_for_the_human(store):
     outcome = Outcome(id="O1", title="Мерило", behavior="Доля видна.")
     put(store, council_id,
         project_decisions=[ProjectDecision(adr_id="ADR-0003"), ProjectDecision(adr_id="ADR-0005")],
-        questions=QuestionDiscovery(state="done", steps=[]), scope=scope,
-        proposals=ProposalDiscovery(state="done", steps=[]),
+        questions=QuestionDiscovery(state="done", steps=[], questions=scope[:1]), scope=scope,
+        proposals=ProposalDiscovery(state="done", steps=[], options=[QuestionOptions(
+            question_id="Q1", verdict="recommended",
+            proposals=[Proposal(id="P1", text="Считать долю отвеченных", reason="")])]),
         choices=[Choice(question_id="Q1", proposal="P1"), Choice(question_id="Q2")],
         decisions=[Decision(question_id="Q1", proposal="P1", rationale="Так проще."),
                    Decision(question_id="Q2")],
