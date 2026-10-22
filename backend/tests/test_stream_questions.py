@@ -486,6 +486,8 @@ def test_a_retry_brings_other_questions_and_keeps_the_own_ones_after_them(store,
     agents.judged = [*FOUND[:2], {"text": "Где хранить ответы?", "source": "discovered",
                                   "proposal_ids": [], "reason": "хранение"}, FOUND[2]]
     assert client.post(f"/api/councils/{council_id}/streams/A/retry", json={}).status_code == 200
+    # Модели собирают вопросы — нет и своих: их номера станут известны, когда модели закончат.
+    assert questions_of(council_id) == []
     assert error_of(removes(council_id, "Q4")) == (409, "questions_not_ready")
     assert error_of(adds(council_id, "Ещё?")) == (409, "questions_not_ready")
     pool.run()

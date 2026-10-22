@@ -76,8 +76,8 @@ class QuestionText(Schema):
 
 @router.get("/councils/{council_id}/streams/{stream_id}/questions")
 def list_questions(council_id: str, stream_id: str, store: StoreDep) -> QuestionList:
-    """Найденные моделями — в порядке судьи, потом свои — в порядке добавления. Шаг не начат —
-    пусто; остановился — вопросы моделей, которые успели ответить."""
+    """Найденные моделями — в порядке судьи, потом свои — в порядке добавления. Шаг не начат или
+    модели собирают вопросы — пусто; остановился — вопросы моделей, которые успели ответить."""
     council = council_of(store, council_id)
     stream = shown_of(council, stream_id)
     return QuestionList(questions=questions_of(council, stream, listed(stream)))

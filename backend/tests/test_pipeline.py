@@ -3,6 +3,7 @@
 import json
 import re
 from pathlib import Path
+from threading import Event
 
 import pytest
 
@@ -33,6 +34,7 @@ from spec_council.pipeline import (
 )
 from spec_council.repository import Inventory, RepositoryError, Source
 from spec_council.slicing import BadAnswer
+from spec_council.store import halted
 from spec_council.tasks import Allowed, Context, Inputs, plan_of
 from tests.figma_fake import LINK, FakeFigma
 
@@ -563,6 +565,33 @@ def test_a_judge_answer_without_a_list_fails_the_search():
         ("question_judge", "fable"): {"status": "ok"}})
     assert result.state == "failed"
     assert "questions" in result.steps[1].runs[0].error
+
+
+def test_the_questions_of_a_model_are_written_with_its_answer_not_after_the_others():
+    """Сервер остановился, когда sol уже ответила, а fable ещё собирала вопросы: в том, что к
+    этому моменту записано, вопросы sol уже есть — после перезапуска их берут без повтора."""
+    reports, answered, written = [], Event(), []
+
+    def report(state):
+        reports.append(state)
+        if any(run.model == "sol" and run.state == "done" for run in state.steps[0].runs):
+            answered.set()
+
+    def stopping(prompt):
+        assert answered.wait(5)
+        written.append(reports[-1])
+        return ModelFailed("сервер остановился")
+
+    runner = FakeRunner({("question_discovery", "sol"): asked((HOW, "inferred", None, ["F2"])),
+                         ("question_discovery", "fable"): stopping,
+                         ("question_judge", "fable"): asked((HOW, "inferred", None, ["F2"]))})
+    QuestionRun("c1", FIND, QUESTION_FRAGMENTS, ["sol", "fable"], "fable", runner, report).run()
+    after = halted(written[0])                      # так совет читается после перезапуска
+    assert [(run.model, run.state) for run in after.steps[0].runs] == [("sol", "done"),
+                                                                       ("fable", "failed")]
+    assert (after.state, after.questions) == ("failed", [])
+    assert [(q.id, q.text, q.source) for q in after.answered] == [
+        ("Q1", HOW, "inferred"), ("Q2", "Кто платит за хостинг?", "user")]
 
 
 # --- варианты потока

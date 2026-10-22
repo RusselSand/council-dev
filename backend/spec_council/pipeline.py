@@ -167,6 +167,7 @@ from .proposals import Context, Verdict, found_by_question, judged_proposals, pr
 from .proposals import as_prompt as proposal_prompt
 from .proposals import merged as merged_proposals
 from .questions import (
+    Candidate,
     as_prompt,
     misses_user_questions,
     numbered,
@@ -531,11 +532,13 @@ class CouncilRun[S: (Slicing, Structure, IdeaDiscovery, RepositoryScan, DesignSc
 
     # --- вызовы моделей
 
-    def _ask_all[T](self, step: StepName, prompt: str, parse: Callable[[dict], T]) -> dict[str, T]:
+    def _ask_all[T](self, step: StepName, prompt: str, parse: Callable[[dict], T],
+                    kept: Callable[[str, T], None] | None = None) -> dict[str, T]:
         """Все участники параллельно. Упавший выбывает из шага, остальные идут дальше. Моделей
         в совете нет (на «Вводе» их можно снять все) — шаг делать некому: он останавливается,
         как если бы не справились все, и судья за участников не работает. Повтор, где все
-        участники шага уже ответили, берёт их ответы, и шаг остаётся готовым."""
+        участники шага уже ответили, берёт их ответы, и шаг остаётся готовым. kept — что ход
+        записывает, как только участник ответил (_ask), не дожидаясь остальных."""
         if not self.participants or not all((step, model) in self.replayed
                                             for model in self.participants):
             self._set_step(step, "running")
@@ -543,7 +546,8 @@ class CouncilRun[S: (Slicing, Structure, IdeaDiscovery, RepositoryScan, DesignSc
             self._set_step(step, "failed")
             raise StageFailed(f"в совете нет моделей — шаг {step} делать некому")
         with ThreadPoolExecutor(max_workers=len(self.participants)) as pool:
-            futures = {m: pool.submit(self._ask, step, m, prompt, parse) for m in self.participants}
+            futures = {m: pool.submit(self._ask, step, m, prompt, parse, kept)
+                       for m in self.participants}
         answers = {m: f.result() for m, f in futures.items() if f.result() is not None}
         if not answers:
             self._set_step(step, "failed")
@@ -562,8 +566,10 @@ class CouncilRun[S: (Slicing, Structure, IdeaDiscovery, RepositoryScan, DesignSc
         self._set_step(step, "done")
         return answer
 
-    def _ask[T](self, step: StepName, model: str, prompt: str,
-                parse: Callable[[dict], T]) -> T | None:
+    def _ask[T](self, step: StepName, model: str, prompt: str, parse: Callable[[dict], T],
+                kept: Callable[[str, T], None] | None = None) -> T | None:
+        """Ответ модели или None, если она не справилась. kept(model, ответ) — под замком хода,
+        до того как модель станет готовой: что он записал, уходит вместе с её готовностью."""
         # Повтор с тем же ключом берёт оплаченный ответ даром — только если отвечает та же
         # модель: провайдер и модель за alias тоже в ключе.
         identity = self.runner.identity(model)
@@ -599,6 +605,8 @@ class CouncilRun[S: (Slicing, Structure, IdeaDiscovery, RepositoryScan, DesignSc
             return None
         with self._lock:
             self._keys.setdefault(step, []).append(key)
+            if kept is not None:
+                kept(model, answer)
         self._set_run(step, model, "done", identity=identity)
         return answer
 
@@ -919,6 +927,7 @@ class QuestionRun(CouncilRun[QuestionDiscovery]):
         self.accepted = accepted_prompt(accepted)
         self.decision_ids = frozenset(decision.adr_id for decision in accepted)
         self.fragments = {fragment.id: fragment for fragment in fragments}
+        self._found: dict[str, list[Candidate]] = {}
 
     def work(self) -> dict[str, Any]:
         group = as_json([{"id": f"F{f.id}", "type": f.label, "text": f.text}
@@ -928,14 +937,9 @@ class QuestionRun(CouncilRun[QuestionDiscovery]):
                         accepted_decisions=self.accepted)
         answers = self._ask_all(StepName.question_discovery, prompt,
                                 lambda data: question_list(data, self.fragments,
-                                                           self.decision_ids))
+                                                           self.decision_ids),
+                                self._answered)
         lists = list(answers.values())
-        # Не справится судья — останутся вопросы участников, которые ответили.
-        with self._lock:
-            self.state.answered = numbered(with_user_questions(
-                merged_questions(candidate for found in lists for candidate in found),
-                self.fragments))
-            self._publish()
         # Вопрос из текста, пропущенный всеми, вернётся сам, но без классификации: тогда
         # список сводит судья — он обязан вернуть все вопросы из текста и пометить каждый.
         if (len(lists) > 1 and same_lists(lists)
@@ -953,6 +957,15 @@ class QuestionRun(CouncilRun[QuestionDiscovery]):
                                      lambda data: question_list(data, self.fragments,
                                                                 self.decision_ids))
         return {"questions": numbered(with_user_questions(chosen, self.fragments)), "answered": []}
+
+    def _answered(self, model: str, found: list[Candidate]) -> None:
+        """Участник ответил — его вопросы сразу в answered, сведённые с вопросами тех, кто
+        ответил раньше, в порядке участников: не справится судья или сервер остановится, пока
+        ждут остальных, — останутся вопросы моделей, которые успели ответить."""
+        self._found[model] = found
+        lists = [self._found[name] for name in self.participants if name in self._found]
+        self.state.answered = numbered(with_user_questions(
+            merged_questions(candidate for one in lists for candidate in one), self.fragments))
 
 
 class ProposalRun(CouncilRun[ProposalDiscovery]):
