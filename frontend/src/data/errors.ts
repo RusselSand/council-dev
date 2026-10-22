@@ -25,6 +25,7 @@ export const ERROR_CODES = [
   'bad_link',
   'bad_decision',
   'research_not_ready',
+  'stale_map',
   'unknown_decision',
   'questions_not_ready',
   'text_required',

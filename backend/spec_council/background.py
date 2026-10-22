@@ -25,7 +25,7 @@ from .models import (
     TasksDraft,
 )
 from .pipeline import CouncilRun
-from .store import council_lock
+from .store import council_lock, halted
 
 RunState = (Slicing | Structure | IdeaDiscovery | RepositoryScan | DesignScan
             | DecisionsSearch | QuestionDiscovery | ProposalDiscovery | DecisionAnalysis
@@ -62,8 +62,10 @@ def held(pipeline: CouncilRun) -> None:
 
 def launched(launch: Launcher, pipeline: CouncilRun, report: Callable[[RunState], None]) -> bool:
     """Отдать ход в пул. Пул закрыт — приложение останавливается: ход не начался, так и
-    записываем, иначе совет навсегда остался бы «идёт» и повтор получал бы 409. Пока ход не
-    кончился, его можно остановить — и тот, что ещё ждёт места в пуле."""
+    записываем, иначе совет навсегда остался бы «идёт» и повтор получал бы 409. Упал и тот шаг
+    хода, и те модели, что уже записаны работающими (повтор шага потока — chain.resumed):
+    иначе они «работали» бы в упавшем ходе без конца. Пока ход не кончился, его можно
+    остановить — и тот, что ещё ждёт места в пуле."""
     run = pipeline.state.run
     held(pipeline)
 
@@ -77,7 +79,7 @@ def launched(launch: Launcher, pipeline: CouncilRun, report: Callable[[RunState]
         launch(job)
     except RuntimeError as exc:
         gone(run, pipeline)
-        report(pipeline.state.model_copy(update={"state": "failed", "error": f"не запущен: {exc}"}))
+        report(halted(pipeline.state, f"не запущен: {exc}"))
         return False
     return True
 

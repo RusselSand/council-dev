@@ -1,5 +1,5 @@
-"""Общий запуск старых ходов совета (start_run) — ему остался поиск идеи потока. Советы, нарезка
-и группы — в новом API (web/); ход в фоне и его отчёт — background.py."""
+"""Общий запуск старых ходов совета (start_run) — им старые ручки шагов потока повторяют свои
+ходы, пока шаги не переехали в новый API (web/). Ход в фоне и его отчёт — background.py."""
 
 from collections.abc import Callable
 
@@ -30,7 +30,8 @@ def start_run(council_id: str, store: Store, config: AppConfig, agents: AgentRun
               launch: Launcher, slot: Slot, ready: Callable[[Council], None],
               status: CouncilStatus | None, build: Callable[[Council, Callable], CouncilRun],
               also: dict | None = None) -> Council:
-    """Общий запуск хода совета: поиска идеи потока. status None — статус совета ход не меняет.
+    """Общий запуск хода совета: повтор хода шага потока. status None — статус совета ход не
+    меняет.
 
     Вход проверяется заново, а не из памяти: запуск платный. Это запуски CLI, поэтому вне
     замка; под замком — только сверка: не запустил ли ход кто-то другой и не поменялся ли

@@ -11,11 +11,13 @@ from spec_council.config import config_of, fitted
 from spec_council.deps import data_folder
 from spec_council.models import (
     CouncilStatus,
+    DesignStep,
     Group,
     LabeledFragment,
     ModelRun,
     RepositoryScan,
     RepositoryStep,
+    Research,
     Slicing,
     Stream,
     StreamIdea,
@@ -229,6 +231,33 @@ def test_streams_saved_before_the_design_step_passed_it_by_skipping(tmp_path):
     assert (first.repository.scan_run, first.design.by) == ("s1", "skipped")
     assert (first.questions.repository, first.questions.design) == ("s1", "skipped")
     assert second.design is None                        # вопросов не было — шаг впереди
+
+
+def test_streams_the_prior_version_did_not_start_take_the_approved_research(tmp_path):
+    """Прежняя версия начинала потоки по одному, и копию исследования поток брал в начале. Начала
+    больше нет: не начатые потоки берут копию утверждённого исследования при чтении, начатые —
+    со своей. Исследование не утверждено — брать нечего."""
+    before = FileStore(tmp_path)
+    council = before.create_council(participants=["sol", "fable"], judge="fable")
+    own = {"repository": RepositoryStep(by="scan", scan_run="s0"),
+           "design": DesignStep(by="skipped")}
+    streams = [Stream(group="A", idea=StreamIdea(text="Идея", by="human"), **own),
+               Stream(group="B", idea=StreamIdea(text="Другая", by="human"))]
+    research = Research(repository=RepositoryStep(by="skipped"), design=DesignStep(by="skipped"),
+                        approved=False)
+    before.update_council(council.id, {"streams": streams, "research": research})
+    unapproved = FileStore(tmp_path).get_council(council.id)
+    assert unapproved.streams[1].repository is None
+
+    # Исследование прежней версии без поля approved: пройдены оба шага — утверждено.
+    path = tmp_path / f"{council.id}.json"
+    saved = json.loads(path.read_text(encoding="utf-8"))
+    del saved["research"]["approved"]
+    path.write_text(json.dumps(saved), encoding="utf-8")
+    first, second = FileStore(tmp_path).get_council(council.id).streams
+    assert (first.repository, first.design) == (own["repository"], own["design"])
+    assert (second.repository.by, second.design.by) == ("skipped", "skipped")
+    assert (second.scan, second.design_scan) == (None, None)
 
 
 def test_a_scan_saved_with_one_repository_reads_as_a_list_of_one():

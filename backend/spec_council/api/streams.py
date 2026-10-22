@@ -1,15 +1,12 @@
-"""Потоки — подтверждённые группы. Прежняя версия заводила поток на каждую группу при
-подтверждении групп и сразу искала идею у тех, в тексте которых её нет; теперь группы
-подтверждает новый API (web/structure.py), а потоки этих ручек — у советов прежней версии,
-пока потоки не переедут в новый API. Человек утверждает идею потока —
-найденную советом, свою или записанную в тексте, — ещё на этапе «Группы». Когда исследование
-совета пройдено (web/research.py), человек начинает поток: поток берёт себе копию карты кода и
-описания макета, и совет сразу ищет открытые вопросы. Человек отбирает, какие из них решать, и
-добавляет свои, — и совет сразу ищет к ним новые варианты ответа. Человек выбирает по варианту
-на вопрос или оставляет его unresolved — и совет сразу проверяет выбор, а для unresolved
-подбирает вариант из тех, что есть. Человек фиксирует решения — и совет сразу собирает из них
-итоги. Каждый шаг утверждают заново — то, что ниже по цепочке, ищется заново; но работа по тем
-же вопросам и тому же выбору переносится (work.py), а не делается снова."""
+"""Старые ручки шагов потока — уходят по шагам в новый API (web/streams.py и ручки шагов). Потоки
+заводит «К потокам →» (web/research.py): с идеей группы и копией исследования совета — с картой
+кода, которую там сверили с папками совета (решение q-004 бекенда). Человек
+отмечает прошлые решения проекта — и совет сразу ищет открытые вопросы. Человек отбирает, какие
+из них решать, и добавляет свои, — и совет сразу ищет к ним новые варианты ответа. Человек
+выбирает по варианту на вопрос или оставляет его unresolved — и совет сразу проверяет выбор, а
+для unresolved подбирает вариант из тех, что есть. Человек фиксирует решения — и совет сразу
+собирает из них итоги. Каждый шаг утверждают заново — то, что ниже по цепочке, ищется заново; но
+работа по тем же вопросам и тому же выбору переносится (work.py), а не делается снова."""
 
 import logging
 from collections.abc import Callable, Sequence
@@ -20,12 +17,12 @@ from uuid import uuid4
 from fastapi import APIRouter, HTTPException
 
 from ..agents import AgentRunner
+from ..chain import find_stream, replaced, stream_slot
 from ..config import AppConfig
 from ..decisions import RATIONALE_MAX
 from ..deps import (
     AgentsDep,
     ConfigDep,
-    IssuesOfDep,
     Launcher,
     LauncherDep,
     NotesOf,
@@ -36,13 +33,11 @@ from ..deps import (
 )
 from ..export import design_map, export_in, repository_map
 from ..groups import stream_group
-from ..ideas import IDEA_MAX
 from ..models import (
     SKIPPED,
     STREAM_RUNS,
     ApproveChoices,
     ApproveDecisions,
-    ApproveIdea,
     ApproveOutcomes,
     ApproveScope,
     Choice,
@@ -69,9 +64,7 @@ from ..models import (
     RepositoryStep,
     SelectDecisions,
     SettleTouch,
-    StartStream,
     Stream,
-    StreamIdea,
     TaskPlan,
     TasksDraft,
 )
@@ -80,7 +73,6 @@ from ..pipeline import (
     CouncilRun,
     DecisionRun,
     DecisionsRun,
-    IdeaRun,
     OutcomeRun,
     ProposalRun,
     QuestionRun,
@@ -97,7 +89,6 @@ from ..pipeline import (
 from ..project import catalog_print, fingerprint, records
 from ..proposals import PROPOSAL_MAX, found_by_question, last_number
 from ..questions import QUESTION_MAX, same_question
-from ..repository import STALE_MAP, council_folders, unskipped_since
 from ..work import (
     carried_analyses,
     carried_options,
@@ -112,7 +103,6 @@ from .councils import (
     MISSING,
     NOT_FOUND,
     PROBE_ATTEMPTS,
-    RunState,
     Slot,
     council_lock,
     launched,
@@ -131,87 +121,11 @@ NO_STREAM = {409: {"description": "Групп уже других: потока 
 CHANGING = {503: {"description": "Состав совета меняется прямо сейчас"}}
 NO_IDEA = "Сначала утвердите идею потока"
 NOT_STARTED = "Сначала начните поток"
-NO_RESEARCH = "Сначала пройдите исследование: шаги «Репозиторий» и «Дизайн»"
 RESLICED = "Типы фрагментов поменялись после раскладки — сначала разложите заново"
 # Всё, что ниже отбора решений проекта: другой отбор это сбрасывает.
 BELOW_DECISIONS = {"questions": None, "scope": None, "proposals": None, "choices": None,
                    "analysis": None, "decisions": None, "outcomes": None,
                    "earlier": [], "asked": 0, "earlier_outcomes": None}
-# Всё, что ниже шагов «Репозиторий» и «Дизайн»: другой скан, другой выбор на шаге или другая
-# идея это сбрасывает — и отбор решений проекта тоже.
-BELOW_DESIGN = {"decisions_search": None, "project_decisions": None, **BELOW_DECISIONS}
-
-
-@router.post("/{council_id}/streams/{group}/discovery", status_code=202,
-             responses={**NOT_FOUND, **CANNOT_START, **NO_STREAM})
-def start_discovery(council_id: str, group: str, store: StoreDep, config: ConfigDep,
-                    agents: AgentsDep, launch: LauncherDep) -> Council:
-    """Ищет идею потока заново: после сбоя или если при подтверждении не было подключения
-    к моделям. Повтор не платит второй раз за ответы, которые модели уже дали."""
-    def ready(council: Council) -> None:
-        stream = stream_in(council, group)
-        if not group_of(council, group).missing_idea:
-            raise HTTPException(422, "Идея группы записана в тексте — искать нечего")
-        if stream.idea is not None:
-            raise HTTPException(409, "Идея потока уже утверждена")
-        if outdated(council.slicing, council.structure):
-            raise HTTPException(409, RESLICED)
-
-    return start_run(
-        council_id, store, config, agents, launch, discovery(group), ready, None,
-        lambda council, report: IdeaRun(council.id, fragments_of(council, group_of(council, group)),
-                                        council.participants, council.judge, agents, report),
-    )
-
-
-@router.post("/{council_id}/streams/{group}/idea",
-             responses={**NOT_FOUND, **NOT_THESE_GROUPS, **NO_STREAM,
-                        422: {"description": "Пустая или слишком длинная идея, или идею из "
-                                             "текста пытаются править"},
-                        423: {"description": "Совет ещё работает с прежней идеей"}})
-def approve_idea(council_id: str, group: str, edit: ApproveIdea, store: StoreDep) -> Council:
-    """Человек утверждает идею потока — на этапе «Группы»; когда идеи всех групп утверждены,
-    дальше — исследование совета. Утвердить заново — поменять идею: в потоке всё, с чем его
-    начали (копия исследования), вопросы и всё ниже было к прежней и сбрасывается — поток
-    начинают заново; та же идея их не трогает. Исследование совета само не сбрасывается: видно,
-    что оно было к прежним идеям. Идея, записанная в тексте, не правится: это фрагменты группы."""
-    with council_lock:
-        council = current(council_id, store, edit)
-        stream = stream_in(council, group)
-        idea = idea_for(council, stream, group, edit.text)
-        changes: dict = {"idea": idea}
-        if idea_changed(stream, idea):
-            # Другую идею, пока ниже по цепочке совет ещё работает, не утвердить: его ход
-            # пришлось бы бросить. Ту же — можно: это повтор (другая вкладка, потерянный ответ).
-            if below_running(stream, "scan"):
-                raise HTTPException(423, "Совет ещё работает с прежней идеей — дождитесь его")
-            changes |= {"scan": None, "repository": None, "design_scan": None, "design": None,
-                        **BELOW_DESIGN}
-        council = store.update_council(council_id, {
-            "streams": replaced(council, stream.model_copy(update=changes))})
-    if council is None:
-        raise HTTPException(404, MISSING)
-    return council
-
-
-def idea_for(council: Council, stream: Stream, group: str, text: str | None) -> StreamIdea:
-    """Идея, которую утверждают: из текста — его фрагменты-идеи, иначе — формулировка
-    человека. Пока совет ищет идею, утверждать рано."""
-    target = group_of(council, group)
-    if not target.missing_idea:
-        if text is not None:
-            raise HTTPException(422, "Идея группы записана в тексте — её не правят")
-        texts = {fragment.id: fragment.text for fragment in council.slicing.fragments}
-        return StreamIdea(text=" ".join(texts[i] for i in target.idea_fragment_ids),
-                          by="text", evidence=target.idea_fragment_ids)
-    if running(stream.discovery):
-        raise HTTPException(409, "Совет ещё ищет идею — дождитесь его")
-    return idea_of(text, stream.discovery)
-
-
-def idea_changed(stream: Stream, idea: StreamIdea) -> bool:
-    """Утверждают другую идею, чем была: всё ниже было к прежней."""
-    return stream.idea is None or stream.idea.text != idea.text
 
 
 def step_key(step: RepositoryStep | DesignStep) -> str:
@@ -230,123 +144,6 @@ def asks_anew(stream: Stream, repository: RepositoryStep, design: DesignStep,
             or questions.design != step_key(design)
             or questions.decisions != [d.adr_id for d in picked]
             or questions.decisions_seen != fingerprint(picked))
-
-
-@router.post("/{council_id}/streams/{group}/start",
-             responses={**NOT_FOUND, **NOT_THESE_GROUPS, **NO_STREAM, **CHANGING,
-                        409: {"description": "Групп уже других, идею не утвердили или поменяли, "
-                                             "или исследование не пройдено"},
-                        423: {"description": "Совет ещё работает с этим потоком"}})
-def start_stream(council_id: str, group: str, edit: StartStream, store: StoreDep,
-                 config: ConfigDep, agents: AgentsDep, launch: LauncherDep,
-                 notes_of: NotesOfDep, issues_of: IssuesOfDep,
-                 repositories: RepositoriesDep) -> Council:
-    """Человек начинает поток: поток берёт себе копию исследования совета — карту кода и
-    описание макета, — и совет сразу ищет открытые вопросы, а карта и описание идут во все
-    следующие шаги. Если в каталоге заметок есть прошлые решения проекта, сначала совет отбирает
-    относящиеся к идее, а вопросы — когда человек отметит нужные. Начать заново, когда
-    исследование с тех пор прошли иначе, — всё ниже заново, с новым исследованием; с тем же —
-    ничего не меняется. Идея — та, что человек видел. Карта кода, сделанная, когда скан ещё
-    читал папки совета, — 409: её делают заново."""
-    def folders(council: Council) -> list[tuple[Path, str]]:
-        return council_folders(notes_of(council), issues_of(council))
-
-    def anew_in(council: Council) -> bool:
-        """Поток берёт исследование заново: тогда — и его карту кода."""
-        stream = taken(council, stream_in(council, group), edit)
-        return asks_anew(stream, stream.repository, stream.design)
-
-    # Сверка карты с папками совета зовёт git в каждой рабочей копии — не под замком советов:
-    # до него, а под замком — что сверяли тот же скан и те же папки. Повтор начала, которое уже
-    # прошло, карту не берёт — и не сверяет.
-    with council_lock:
-        council = current(council_id, store, edit)
-        seen = (map_scan(council), folders(council)) if anew_in(council) else None
-    stale = (seen is not None and seen[0] is not None
-             and unskipped_since(seen[0], repositories, seen[1]))
-
-    def checked(council: Council) -> None:
-        if (map_scan(council), folders(council)) != seen:
-            raise HTTPException(409, "Исследование или папки проекта поменялись, пока совет сверял "
-                                     "карту кода, — начните поток снова")
-        if stale:
-            raise HTTPException(409, STALE_MAP)
-
-    def plan() -> tuple[Council, bool]:
-        council = current(council_id, store, edit)
-        stream = taken(council, stream_in(council, group), edit)
-        anew = asks_anew(stream, stream.repository, stream.design)
-        if anew:
-            checked(council)
-        if anew and below_running(stream_in(council, group), "decisions_search"):
-            raise HTTPException(423, "Совет ещё работает с этим потоком — дождитесь его")
-        return council, anew
-
-    def apply(council: Council, missing: list[str]) -> tuple[Council, list[CouncilRun]]:
-        before = stream_in(council, group)
-        ready = taken(council, before, edit)
-        changes: dict = {field: getattr(ready, field)
-                         for field in ("scan", "repository", "design_scan", "design")}
-        runs: list[CouncilRun] = []
-        # То же, что сочла plan(): иначе ходы ниже сбросились бы мимо её проверок (423, модели).
-        if not asks_anew(ready, ready.repository, ready.design):
-            return store.update_council(council_id, {
-                "streams": replaced(council, before.model_copy(update=changes))}), runs
-        checked(council)
-        notes = notes_of(council)       # под замком: проект и его папку меняют под ним же
-        catalog = project_catalog(notes, ready)
-        if catalog is not None and searches_anew(ready):
-            if missing:
-                search = unconnected(start_decisions(
-                    council.participants, council.judge, ready.idea.text,
-                    step_key(ready.repository), step_key(ready.design)), missing)
-            else:
-                runs = [decisions_run(council, group, ready, agents, store, catalog,
-                                      own_ids(ready, notes), repositories)]
-                search = runs[0].state.model_copy(deep=True)
-            changes |= {**BELOW_DESIGN, "decisions_search": search}
-        elif catalog is None:
-            if missing:
-                questions = unconnected(start_questions(
-                    council.participants, council.judge, ready.idea.text,
-                    step_key(ready.repository), step_key(ready.design), notes=notes_key(notes)),
-                    missing)
-            else:
-                runs = [question_run(council, group, ready.model_copy(
-                    update={"project_decisions": None}), agents, store, notes)]
-                questions = runs[0].state.model_copy(deep=True)
-            changes |= {**BELOW_DESIGN, "questions": questions}
-        return store.update_council(council_id, {
-            "streams": replaced(council, before.model_copy(update=changes))}), runs
-
-    return launched_all(store, council_id, launch, *probed(config, agents, plan, apply))
-
-
-def map_scan(council: Council) -> RepositoryScan | None:
-    """Скан, чью карту кода поток возьмёт из исследования, — если шаг «Репозиторий» пройден
-    сканом."""
-    research = council.research
-    if research is None or research.repository is None or research.repository.by != "scan":
-        return None
-    return research.scan
-
-
-def taken(council: Council, stream: Stream, edit: StartStream) -> Stream:
-    """Поток с копией исследования совета, с которой его начинают: идея утверждена и та, что
-    человек видел, исследование утверждено («К потокам →», web/research.py). Пропущенное после
-    «Вернуть исследование» — ещё не утверждено, хоть оба шага и пройдены."""
-    if stream.idea is None:
-        raise HTTPException(409, NO_IDEA)
-    seen_idea(stream, edit)
-    research = council.research
-    if research is None or not research.approved or research.repository is None \
-            or research.design is None:
-        raise HTTPException(409, NO_RESEARCH)
-    return stream.model_copy(update={
-        "scan": research.scan if research.repository.by == "scan" else None,
-        "repository": research.repository,
-        "design_scan": research.design_scan if research.design.by == "scan" else None,
-        "design": research.design})
 
 
 def catalog_at(notes: Path | None) -> Catalog | None:
@@ -489,15 +286,6 @@ def project_catalog(notes: Path | None, stream: Stream) -> Catalog | None:
     return catalog if adrs else None
 
 
-def searches_anew(stream: Stream) -> bool:
-    """Решения проекта отбираются заново, если их ещё не отбирали или отбирали к другой идее,
-    карте или описанию макета."""
-    search = stream.decisions_search
-    return (search is None or search.idea != stream.idea.text
-            or search.repository != step_key(stream.repository)
-            or search.design != step_key(stream.design))
-
-
 @router.post("/{council_id}/streams/{group}/project-decisions",
              responses={**NOT_FOUND, **NOT_THESE_GROUPS, **NO_STREAM, **CHANGING,
                         409: {"description": "Шаг «Дизайн» не пройден, отбор уже другой, ещё "
@@ -615,32 +403,6 @@ def approved_scan(stream: Stream) -> RepositoryScan | None:
     if step is None or step.by != "scan" or scan is None or scan.run != step.scan_run:
         return None
     return scan
-
-
-def decisions_run(council: Council, group: str, stream: Stream, runner: Runner, store: Store,
-                  catalog: Catalog, own: list[str], repositories: Path | None) -> DecisionsRun:
-    return DecisionsRun(council.id, stream, fragments_of(council, group_of(council, group)),
-                        council.participants, council.judge, runner,
-                        reporter(store, council.id, searching(group)), catalog=catalog,
-                        scan=approved_scan(stream), own=own, repositories=repositories)
-
-
-def idea_of(text: str | None, search: IdeaDiscovery | None) -> StreamIdea:
-    """Идея человека. Слово в слово как у совета — вариант совета с его опорой, иначе своя."""
-    text = " ".join((text or "").split())
-    if not text:
-        raise HTTPException(422, "Нужна формулировка идеи")
-    if len(text) > IDEA_MAX:
-        raise HTTPException(422, f"Идея длиннее {IDEA_MAX} знаков")
-    offered = []
-    if search is not None:
-        if search.proposal is not None and search.proposal.idea is not None:
-            offered.append((search.proposal.idea, search.proposal.evidence))
-        offered += [(option.idea, option.evidence) for option in search.options]
-    for idea, evidence in offered:
-        if idea == text:
-            return StreamIdea(text=text, by="council", evidence=evidence)
-    return StreamIdea(text=text, by="human")
 
 
 @router.post("/{council_id}/streams/{group}/questions/discovery", status_code=202,
@@ -1311,10 +1073,9 @@ def asked_after(stream: Stream, scope: list[OpenQuestion]) -> int:
     return max([stream.asked, *(int(i[1:]) for i in ids if i[1:].isdigit())])
 
 
-def seen_idea(stream: Stream, edit: StartStream | SelectDecisions) -> None:
-    """Правка — к той идее, что человек видел (edit.idea): её поменяли в другой вкладке — до
-    запроса или пока шла проверка моделей и git (plan() зовётся и до, и после), — 409, а не скан
-    или поиск вопросов под идею, которой он не видел."""
+def seen_idea(stream: Stream, edit: SelectDecisions) -> None:
+    """Правка — к той идее, что человек видел (edit.idea): у потока идея другая — 409, а не поиск
+    вопросов под идею, которой он не видел."""
     if stream.idea is not None and stream.idea.text != edit.idea:
         raise HTTPException(409, "Идею потока поменяли — посмотрите на новую и повторите")
 
@@ -1357,11 +1118,6 @@ def unconnected[S: (IdeaDiscovery, RepositoryScan, DesignScan, DecisionsSearch,
         "state": "failed", "error": f"Нет подключения к моделям: {', '.join(missing)}"})
 
 
-def discovery(group: str) -> Slot:
-    """Поиск идеи потока как место хода. Потока нет — нет и хода."""
-    return stream_slot(group, "discovery")
-
-
 def searching(group: str) -> Slot:
     """Отбор решений проекта для потока как место хода."""
     return stream_slot(group, "decisions_search")
@@ -1390,18 +1146,6 @@ def assembling(group: str) -> Slot:
 def below_running(stream: Stream, field: str) -> bool:
     """Совет работает над этим звеном цепочки потока или над тем, что ниже него."""
     return any(running(getattr(stream, name)) for name in STREAM_RUNS[STREAM_RUNS.index(field):])
-
-
-def stream_slot(group: str, field: str) -> Slot:
-    def get(council: Council) -> RunState | None:
-        stream = find_stream(council, group)
-        return getattr(stream, field) if stream else None
-
-    def put(council: Council, state: RunState) -> dict:
-        stream = find_stream(council, group)
-        return {"streams": replaced(council, stream.model_copy(update={field: state}))}
-
-    return Slot(get, put)
 
 
 def question_run(council: Council, group: str, stream: Stream, runner: Runner,
@@ -1451,10 +1195,6 @@ def outcome_run(council: Council, group: str, stream: Stream, runner: Runner,
                       kept=kept)
 
 
-def find_stream(council: Council, group: str) -> Stream | None:
-    return next((stream for stream in council.streams or [] if stream.group == group), None)
-
-
 def stream_in(council: Council, group: str) -> Stream:
     """Поток группы. Нет — значит, группы уже другие: 409, экран покажет нынешние."""
     if council.streams is None:
@@ -1477,7 +1217,3 @@ def group_of(council: Council, group: str) -> Group:
 def fragments_of(council: Council, group: Group) -> list[LabeledFragment]:
     members = set(group.fragment_ids)
     return [fragment for fragment in council.slicing.fragments if fragment.id in members]
-
-
-def replaced(council: Council, stream: Stream) -> list[Stream]:
-    return [stream if s.group == stream.group else s for s in council.streams or []]

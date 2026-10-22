@@ -56,8 +56,9 @@ from tests.test_streams import (
     section,
     seen_idea,
     skip,
+    starts,
+    streams_made,
     streams_of,
-    takes,
 )
 
 PAST = [Note("IDEA-0001", "idea", "Ответы находятся без помощи людей."),
@@ -356,20 +357,6 @@ def test_past_decisions_are_selected_before_the_questions(agents):
     assert stream.questions.run != first
 
 
-def test_a_catalog_that_appears_later_leaves_the_found_questions_alone(agents, tmp_path):
-    root = tmp_path / "later"
-    root.mkdir()
-    app.dependency_overrides[get_notes_of] = lambda: lambda council: root
-    council_id = at_questions()
-    stream = streams_of(council_id)["C"]
-    assert stream.decisions_search is None and stream.questions.state == "done"
-    first = stream.questions.run
-    put(root)                                  # другой поток выгрузил решения
-    assert passes(council_id, "C").status_code == 200       # тот же шаг «Дизайн» ещё раз
-    stream = streams_of(council_id)["C"]
-    assert stream.decisions_search is None and stream.questions.run == first
-
-
 def test_a_decision_changed_in_the_catalog_meanwhile_sends_the_selection_back(agents, tmp_path):
     root = put(tmp_path / "fixed")
     app.dependency_overrides[get_notes_of] = lambda: lambda council: root
@@ -452,6 +439,7 @@ def test_only_an_export_to_this_catalog_makes_its_decisions_the_streams_own(
     confirm(council_id)
     approve(council_id, "C", IDEA_C)
     skip(council_id, "C")
+    streams_made(council_id)
     # Поток выгружал ADR-0001 и ADR-0002. В этот каталог — они его, прошлых решений нет; в
     # другой (папку документации сменили) — здесь под теми номерами чужие решения, и их отбирают.
     record = NotesExport(run="n1", outcomes="o1", language="Russian", root=str(tmp_path / where),
@@ -462,7 +450,7 @@ def test_only_an_export_to_this_catalog_makes_its_decisions_the_streams_own(
     store.update_council(council_id, {"streams": [
         s.model_copy(update={"notes": record}) if s.group == "C" else s
         for s in store.get_council(council_id).streams]})
-    passes(council_id, "C")
+    starts(council_id, "C")
     search = streams_of(council_id)["C"].decisions_search
     assert (search.catalog if search else None) == searched
 
@@ -609,11 +597,10 @@ def test_decisions_are_not_fixed_or_assembled_past_a_project_with_unselected_dec
             stream.outcomes) == ("failed", None, None, None)
 
 
-def test_without_models_the_selection_fails_and_the_questions_go_without_it(agents):
+def test_without_models_the_selection_waits_for_them(agents):
     agents.online = set()
     council_id = at_questions()
-    search = streams_of(council_id)["C"].decisions_search
-    assert search.state == "failed" and search.error.startswith("Нет подключения")
+    assert streams_of(council_id)["C"].decisions_search is None
     agents.online = {"sol", "fable"}
     assert client.post(f"/api/councils/{council_id}/streams/C/project-decisions/search"
                        ).status_code == 202
@@ -634,7 +621,6 @@ def test_the_trail_comes_from_the_approved_repository_map(agents, tmp_path):
         confirm(council_id)
         approve(council_id, "C", IDEA_C)
         scans(council_id, "C")
-        takes(council_id, "C")
         passes(council_id, "C")
     finally:
         app.dependency_overrides.pop(get_repositories)
@@ -676,7 +662,6 @@ def test_the_trail_is_found_in_the_copy_where_it_is_when_the_selection_runs(agen
         confirm(council_id)
         approve(council_id, "C", IDEA_C)
         scans(council_id, "C")
-        takes(council_id, "C")
         mounted = tmp_path / "mounted"
         repos.rename(mounted)                                   # прежнего корня больше нет
         app.dependency_overrides[get_repositories] = lambda: mounted

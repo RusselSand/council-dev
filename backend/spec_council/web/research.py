@@ -55,7 +55,13 @@ from ..models import (
 from ..models import Research as Stored
 from ..pipeline import SCAN_ROUNDS, CodeResearchRun, DesignRun
 from ..projects import Projects
-from ..repository import Inventory, RepositoryError, council_folders, working_copy
+from ..repository import (
+    Inventory,
+    RepositoryError,
+    council_folders,
+    unskipped_since,
+    working_copy,
+)
 from ..standing import shown_streams
 from ..standing import structure_of as groups_stage
 from ..store import council_lock
@@ -340,11 +346,21 @@ def decide(council_id: str, finding_id: str, fields: FindingFields,
 
 @router.post("/councils/{council_id}/research/approve")
 def approve(council_id: str, store: StoreDep, projects: ProjectsDep,
-            repositories: RepositoriesDep, body: Empty | None = None) -> CouncilAnswer:
+            repositories: RepositoriesDep, notes_of: NotesOfDep, issues_of: IssuesOfDep,
+            body: Empty | None = None) -> CouncilAnswer:
     """Утверждает исследование: оба готовы или пропущены, находок, что ждут решения, нет,
-    группы подтверждены (решение q-002) и у каждой есть идея (решение q-002 бекенда).
-    Исследование становится взятым, и, если «Потоки» не начаты, каждая группа — потоком со своей
-    копией исследования. Уже утверждено — в ответ совет как есть."""
+    группы подтверждены (решение q-002) и у каждой есть идея (решение q-002 бекенда), а карта
+    кода, которую возьмут потоки, не читала папок совета (решение q-004 бекенда): скан пропускал
+    не те папки документации и задач проекта, что пропустил бы сейчас (unskipped_since), —
+    stale_map, код исследуют заново. Исследование становится взятым, и, если «Потоки» не начаты,
+    каждая группа — потоком со своей копией исследования. Потоки уже есть — копию берут только
+    потоки прежней версии, которые не начинали (domain.backfilled): иначе им её не взять. Уже
+    утверждено — в ответ совет как есть."""
+    # Сверка карты с папками совета зовёт git в каждой рабочей копии — не под замком советов: до
+    # него, а под замком — что сверяли ту же карту и те же папки.
+    with council_lock:
+        seen = map_of(council_of(store, council_id), notes_of, issues_of)
+    stale = seen is not None and unskipped_since(seen[0], repositories, seen[1])
     with council_lock:
         council = council_of(store, council_id)
         research = stored_of(council)
@@ -358,10 +374,19 @@ def approve(council_id: str, store: StoreDep, projects: ProjectsDep,
             if missing:
                 raise ApiError(409, "research_not_ready",
                                f"У групп совета {council_id} нет идеи: {', '.join(missing)}")
+            if map_of(council, notes_of, issues_of) != seen:
+                raise ApiError(409, "research_not_ready",
+                               "Исследование кода или папки проекта поменялись, пока совет "
+                               "сверял карту кода, — утвердите снова")
+            if stale:
+                raise ApiError(409, "stale_map",
+                               "Карта кода читала папки совета — исследуйте код заново")
             research = taken(research)
             changes: dict = {"research": research}
             if not shown_streams(council):
                 changes |= streams_made(council, research)
+            else:
+                changes["streams"] = domain.backfilled(council.streams or [], research)
             council = store.update_council(council_id, changes) or council
     return CouncilAnswer(council=shown(council, projects, repositories))
 
@@ -533,9 +558,9 @@ def copy_reader(store: StoreDep, council_id: str, projects: Projects,
 
 def skipped_folders(council: Council, notes_of: NotesOf,
                     issues_of: NotesOf) -> list[tuple[Path, str]]:
-    """Папки документации и задач проекта совета — те же, что сверяет начало потока: в снимок
-    кода они не входят, прошлые решения приходят в совет отбором. Папка больше не годится —
-    её и пропускать негде."""
+    """Папки документации и задач проекта совета — те же, с которыми «К потокам →» сверяет карту
+    кода: в снимок кода они не входят, прошлые решения приходят в совет отбором. Папка больше не
+    годится — её и пропускать негде."""
     def folder(of: NotesOf) -> Path | None:
         try:
             return of(council)
@@ -572,6 +597,19 @@ def all_fragments(council: Council) -> list[LabeledFragment]:
 
 # Утверждение.
 
+def map_of(council: Council, notes_of: NotesOf,
+           issues_of: NotesOf) -> tuple[RepositoryScan, list[tuple[Path, str]]] | None:
+    """Карта кода, которую потоки возьмут на «К потокам →», и папки совета, с которыми её
+    сверяют: исследование кода готово, а исследование не утверждено. Иначе сверять нечего —
+    None. Решения по находкам — не карта: их могут принять в другой вкладке, пока совет
+    сверяет."""
+    research = stored_of(council)
+    if research.approved or block_of(research, "code") != "done" or research.scan is None:
+        return None
+    return (research.scan.model_copy(update={"decisions": {}}),
+            skipped_folders(council, notes_of, issues_of))
+
+
 def taken(research: Stored) -> Stored:
     """Исследование утверждено: готовое — взято своим сканом, пропущенное — пропущено."""
     return research.model_copy(update={
@@ -587,10 +625,7 @@ def streams_made(council: Council, research: Stored) -> dict:
     копией исследования. Поток прежней версии у группы уже есть — он остаётся, со своей идеей.
     Группы потоков, какими они были до правок (structure.stream_groups), — у потоков прежних:
     новым потокам они ни к чему."""
-    copy = {"scan": research.scan if research.repository.by == "scan" else None,
-            "repository": research.repository,
-            "design_scan": research.design_scan if research.design.by == "scan" else None,
-            "design": research.design}
+    copy = domain.stream_copy(research)
     kept = {stream.group: stream for stream in council.streams or []}
     streams = []
     for group in council.structure.groups if council.structure else []:

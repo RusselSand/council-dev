@@ -37,6 +37,7 @@ from .models import (
     TaskPlan,
     TasksDraft,
 )
+from .research import backfilled
 from .work import with_kept
 
 log = logging.getLogger(__name__)
@@ -226,10 +227,12 @@ def writable(folder: Path) -> None:
 def migrated(council: Council) -> Council:
     """Совет, сохранённый до шагов «Репозиторий» или «Дизайн»: у потока, где вопросы уже
     искали, шаг считается пропущенным, и вопросы — найденными без карты или описания макета.
-    Иначе он вернулся бы на этот шаг, а «Пропустить» пересчитало бы всё, что ниже. Незаконченные
-    сборка и нарезка, сохранённые пустыми, — с закреплённым (work.with_kept). Менять нечего —
-    тот же совет."""
-    streams = [with_kept(passed(stream)) for stream in council.streams or []]
+    Иначе он вернулся бы на этот шаг, а «Пропустить» пересчитало бы всё, что ниже. Потоки,
+    которые прежняя версия не начинала, а исследование утвердила, — с его копией
+    (research.backfilled): начала потока больше нет. Незаконченные сборка и нарезка, сохранённые
+    пустыми, — с закреплённым (work.with_kept). Менять нечего — тот же совет."""
+    streams = [with_kept(stream) for stream in backfilled(
+        [passed(stream) for stream in council.streams or []], council.research)]
     if streams == (council.streams or []):
         return council
     return council.model_copy(update={"streams": streams})
@@ -290,11 +293,13 @@ def running(state: Slicing | Structure | IdeaDiscovery | RepositoryScan | Design
 
 def halted[S: (Slicing, Structure, IdeaDiscovery, RepositoryScan, DesignScan,
                DecisionsSearch, QuestionDiscovery, ProposalDiscovery, DecisionAnalysis,
-               OutcomeDiscovery, TaskPlan, NotesDraft, TasksDraft)](state: S) -> S:
-    """Ход, прерванный остановкой: упал, и шаги с моделями, что работали, — тоже."""
+               OutcomeDiscovery, TaskPlan, NotesDraft, TasksDraft)](
+        state: S, error: str = INTERRUPTED) -> S:
+    """Ход, прерванный остановкой: упал, и шаги с моделями, что работали, — тоже. error —
+    почему: по умолчанию сервер остановился, пока шёл ход."""
     steps = [step.model_copy(update={
         "state": "failed" if step.state == "running" else step.state,
-        "runs": [run.model_copy(update={"state": "failed", "error": INTERRUPTED})
+        "runs": [run.model_copy(update={"state": "failed", "error": error})
                  if run.state == "running" else run for run in step.runs],
     }) for step in state.steps]
-    return state.model_copy(update={"state": "failed", "error": INTERRUPTED, "steps": steps})
+    return state.model_copy(update={"state": "failed", "error": error, "steps": steps})
