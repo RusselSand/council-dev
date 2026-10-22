@@ -45,8 +45,9 @@ from .schema import Empty, Schema
 
 router = APIRouter(route_class=ContractRoute, tags=["streams"])
 
-Phase = Literal["question_discovery", "question_judge", "proposal_discovery", "proposal_judge",
-                "decision_analysis", "decision_judge", "outcome_discovery", "outcome_judge"]
+Phase = Literal["project_decisions_discovery", "project_decisions_judge", "question_discovery",
+                "question_judge", "proposal_discovery", "proposal_judge", "decision_analysis",
+                "decision_judge", "outcome_discovery", "outcome_judge"]
 
 
 class StepProgress(Schema):
@@ -98,11 +99,12 @@ def retry_stream(council_id: str, stream_id: str, store: StoreDep, agents: Agent
         council = council_of(store, council_id)
         stream = shown_of(council, stream_id)
         folders = folders_of(council, projects, repositories)
-        started = retried(council, stream, agents, store, folders.notes)
+        started = retried(council, stream, agents, store, folders.notes, repositories)
         if started is not None:
             council = store.update_council(council_id, {
                 "streams": replaced(council, started.stream)}) or council
-    if started is not None and not launched(launch, started.pipeline, started.report):
+    if started is not None and started.pipeline is not None \
+            and not launched(launch, started.pipeline, started.report):
         raise ApiError(500, "internal", "Сервер останавливается — шаг не запущен снова")
     return StreamAnswer(stream=stream_of(council, shown_of(council, stream_id), folders))
 
@@ -135,8 +137,8 @@ def step_of(council: Council, stream: Stored, step: Step, state: State,
 
 def progress_of(council: Council, run: Run | None, step: Step,
                 state: State) -> list[StepProgress]:
-    """Ход последнего запуска шага по частям. Шаг не начат, моделей на нём нет («Решения
-    проекта», «Документация») или они на нём не работали — пусто."""
+    """Ход последнего запуска шага по частям. Шаг не начат, моделей на нём нет («Документация»)
+    или они на нём не работали (в каталоге не было прошлых решений) — пусто."""
     work = WORKS.get(step)
     if work is None or run is None or state == "idle":
         return []
@@ -210,7 +212,9 @@ def note_of(stream: Stored, step: Step, state: State, notes: str | None) -> str:
 
 
 def project_note(stream: Stored, done: bool, notes: str | None) -> str:
-    """Готовы — что учтено; ждут вас — что нашлось в каталоге решений проекта."""
+    """Готовы — что учтено; ждут вас — что отобрали модели из каталога решений проекта. Отбора
+    нет — в каталоге не было прошлых решений: моделям нечего было отбирать (решение q-005
+    бекенда)."""
     if done:
         chosen = [decision.adr_id for decision in stream.project_decisions or []]
         if not chosen:
@@ -219,11 +223,11 @@ def project_note(stream: Stored, done: bool, notes: str | None) -> str:
     if notes is None:
         return "у проекта нет папки документации"
     search = stream.decisions_search
-    if search is None or search.state != "done":
-        return "отметьте прошлые решения"
-    if search.decisions:
+    if search is not None and search.decisions:
         return f"найдено решений: {len(search.decisions)}"
-    return "решений в каталоге нет" if not search.catalog else "относящихся к идее решений нет"
+    if search is None or not search.catalog:
+        return "решений в каталоге нет"
+    return "относящихся к идее решений нет"
 
 
 def questions_note(stream: Stored, done: bool, notes: str | None) -> str:

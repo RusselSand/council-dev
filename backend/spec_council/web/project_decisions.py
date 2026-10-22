@@ -2,13 +2,15 @@
 …/streams/{streamId}/project-decisions) и их отбор (POST …/project-decisions/approve).
 
 Прошлые решения — решения из каталога заметок проекта (его папки документации), которые совет
-счёл относящимися к идее потока: их отбирают модели (pipeline.DecisionsRun), и отбор лежит в
-потоке — stream.decisions_search. Что человек отметил — stream.project_decisions: эти решения
-идут в промпты вопросов, вариантов и решений потока.
+счёл относящимися к идее потока: их отбирают модели (pipeline.DecisionsRun) сразу после
+«К потокам →» (web/research.py, решение q-005 бекенда), и отбор лежит в потоке —
+stream.decisions_search. Что человек отметил — stream.project_decisions: эти решения идут в
+промпты вопросов, вариантов и решений потока.
 
-Отбор человека — переход к «Вопросам»: шаг ждал вас — он готов, и модели начинают собирать
-вопросы с отмеченными решениями (chain.begun). Шаг уже был готов («Изменить отбор») — меняется
-только отбор, остальные шаги — нет, как в макете.
+Отбор человека — переход к «Вопросам»: шаг ждал вас или остановился — он готов, и модели
+начинают собирать вопросы с отмеченными решениями (chain.begun). Шаг уже был готов («Изменить
+отбор») — меняется только отбор, остальные шаги — нет, как в макете. Пока модели отбирают
+решения, отбора человека нет: project_not_ready.
 """
 
 from pathlib import Path
@@ -91,18 +93,24 @@ def get_project_decisions(council_id: str, stream_id: str, store: StoreDep,
 def approve(council_id: str, stream_id: str, body: Selection, store: StoreDep,
             agents: AgentsDep, launch: LauncherDep, projects: ProjectsDep,
             repositories: RepositoriesDep) -> StreamAnswer:
-    """Отбор прошлых решений. Шаг ждал вас — он готов, и модели начинают собирать вопросы, в
-    фоне; уже был готов — меняется только отбор. Проверка и запуск — под замком советов: два
-    нажатия не запустят два хода."""
+    """Отбор прошлых решений. Шаг ждал вас или остановился — он готов, и модели начинают
+    собирать вопросы, в фоне; уже был готов — меняется только отбор. Модели ещё отбирают
+    решения — project_not_ready. Проверка и запуск — под замком советов: два нажатия не
+    запустят два хода."""
     with council_lock:
         council = council_of(store, council_id)
         stream = shown_of(council, stream_id)
         folders = folders_of(council, projects, repositories)
+        state = stream_standing(stream, folders.notes).steps["project"]
+        if state == "running":
+            raise ApiError(409, "project_not_ready",
+                           f"Модели ещё отбирают прошлые решения потока {stream_id}")
         chosen = chosen_of(stream, body.selected)
         ready = stream.model_copy(update={"project_decisions": chosen})
         start = None
-        if stream_standing(stream, folders.notes).steps["project"] != "done":
-            start = begun(council, ready, "questions", agents, store, folders.notes)
+        if state != "done":
+            start = begun(council, ready, "questions", agents, store, folders.notes,
+                          repositories)
             ready = start.stream
         council = store.update_council(council_id, {"streams": replaced(council, ready)}) \
             or council
