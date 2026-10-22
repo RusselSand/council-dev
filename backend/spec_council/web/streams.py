@@ -7,7 +7,8 @@ standing.py, как и состояние совета. Здесь — что в
 (note), что на плашке (text) и ход последнего запуска (progress). Строку и плашку пишет сервер:
 в них числа, номера решений и имена моделей потока.
 
-Как шаги идут друг за другом и как шаг запускают снова — chain.py.
+Как шаги идут друг за другом и как шаг запускают снова — chain.py; перевод заметок на
+«Документации» — stream_notes.py.
 """
 
 from collections.abc import Callable
@@ -19,8 +20,9 @@ from ..background import launched
 from ..chain import WORKS, idea_of, replaced, retried
 from ..deps import AgentsDep, LauncherDep, ProjectsDep, RepositoriesDep, StoreDep
 from ..groups import stream_group
-from ..models import Council
+from ..models import Council, StepName
 from ..models import Stream as Stored
+from ..notes import NotesError
 from ..options import counted
 from ..standing import (
     STEP_RUNS,
@@ -36,10 +38,13 @@ from ..standing import (
     plural,
     shown_streams,
     stream_standing,
+    translation,
     working,
 )
 from ..store import council_lock
 from ..stream_decisions import counted as decided
+from ..stream_notes import retried as retranslated
+from ..stream_notes import written_draft
 from ..stream_outcomes import counted as approved_outcomes
 from .councils import folders_of, missing
 from .errors import ApiError, ContractRoute, not_found
@@ -50,7 +55,10 @@ router = APIRouter(route_class=ContractRoute, tags=["streams"])
 
 Phase = Literal["project_decisions_discovery", "project_decisions_judge", "question_discovery",
                 "question_judge", "proposal_discovery", "proposal_judge", "decision_analysis",
-                "decision_judge", "outcome_discovery", "outcome_judge"]
+                "decision_judge", "outcome_discovery", "outcome_judge", "notes_translation"]
+
+# Часть «Документации»: судья переводит заметки (решение q-008 бекенда).
+TRANSLATION = (StepName.notes_translation,)
 
 
 class StepProgress(Schema):
@@ -96,13 +104,19 @@ def retry_stream(council_id: str, stream_id: str, store: StoreDep, agents: Agent
                  launch: LauncherDep, projects: ProjectsDep, repositories: RepositoriesDep,
                  body: Empty | None = None) -> StreamAnswer:
     """Шаг потока, который остановился, — заново, в фоне: модели, которые уже ответили, заново
-    не работают. Шага с ошибкой нет — в ответ поток как есть. Проверка и запуск — под замком
-    советов: два нажатия не запустят два хода."""
+    не работают; у «Документации» — перевод заметок. Шага с ошибкой нет — в ответ поток как есть.
+    Проверка и запуск — под замком советов: два нажатия не запустят два хода."""
     with council_lock:
         council = council_of(store, council_id)
         stream = shown_of(council, stream_id)
         folders = folders_of(council, projects, repositories)
         started = retried(council, stream, agents, store, folders.notes, repositories)
+        if started is None:
+            try:
+                started = retranslated(council, stream, folders.notes, agents, store)
+            except NotesError as exc:
+                raise ApiError(500, "internal",
+                               f"Выгрузку потока {stream_id} не собрать: {exc}") from None
         if started is not None:
             council = store.update_council(council_id, {
                 "streams": replaced(council, started.stream)}) or council
@@ -132,22 +146,39 @@ def title_of(council: Council, stream: Stored) -> str:
 
 def step_of(council: Council, stream: Stored, step: Step, state: State,
             notes: str | None) -> StreamStep:
-    run = getattr(stream, STEP_RUNS[step])
+    run = run_of(stream, step, state, notes)
     return StreamStep(step=step, state=state, note=note_of(stream, step, state, notes),
                       text=text_of(run, step, state), progress=progress_of(council, run, step,
                                                                           state))
 
 
+def run_of(stream: Stored, step: Step, state: State, notes: str | None) -> Run | None:
+    """Ход шага. У «Документации» — перевод заметок, который ведёт шаг, а у готовой — записанный
+    черновик: с ходом перевода, если судья переводил."""
+    if step != "notes":
+        return getattr(stream, STEP_RUNS[step])
+    return written_draft(stream) if state == "done" else translation(stream, notes)
+
+
 def progress_of(council: Council, run: Run | None, step: Step,
                 state: State) -> list[StepProgress]:
-    """Ход последнего запуска шага по частям. Шаг не начат, моделей на нём нет («Документация»)
-    или они на нём не работали (в каталоге не было прошлых решений) — пусто."""
-    work = WORKS.get(step)
-    if work is None or run is None or state == "idle":
+    """Ход последнего запуска шага по частям. Шаг не начат или модели на нём не работали (в
+    каталоге не было прошлых решений, на «Документации» заметки не переводили) — пусто."""
+    if run is None or state == "idle":
         return []
-    judge = judge_of(run.steps, work.phases[1:], council.judge)
+    phases, judging = phases_of(step)
+    judge = judge_of(run.steps, judging, council.judge)
     return [StepProgress(phase=part.name.value, runs=step_runs_of(part, judge))
-            for part in run.steps if part.name in work.phases]
+            for part in run.steps if part.name in phases]
+
+
+def phases_of(step: Step) -> tuple[tuple[StepName, ...], tuple[StepName, ...]]:
+    """Части шага, где работают модели, и какие из них — судьи: у шагов с моделями совета — все
+    части после первой; заметки переводит один судья."""
+    if step == "notes":
+        return TRANSLATION, TRANSLATION
+    phases = WORKS[step].phases
+    return phases, phases[1:]
 
 
 def text_of(run: Run | None, step: Step, state: State) -> str | None:
@@ -266,9 +297,12 @@ def outcomes_note(stream: Stored, done: bool, notes: str | None) -> str:
 
 
 def notes_note(stream: Stored, done: bool, notes: str | None) -> str:
-    """Готова — сколько заметок выгружено; ждёт вас — черновик."""
+    """Готова — сколько заметок выгружено, а без папки документации — что выгружать было некуда;
+    ждёт вас — черновик."""
     if not done:
         return "черновик ждёт вас"
+    if notes is None:
+        return "у проекта нет папки документации"
     export = stream.notes
     written = sum(1 for note in export.notes if not note.kept and note.type != "issue") \
         if export else 0

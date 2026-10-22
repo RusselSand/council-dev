@@ -28,7 +28,7 @@ import {
 } from './councils';
 import { DECISIONS, type MockDecision } from './decisions';
 import { MODELS } from './models';
-import { NOTES, type MockNotes } from './notes';
+import { COUNCIL_LANGUAGE, NOTES, type MockNotes } from './notes';
 import { noOptions, OPTIONS, ownOption, type MockOptionSet } from './options';
 import { OUTCOMES } from './outcomes';
 import { PROJECT_LIST, REPO_LIST, type MockProject } from './projects';
@@ -1030,7 +1030,10 @@ export const mockSource: DataSource = {
       const approved = all.filter((o) => o.approved).length;
       const now = new Date().toISOString();
       const { participants, judge } = councils[index];
-      list[at] = outcomesStepApproved(list[at], approved, all.length, participants, judge, now);
+      // Заметки пишутся не на языке совета — судья сначала переводит их (решение q-008 бекенда).
+      const { catalog } = notesOf(id, streamId);
+      const translating = catalog !== null && catalog.language !== COUNCIL_LANGUAGE;
+      list[at] = outcomesStepApproved(list[at], approved, all.length, participants, judge, now, translating);
       // Поток дошёл до итогов: его задачи встают в план незаписанными — записанные «Задачи» снова не готовы.
       councils[index] = streamsChanged(tasksReopened(councils[index]), list, streamId, now);
     }
@@ -1050,6 +1053,10 @@ export const mockSource: DataSource = {
     const list = streams.get(id) ?? [];
     const { state } = stepOf(list[at], 'notes');
     if (state === 'idle') throw new ApiError('notes_not_ready', `Шаг «Документация» потока ${streamId} не начат`, 409);
+    // Пока судья переводит заметки или перевод остановился, записывать нечего: перевода ещё нет.
+    if (state === 'running' || state === 'failed') {
+      throw new ApiError('notes_not_ready', `Заметки потока ${streamId} ещё не переведены`, 409);
+    }
     // Шаг уже готов — ничего не меняем, отвечаем потоком как есть.
     if (state !== 'done') {
       const written = notesOf(id, streamId);

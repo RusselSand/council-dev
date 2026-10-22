@@ -326,6 +326,7 @@ const WORK: Partial<Record<Step, [one: string, many: string]>> = {
   options: ['ищет варианты', 'ищут варианты'],
   decisions: ['проверяет решения', 'проверяют решения'],
   outcomes: ['собирает итоги', 'собирают итоги'],
+  notes: ['переводит заметки', 'переводят заметки'],
 };
 
 /** «sol и fable собирают вопросы». */
@@ -341,6 +342,7 @@ const RUNNING_NOTE: Partial<Record<Step, string>> = {
   options: 'поиск вариантов идёт',
   decisions: 'проверка решений идёт',
   outcomes: 'сбор итогов идёт',
+  notes: 'перевод заметок идёт',
 };
 
 /** Строка шага в цепочке, когда он ждёт человека сразу, без работы моделей: «Документация» — как у потока A c1 в макете. */
@@ -471,7 +473,8 @@ export const outcomesNote = (approved: number, total: number, done: boolean) =>
 
 /**
  * Поток после «Утвердить итоги → к документации»: «Итоги» готовы — со строкой, сколько утверждено; «Документация» ждёт
- * вас. Какие итоги утверждены, переход не меняет, как в макете.
+ * вас, а если заметки пишутся не на языке совета (translating), — судья переводит их (решение q-008 бекенда). Какие
+ * итоги утверждены, переход не меняет, как в макете.
  */
 export const outcomesStepApproved = (
   stream: Stream,
@@ -480,7 +483,28 @@ export const outcomesStepApproved = (
   participants: string[],
   judge: string,
   now: string,
-): Stream => stepApproved(stream, 'outcomes', outcomesNote(approved, total, true), participants, judge, now);
+  translating: boolean,
+): Stream => {
+  const next = stepApproved(stream, 'outcomes', outcomesNote(approved, total, true), participants, judge, now);
+  return translating ? notesTranslating(next, judge, now) : next;
+};
+
+/** «Документация», где судья начал переводить заметки сейчас (now). В моках перевод не кончается. */
+const notesTranslating = (stream: Stream, judge: string, now: string): Stream => ({
+  ...stream,
+  steps: stream.steps.map(
+    (step): StreamStep =>
+      step.step === 'notes'
+        ? {
+            ...step,
+            state: 'running',
+            note: RUNNING_NOTE.notes ?? '',
+            text: workText('notes', [judge]),
+            progress: [{ phase: 'notes_translation', runs: [{ model: judge, state: 'running', startedAt: now }] }],
+          }
+        : step,
+  ),
+});
 
 /**
  * Строка «Документации» в цепочке, когда поток записан: «выгружено заметок: 57», как у g1 в макете; папки документации

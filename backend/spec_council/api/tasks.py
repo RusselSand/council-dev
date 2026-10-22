@@ -76,14 +76,24 @@ from ..tasks import (
 )
 from ..tasks_export import aligned, drafted_tasks
 from .councils import MISSING, NOT_FOUND
-from .documents import NO_NOTES, WriteNotes
 from .groups import NOT_THESE_GROUPS, current
 from .streams import CHANGING, launched_all, probed, unconnected
 
 router = APIRouter(prefix="/councils", tags=["tasks"])
 
+NO_NOTES = ("Папки документации нет: выберите совету проект на «Вводе» или задайте проекту "
+            "папку на странице «Проекты»")
 NO_ISSUES = ("У проекта нет папки задач: задайте её проекту на странице «Проекты» — задачи "
              "выгружаются файлами туда")
+
+
+class WriteNotes(GroupsEdit):
+    """Человек записывает черновик draft (TasksDraft.run): edits — его правки текста по ключу
+    файла, delete — какие исчезнувшие файлы удалить."""
+
+    draft: str
+    edits: dict[str, str] = {}
+    delete: list[str] = []
 
 
 def council_slot(field: str) -> Slot:

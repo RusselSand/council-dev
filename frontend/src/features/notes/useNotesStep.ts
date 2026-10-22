@@ -10,6 +10,7 @@ import {
   type NoteType,
   type StatusChange,
 } from '../../domain/notes';
+import { stepOf } from '../../domain/stream';
 import { useI18n, type Translate } from '../../i18n';
 import { navigate, routePath } from '../../router';
 import type { TagTone } from '../../ui/Tag';
@@ -104,7 +105,8 @@ const changeView = (change: StatusChange, t: Translate): StatusChangeView => ({
  * плашкой; заметки по группам — идея, вопросы, варианты, решения (ADR), итоги: id, заголовок и метка. Группа до 6
  * заметок открыта, больше — свёрнута; щелчок по группе открывает или сворачивает её, пока шаг на экране. Шаг ждёт вас —
  * внизу «Записать в каталог»: после ответа открываются «Задачи» совета, как в макете; ушли с шага, пока поток
- * записывался, — не открываются. Другой поток — другой экран: ставьте с key по совету и потоку.
+ * записывался, или поток не записан (перевод заметок к каталогу уже не подошёл, и судья переводит заново), — не
+ * открываются. Другой поток — другой экран: ставьте с key по совету и потоку.
  */
 export function useNotesStep(councilId: string, streamId: string, state: State): NotesStep {
   const { t, formatNumber } = useI18n();
@@ -143,7 +145,9 @@ export function useNotesStep(councilId: string, streamId: string, state: State):
     if (!notesApprovable(state) || action.pending) return;
     void (async () => {
       const stream = await action.run(councilId, streamId);
-      if (stream && open.current) navigate(routePath({ screen: 'stage', council: councilId, stage: 'tasks' }));
+      if (stream && open.current && stepOf(stream, 'notes').state === 'done') {
+        navigate(routePath({ screen: 'stage', council: councilId, stage: 'tasks' }));
+      }
     })();
   };
 

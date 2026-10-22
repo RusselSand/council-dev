@@ -447,9 +447,11 @@ DONE_UP_TO_OUTCOMES = {
      "outcomes", "waiting", "Утвердите итоги"),
     ({**DONE_UP_TO_OUTCOMES, "outcomes": finished(OutcomeDiscovery, approved=True)},
      "notes", "waiting", "Черновик заметок ждёт вас"),
+    # На «Документации» модели не работают: перевод черновика, который шёл у прежней версии, шаг
+    # не держит.
     ({**DONE_UP_TO_OUTCOMES, "outcomes": finished(OutcomeDiscovery, approved=True),
       "notes_draft": going(NotesDraft, StepName.notes_translation)},
-     "notes", "running", "fable переводит заметки"),
+     "notes", "waiting", "Черновик заметок ждёт вас"),
 ])
 def test_a_stream_stands_at_its_first_unfinished_step(store, stream, step, state, text):
     council = shown(store, **BEFORE_STREAMS, streams=[Stream(group="A", **stream)])
