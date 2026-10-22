@@ -658,7 +658,21 @@ class QuestionDiscovery(BaseModel):
     launch: int = 1
     reused: list[str] = []
     questions: list[OpenQuestion] = []
+    # Вопросы участников, которые ответили, сведённые без судьи (pipeline.QuestionRun): судья не
+    # справился или ход прервали — это вопросы моделей, которые успели ответить, их берут без
+    # перезапуска (scope.found_of). У готового хода — пусто: там вопросы свёл судья.
+    answered: list[OpenQuestion] = []
     error: str | None = None
+
+
+class OwnQuestion(BaseModel):
+    """Свой вопрос человека на шаге «Вопросы» («Свой вопрос…» и «Добавить»): сам вопрос (source
+    — added), убрал ли его человек и Idempotency-Key запроса, которым вопрос добавлен: повтор с
+    тем же ключом второго не создаёт."""
+
+    question: OpenQuestion
+    removed: bool = False
+    key: str = ""
 
 
 class Proposal(BaseModel):
@@ -1070,7 +1084,13 @@ class Stream(BaseModel):
     decisions_search: DecisionsSearch | None = None
     project_decisions: list[ProjectDecision] | None = None
     questions: QuestionDiscovery | None = None
-    # Вопросы, которые человек оставил и добавил: их и решает поток дальше.
+    # Шаг «Вопросы» (scope.py): свои вопросы человека в порядке добавления и какие из найденных
+    # моделями он убрал — у поиска dropped_run: поиск заново — вопросы другие, и убранных среди
+    # них нет. None — их ещё не записывали; поток прежней версии помнит их только отбором (scope).
+    own_questions: list[OwnQuestion] | None = None
+    dropped: list[str] | None = None
+    dropped_run: str = ""
+    # Вопросы, которые человек не убрал, когда утвердил вопросы: их решает поток дальше.
     scope: list[OpenQuestion] | None = None
     proposals: ProposalDiscovery | None = None
     choices: list[Choice] | None = None
@@ -1229,16 +1249,6 @@ class RenameGroup(GroupsEdit):
 # Сколько рабочих копий можно сканировать разом: у каждой свои вызовы git. Столько же их и у
 # проекта.
 REPOSITORIES_MAX = 10
-
-
-class ApproveScope(GroupsEdit):
-    """Человек утверждает, какие вопросы потоку решать: оставленные из найденных (их id) и
-    свои, добавленные при отборе (тексты). questions_run — к какому поиску (QuestionDiscovery
-    .run): каждый поиск нумерует вопросы с Q1, и отбор к прежнему лёг бы на чужие вопросы."""
-
-    questions_run: str
-    keep: list[str]
-    added: list[str] = []
 
 
 class ApproveChoices(GroupsEdit):
