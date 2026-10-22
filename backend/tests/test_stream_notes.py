@@ -1,20 +1,26 @@
 """«Документация» потока по контракту: выгрузка потока в заметки (GET
-/api/councils/{id}/streams/{streamId}/notes) и «Записать в каталог» (POST …/notes/approve). Модели
-на шаге не работают: черновик выгрузки сервер собирает сам, к каталогу заметок, какой он сейчас."""
+/api/councils/{id}/streams/{streamId}/notes) и «Записать в каталог» (POST …/notes/approve).
+Черновик выгрузки сервер собирает сам, к каталогу заметок, какой он сейчас; язык заметок не тот, на
+котором работает совет, — сначала судья переводит черновик (решение q-008 бекенда)."""
 
 import hashlib
+import json
 
 import pytest
 from fastapi.testclient import TestClient
 
+from spec_council import stream_notes
 from spec_council.app import app
 from spec_council.deps import get_agents, get_launcher, get_projects, get_repositories, get_store
 from spec_council.models import NotesDraft, NotesExport, ProjectDraft
 from spec_council.notes import Catalog, Note, path_of, rendered
+from spec_council.pipeline import ModelFailed
 from spec_council.projects import Projects
 from spec_council.store import InMemoryStore
+from spec_council.web import notes as web_notes
 from tests.test_stream_outcomes import Agents, approves, approves_one, assembled
 from tests.test_stream_questions import (
+    Closed,
     Pool,
     error_of,
     put,
@@ -427,8 +433,10 @@ def test_a_stream_the_prior_version_wrote_shows_its_written_draft(store, pool, p
     assert brief(export_of(council_id)) == [(note_id, kind, "kept") for note_id, kind in WRITTEN]
 
 
-def test_a_draft_of_the_prior_version_waiting_for_its_write_does_not_hold_the_step(
+def test_a_draft_of_the_prior_version_without_translation_does_not_hold_the_step(
         store, pool, projects, docs):
+    """Черновик прежней версии, который судья не переводил, шаг не держит: черновик сервер собирает
+    сам."""
     council_id = outcomes_approved(store, pool, projects)
     outcomes = stored(store, council_id).outcomes.run
     for state in ("running", "failed", "done"):
@@ -447,3 +455,214 @@ def test_an_export_to_another_folder_is_not_the_one_here(store, pool, projects, 
         store, council_id).outcomes.run, language="Russian", root=str(other)))
     assert steps_of(stream_of(council_id))["notes"]["state"] == "waiting"
     assert brief(export_of(council_id))[0] == ("IDEA-0001", "idea", "new")
+
+
+# --- перевод заметок (решение q-008 бекенда)
+
+class Translating(Agents):
+    """Модели совета, как на «Итогах»; судья переводит заметки — каждый текст с пометкой EN.
+    failing — перевод не справляется; turns — какие заметки судья переводил в каждом ходе."""
+
+    def __init__(self):
+        super().__init__()
+        self.failing_translation = False
+        self.turns: list[list[str]] = []
+
+    def ask(self, model, prompt, key, workspace=None, stop=None):
+        if key.split("-")[1] != "notes_translation":
+            return super().ask(model, prompt, key, workspace, stop)
+        if self.failing_translation:
+            raise ModelFailed("превышено время молчания CLI (15 мин)")
+        notes = json.loads(prompt.split("## NOTES\n")[1])
+        self.turns.append([note["key"] for note in notes])
+        return json.dumps({"notes": [{"key": note["key"], "text": f"EN {note['text']}"}
+                                     for note in notes]})
+
+
+def notes_in(monkeypatch, language: str) -> None:
+    """Язык заметок проекта (COUNCIL_NOTES_LANGUAGE); совет работает по-русски."""
+    monkeypatch.setattr(stream_notes, "notes_language", lambda: language)
+    monkeypatch.setattr(web_notes, "notes_language", lambda: language)
+
+
+@pytest.fixture(name="translating")
+def translating_judge(monkeypatch):
+    agents = Translating()
+    app.dependency_overrides[get_agents] = lambda: agents
+    notes_in(monkeypatch, "English")
+    return agents
+
+
+def retries(council_id, stream_id="A"):
+    return client.post(f"/api/councils/{council_id}/streams/{stream_id}/retry", json={})
+
+
+def runs_of(step: dict) -> list[tuple[str, list[tuple[str, str]]]]:
+    return [(part["phase"], [(run["model"], run["state"]) for run in part["runs"]])
+            for part in step["progress"]]
+
+
+def activity_of(council_id, stream_id="A") -> list[dict]:
+    return [item for item in summary_of(council_id)["activity"] if item["stream"] == stream_id]
+
+
+def test_notes_in_another_language_are_translated_by_the_judge_before_they_wait(
+        store, pool, projects, docs, translating):
+    council_id = assembled(store, pool)
+    with_project(store, projects, council_id)
+    assert approves_one(council_id, "O1").status_code == 200
+    res = approves(council_id)
+    assert res.status_code == 200, res.text
+    notes = steps_of(res.json()["stream"])["notes"]
+    assert (notes["state"], notes["note"], notes["text"]) == (
+        "running", "перевод заметок идёт", "fable переводит заметки")
+    assert runs_of(notes) == [("notes_translation", [("fable", "running")])]
+    assert notes["progress"][0]["runs"][0]["startedAt"] is not None
+    assert activity_of(council_id) == [{"stage": "streams", "stream": "A", "step": "notes",
+                                        "state": "running", "text": "fable переводит заметки"}]
+    # Пока судья переводит, заметки видны, а записать их нельзя.
+    export = export_of(council_id)
+    assert export["catalog"] == {"path": "docs", "language": "English"}
+    assert brief(export) == [(note_id, kind, "new") for note_id, kind in WRITTEN]
+    assert error_of(writes(council_id)) == (409, "notes_not_ready")
+    assert files_in(docs) == []
+    pool.run()
+    notes = steps_of(stream_of(council_id))["notes"]
+    assert (notes["state"], notes["note"], notes["text"]) == ("waiting", "черновик ждёт вас", None)
+    assert runs_of(notes) == [("notes_translation", [("fable", "done")])]
+    assert export_of(council_id) == export
+    stream = writes(council_id).json()["stream"]
+    notes = steps_of(stream)["notes"]
+    assert (notes["state"], notes["note"]) == ("done", "выгружено заметок: 14")
+    assert runs_of(notes) == [("notes_translation", [("fable", "done")])]
+    # Записан перевод, и судья переводил один раз — все заметки разом.
+    assert len(translating.turns) == 1 and len(translating.turns[0]) == len(WRITTEN)
+    assert all(note.body.startswith("EN ") for note in Catalog.load(docs).notes.values())
+    assert export_of(council_id) == export
+
+
+def test_a_stopped_translation_is_run_again(store, pool, projects, docs, translating):
+    translating.failing_translation = True
+    council_id = outcomes_approved(store, pool, projects)
+    pool.run()
+    notes = steps_of(stream_of(council_id))["notes"]
+    assert (notes["state"], notes["note"], notes["text"]) == (
+        "failed", "перевод заметок остановился",
+        "fable не справилась: превышено время молчания CLI (15 мин).")
+    assert runs_of(notes) == [("notes_translation", [("fable", "failed")])]
+    assert activity_of(council_id) == [{"stage": "streams", "stream": "A", "step": "notes",
+                                        "state": "failed", "text": "Перевод заметок остановился"}]
+    assert error_of(writes(council_id)) == (409, "notes_not_ready")
+    assert brief(export_of(council_id))[0] == ("IDEA-0001", "idea", "new")
+    translating.failing_translation = False
+    res = retries(council_id)
+    assert res.status_code == 200, res.text
+    notes = steps_of(res.json()["stream"])["notes"]
+    assert (notes["state"], notes["text"]) == ("running", "fable переводит заметки заново.")
+    assert runs_of(notes) == [("notes_translation", [("fable", "running")])]
+    pool.run()
+    assert steps_of(stream_of(council_id))["notes"]["state"] == "waiting"
+    assert writes(council_id).status_code == 200
+    assert all(note.body.startswith("EN ") for note in Catalog.load(docs).notes.values())
+
+
+def test_a_stopped_translation_with_nothing_left_to_translate_waits(store, pool, projects, docs,
+                                                                    translating, monkeypatch):
+    translating.failing_translation = True
+    council_id = outcomes_approved(store, pool, projects)
+    pool.run()
+    notes_in(monkeypatch, "Russian")                       # язык заметок — снова язык работы
+    notes = steps_of(retries(council_id).json()["stream"])["notes"]
+    assert (notes["state"], notes["text"], notes["progress"]) == ("waiting", None, [])
+    assert stored(store, council_id).notes_draft is None
+    assert writes(council_id).status_code == 200
+    assert Catalog.load(docs).notes["IDEA-0001"].body == "Хочу базу знаний."
+
+
+def citing(store, pool, projects) -> str:
+    """Итоги потока A утверждены, а «почему» решения по Q1 называет вопрос Q2: в заметке решения это
+    номер заметки вопроса."""
+    council_id = assembled(store, pool)
+    with_project(store, projects, council_id)
+    put(store, council_id, decisions=[
+        decision.model_copy(update={"rationale": "Так советует Q2."})
+        if decision.question_id == "Q1" else decision
+        for decision in stored(store, council_id).decisions])
+    assert approves_one(council_id, "O1").status_code == 200
+    assert approves(council_id).status_code == 200
+    return council_id
+
+
+def test_a_translation_follows_the_notes_when_another_stream_took_their_numbers(
+        store, pool, projects, docs, translating):
+    first = outcomes_approved(store, pool, projects)
+    second = citing(store, pool, projects)
+    pool.run()                                             # судья перевёл оба потока
+    assert len(translating.turns) == 2
+    # Пока первый не записан, у второго те же номера; записали первый — номера второго дальше.
+    assert brief(export_of(second)) == brief(export_of(first))
+    assert writes(first).status_code == 200
+    assert brief(export_of(second))[:2] == [("IDEA-0002", "idea", "new"),
+                                            ("OQ-0004", "question", "new")]
+    stream = writes(second).json()["stream"]
+    assert steps_of(stream)["notes"]["state"] == "done"
+    # Судью заново не звали: перевод перешёл на новые номера — и в тексте заметки тоже.
+    assert len(translating.turns) == 2
+    catalog = Catalog.load(docs)
+    assert catalog.notes["ADR-0003"].body == (
+        "EN Искать по заголовкам тредов, потому что так советует OQ-0005.")
+    assert catalog.notes["IDEA-0002"].body == "EN Хочу базу знаний."
+    assert catalog.problems() == []
+
+
+def test_a_translation_that_no_longer_fits_is_made_again_before_writing(
+        store, pool, projects, docs, translating, monkeypatch):
+    council_id = outcomes_approved(store, pool, projects)
+    pool.run()
+    notes_in(monkeypatch, "Deutsch")                       # перевод — на прежнем языке
+    res = writes(council_id)
+    assert res.status_code == 200, res.text
+    notes = steps_of(res.json()["stream"])["notes"]
+    assert (notes["state"], notes["text"]) == ("running", "fable переводит заметки заново.")
+    assert files_in(docs) == []
+    assert export_of(council_id)["catalog"] == {"path": "docs", "language": "Deutsch"}
+    pool.run()
+    assert len(translating.turns) == 2
+    assert steps_of(stream_of(council_id))["notes"]["state"] == "waiting"
+    assert steps_of(writes(council_id).json()["stream"])["notes"]["state"] == "done"
+    assert stored(store, council_id).notes.language == "Deutsch"
+
+
+def test_notes_in_the_councils_language_are_not_translated(store, pool, projects, translating,
+                                                           monkeypatch):
+    notes_in(monkeypatch, "Russian")
+    council_id = outcomes_approved(store, pool, projects)
+    notes = steps_of(stream_of(council_id))["notes"]
+    assert (notes["state"], notes["progress"]) == ("waiting", [])
+    assert pool.jobs == [] and translating.turns == []
+
+
+def test_a_draft_that_cannot_be_built_waits_and_says_why(store, pool, projects, docs,
+                                                         translating):
+    council_id = assembled(store, pool)
+    with_project(store, projects, council_id)
+    broken = docs / "adrs" / "ADR-0001.md"
+    broken.parent.mkdir(parents=True)
+    broken.write_text("---\nid: [\n---\nТело", encoding="utf-8")
+    assert approves_one(council_id, "O1").status_code == 200
+    assert approves(council_id).status_code == 200
+    assert steps_of(stream_of(council_id))["notes"]["state"] == "waiting"
+    assert pool.jobs == []
+    assert error_of(client.get(path(council_id))) == (500, "internal")
+
+
+def test_a_translation_that_could_not_be_launched_stops_the_step(store, pool, projects,
+                                                                 translating):
+    council_id = assembled(store, pool)
+    with_project(store, projects, council_id)
+    assert approves_one(council_id, "O1").status_code == 200
+    app.dependency_overrides[get_launcher] = lambda: Closed()
+    assert error_of(approves(council_id)) == (500, "internal")
+    app.dependency_overrides[get_launcher] = lambda: pool
+    assert steps_of(stream_of(council_id))["outcomes"]["state"] == "done"
+    assert steps_of(stream_of(council_id))["notes"]["state"] == "failed"

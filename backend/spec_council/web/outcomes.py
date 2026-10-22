@@ -8,19 +8,22 @@
 (run): шаг с тех пор запустили снова, и итоги уже другие, хоть номера у них те же.
 
 «Утвердить итоги» у шага, который ждал вас или остановился, делает шаг готовым — и «Документация»
-ждёт вас: на ней модели не работают. Моделей утверждение не зовёт — и старый фронт после него
-ничего не запускал: черновик заметок собирают на «Документации» (выгрузка потока в заметки). Шаг
-уже готов — ничего не меняется.
+начинается: черновик заметок сервер собирает сам, а если язык заметок не тот, на котором работает
+совет, судья сразу переводит его, в фоне (stream_notes.begun, решение q-008 бекенда); иначе
+«Документация» ждёт вас. Раньше перевод запускал старый фронт — кнопкой черновика на
+«Документации». Шаг уже готов — ничего не меняется.
 """
 
 from fastapi import APIRouter
 
+from ..background import launched
 from ..chain import replaced
-from ..deps import ProjectsDep, RepositoriesDep, StoreDep
+from ..deps import AgentsDep, LauncherDep, ProjectsDep, RepositoriesDep, StoreDep
 from ..models import Outcome
 from ..models import Stream as Stored
 from ..standing import State, exported, stream_standing
 from ..store import council_lock
+from ..stream_notes import begun
 from ..stream_outcomes import approved, approved_of, shown_of, with_approved
 from .councils import folders_of
 from .errors import ApiError, ContractRoute, not_found
@@ -92,18 +95,25 @@ def list_outcomes(council_id: str, stream_id: str, store: StoreDep, projects: Pr
 
 # «Утвердить итоги» — раньше ручки с {outcome_id}: иначе «approve» был бы номером итога.
 @router.post("/councils/{council_id}/streams/{stream_id}/outcomes/approve")
-def approve(council_id: str, stream_id: str, body: Run, store: StoreDep, projects: ProjectsDep,
+def approve(council_id: str, stream_id: str, body: Run, store: StoreDep, agents: AgentsDep,
+            launch: LauncherDep, projects: ProjectsDep,
             repositories: RepositoriesDep) -> StreamAnswer:
     """«Утвердить итоги». Шаг ждал вас или остановился — шаг готов, а какие итоги утверждены, не
-    меняется; дальше «Документация» ждёт вас. Шаг уже готов — поток как есть. Проверка и правка —
-    под замком советов."""
+    меняется; дальше «Документация»: судья переводит заметки, в фоне, или она сразу ждёт вас. Шаг
+    уже готов — поток как есть. Проверка, правка и запуск — под замком советов: два нажатия не
+    запустят два перевода."""
+    start = None
     with council_lock:
         council = council_of(store, council_id)
         stream = stream_at(council, stream_id)
         folders = folders_of(council, projects, repositories)
         if editable(stream, folders.notes, body.run) != "done":
+            start = begun(council, approved(stream), folders.notes, agents, store)
             council = store.update_council(council_id, {
-                "streams": replaced(council, approved(stream))}) or council
+                "streams": replaced(council, start.stream)}) or council
+    if start is not None and start.pipeline is not None \
+            and not launched(launch, start.pipeline, start.report):
+        raise ApiError(500, "internal", "Сервер останавливается — заметки не начали переводить")
     return StreamAnswer(stream=stream_of(council, stream_at(council, stream_id), folders))
 
 

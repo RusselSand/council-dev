@@ -1,28 +1,60 @@
 """Выгрузка потока в заметки на шаге «Документация» — docs/api-contract.md, «Документация» потока.
 
-Модели на шаге не работают: черновик выгрузки (export.drafted) сервер собирает сам, к тому, что
-в каталоге заметок сейчас. Пока шаг ждёт вас, черновик собирается при каждом чтении, а «Записать в
-каталог» пишет тот, что собрался под замком советов: номера не разойдутся с каталогом, даже если в
-него тем временем записали другой поток. Раньше человек собирал черновик кнопкой, правил тексты
-заметок и отмечал исчезнувшие к удалению; у контракта этого нет — пишется то, что написал совет (с
-прежними правками человека, если совет написал бы то же), а исчезнувшие остаются в каталоге, как
-было и раньше без отметки.
+Черновик выгрузки (export.drafted) сервер собирает сам, к тому, что в каталоге заметок сейчас: пока
+шаг ждёт вас, черновик собирается при каждом чтении, а «Записать в каталог» пишет тот, что собрался
+под замком советов: номера не разойдутся с каталогом, даже если в него тем временем записали другой
+поток. Раньше человек собирал черновик кнопкой, правил тексты заметок и отмечал исчезнувшие к
+удалению; у контракта этого нет — пишется то, что написал совет (с прежними правками человека, если
+совет написал бы то же), а исчезнувшие остаются в каталоге, как было и раньше без отметки.
+
+Язык заметок не тот, на котором работает совет, — тексты, которые совет написал заново, сразу после
+«Утвердить итоги» переводит судья, как раньше (решение q-008 бекенда): ход перевода —
+Stream.notes_draft, черновик с ходом судьи (pipeline.NotesRun); пока судья переводит или перевод
+остановился, шаг не ждёт вас (standing.translation). Перевод — к каталогу, каким он был, когда
+переводили. Каталог с тех пор поменялся — например, в него записали другой поток, и номера новых
+заметок сдвинулись, — перевод переходит на нынешний черновик (carried), а то, к чему он уже не
+подходит, судья на «Записать в каталог» переводит заново.
 
 Записанный черновик ложится в поток (Stream.notes_draft, с номером выгрузки): после записи шаг
 показывает его — с теми же метками и сменами статуса решений проекта, что были до записи. Без ввода
 с экрана; каталог читает и пишет export.py.
 """
 
-from collections.abc import Callable, Collection, Iterable, Sequence
+from collections.abc import Callable, Collection, Iterable, Mapping, Sequence
+from datetime import UTC, datetime
 from pathlib import Path
 from uuid import uuid4
 
-from .chain import fragments_of
-from .export import Shelf, cited_in, drafted, export_in, graph_problems, words_for
+from .background import reporter
+from .chain import Launch, fragments_of, resumed, stream_slot
+from .export import (
+    NUMBER,
+    Shelf,
+    cited_in,
+    drafted,
+    export_in,
+    graph_problems,
+    knows_words,
+    previous_of,
+    settled,
+    untranslated,
+    words_for,
+)
 from .export import written as written_notes
-from .models import Council, ExportedNote, NotePlan, NotesDraft, NotesExport, StatusShift, Stream
-from .notes import Catalog, Note, order
+from .models import (
+    Council,
+    ExportedNote,
+    NotePlan,
+    NotesDraft,
+    NotesExport,
+    StatusShift,
+    Stream,
+)
+from .notes import Catalog, Note, NotesError, order
+from .pipeline import NotesRun, Runner, translating
 from .prompts import language, notes_language
+from .standing import translation
+from .store import Store
 
 
 def draft_of(council: Council, stream: Stream, root: Path,
@@ -78,6 +110,119 @@ def written_draft(stream: Stream) -> NotesDraft | None:
     if draft is None or export is None or draft.run != export.run:
         return None
     return draft
+
+
+# Перевод заметок (решение q-008 бекенда).
+
+def translates() -> bool:
+    """Заметки переводит судья: язык заметок не тот, на котором работает совет, или связок
+    («потому что», «Критерии готовности») на языке работы совет не знает — на нём их доводит тот
+    же перевод (export.words_for)."""
+    return notes_language() != language() or not knows_words(language())
+
+
+def prepared(council: Council, stream: Stream, root: Path,
+             councils: Iterable[Council]) -> tuple[NotesDraft, Shelf, list[str]]:
+    """Черновик выгрузки к каталогу root, как он сейчас, и каталог (draft_of); заметки переводит
+    судья — с его переводом и ключами заметок, к которым перевода нет (carried)."""
+    draft, shelf = draft_of(council, stream, root, councils)
+    if not translates():
+        return draft, shelf, []
+    draft, missing = carried(draft, translation(stream, str(root)), shelf,
+                             export_in(stream.notes, root))
+    return draft, shelf, missing
+
+
+def carried(draft: NotesDraft, before: NotesDraft | None, shelf: Shelf,
+            previous: NotesExport | None) -> tuple[NotesDraft, list[str]]:
+    """Черновик с переводом судьи (before): заметка, которую совет написал заново, берёт перевод
+    того же текста — и тогда, когда номера заметок потока с тех пор сдвинулись (в каталог записали
+    другой поток): перевод сохраняет номера, и они сдвигаются так же. Ответ — черновик и ключи
+    заметок, к которым перевода нет: судья их не переводил, текст с тех пор другой, перевод не
+    готов или на другом языке."""
+    sources = untranslated(draft.notes)
+    if not sources:
+        return draft, []
+    if before is None or before.state != "done" or before.language != draft.language:
+        return draft, list(sources)
+    known = {note.key: note for note in before.notes if note.action != "edited"}
+    moved = {known[note.key].id: note.id for note in draft.notes
+             if note.key in known and known[note.key].id != note.id}
+    olds = {note.key: note for note in previous.notes} if previous else {}
+    notes: list[NotePlan] = []
+    missing: list[str] = []
+    for note in draft.notes:
+        old = known.get(note.key)
+        if note.key not in sources:
+            notes.append(note)
+        elif old is None or renamed(old.generated, moved) != note.generated:
+            notes.append(note)
+            missing.append(note.key)
+        else:
+            notes.append(settled(note.model_copy(update={"text": renamed(old.text, moved)}),
+                                 previous_of(note, olds), shelf))
+    # Ход перевода — тот, что перевёл: он и остаётся ходом шага, когда черновик запишут.
+    return draft.model_copy(update={"notes": notes, "steps": before.steps,
+                                    "launch": before.launch, "reused": before.reused}), missing
+
+
+def renamed(text: str, moved: Mapping[str, str]) -> str:
+    """Текст, где номера заметок, которые сдвинулись, — нынешние; все разом: ADR-0003 → ADR-0004 и
+    ADR-0004 → ADR-0005 не путаются."""
+    if not moved:
+        return text
+    return NUMBER.sub(lambda found: moved.get(found.group(), found.group()), text)
+
+
+def begun(council: Council, stream: Stream, notes: str | None, runner: Runner,
+          store: Store) -> Launch:
+    """«Документация» начинается — после «Утвердить итоги»: заметки переводит судья и есть что
+    переводить — судья переводит черновик к каталогу notes, в фоне; иначе хода нет, и шаг сразу
+    ждёт вас. Черновик не собрать — тоже ждёт: почему, скажет выгрузка потока в заметки."""
+    if notes is None or not translates():
+        return Launch(stream)
+    try:
+        draft, shelf, missing = prepared(council, stream, Path(notes), store.list_councils())
+    except NotesError:
+        return Launch(stream)
+    if not missing:
+        return Launch(stream)
+    return launch_of(council, stream, draft, shelf, runner, store, None)
+
+
+def retried(council: Council, stream: Stream, notes: str | None, runner: Runner,
+            store: Store) -> Launch | None:
+    """«Запустить снова» у «Документации», где перевод остановился: судья переводит заново — к
+    каталогу, как он сейчас; ответы, которые он уже дал, ход берёт из лотка даром. Переводить уже
+    нечего (язык заметок теперь тот же, что у работы) — хода нет, перевод шаг больше не держит, и
+    он ждёт вас. Перевод не остановился — None. Черновик не собрать — NotesError."""
+    before = translation(stream, notes)
+    if notes is None or before is None or before.state != "failed":
+        return None
+    if not translates():
+        return Launch(stream.model_copy(update={"notes_draft": None}))
+    draft, shelf, missing = prepared(council, stream, Path(notes), store.list_councils())
+    if not missing:
+        return Launch(stream.model_copy(update={"notes_draft": None}))
+    return launch_of(council, stream, draft, shelf, runner, store, before, again=True)
+
+
+def launch_of(council: Council, stream: Stream, draft: NotesDraft, shelf: Shelf, runner: Runner,
+              store: Store, before: NotesDraft | None, *, again: bool = False) -> Launch:
+    """Ход судьи, который переводит черновик draft — то, к чему перевода нет: поток с ходом — его
+    кладут в совет под замком советов — и сам ход. Запуск — следующий за прежним переводом
+    (before); повтор (again) берёт ответы, которые судья в нём уже дал (chain.resumed)."""
+    report = reporter(store, council.id, stream_slot(stream.group, "notes_draft"))
+    state = draft.model_copy(update={
+        "state": "running", "error": None, "steps": translating(council.judge),
+        "launch": before.launch + 1 if before is not None else 1})
+    state.reused = resumed(state, before if again else None, datetime.now(UTC), runner.identity)
+    pipeline = NotesRun(council.id, state, export_in(stream.notes, shelf.root), shelf,
+                        council.judge, runner, report)
+    pipeline.replayed = {(part.name, run.model) for part in state.steps for run in part.runs
+                         if run.state == "done"}
+    return Launch(stream.model_copy(update={"notes_draft": state.model_copy(deep=True)}),
+                  pipeline, report)
 
 
 # Смены статуса решений проекта.

@@ -4,7 +4,8 @@ import type { Run, RunState } from './run';
 /**
  * Части шага потока, где работают модели, — по порядку; так их называют шаги потока у настоящего совета g1
  * (data-1.json: questions.steps, proposals.steps, analysis.steps, outcomes.steps). На «Решениях проекта» модели отбирают
- * прошлые решения (решение q-005 бекенда). У «Документации» частей нет: там модели не работают.
+ * прошлые решения (решение q-005 бекенда). На «Документации» судья переводит заметки, когда их язык не тот, на котором
+ * работает совет (решение q-008 бекенда).
  */
 export const STEP_PHASES = [
   'project_decisions_discovery',
@@ -17,6 +18,7 @@ export const STEP_PHASES = [
   'decision_judge',
   'outcome_discovery',
   'outcome_judge',
+  'notes_translation',
 ] as const;
 export type StepPhase = (typeof STEP_PHASES)[number];
 

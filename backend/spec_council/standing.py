@@ -260,10 +260,25 @@ def outcomes_of(stream: Stream, notes: str | None) -> State:
 
 
 def notes_of(stream: Stream, notes: str | None) -> State:
-    """«Документация»: модели на ней не работают — поток выгружен или его прошли без папки
-    документации — готово; иначе ждёт вас (stream_notes.py). Черновик, который собирала прежняя
-    версия, — и его перевод, — шаг не держит: черновик сервер собирает сам."""
-    return "done" if exported(stream, notes) or nowhere(stream, notes) else "waiting"
+    """«Документация»: поток выгружен или его прошли без папки документации — готово; иначе —
+    ход перевода заметок: судья переводит или перевод остановился (решение q-008 бекенда);
+    перевода нет или он готов — ждёт вас (stream_notes.py)."""
+    if exported(stream, notes) or nowhere(stream, notes):
+        return "done"
+    return run_state(translation(stream, notes))
+
+
+def translation(stream: Stream, notes: str | None) -> NotesDraft | None:
+    """Перевод заметок, который ведёт «Документацию»: черновик выгрузки с ходом судьи (steps) — к
+    нынешним утверждённым итогам, в нынешний каталог, и его ещё не записали. Черновик без перевода
+    (язык тот же, что у работы) или записанный — не он."""
+    draft, outcomes = stream.notes_draft, stream.outcomes
+    if (draft is None or not draft.steps or notes is None or draft.root != notes
+            or outcomes is None or not outcomes.approved or draft.outcomes != outcomes.run):
+        return None
+    if stream.notes is not None and stream.notes.run == draft.run:
+        return None
+    return draft
 
 
 def exported(stream: Stream, notes: str | None) -> bool:

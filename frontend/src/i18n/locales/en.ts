@@ -235,6 +235,7 @@ export const en = translation({
   'stream.phase.decision_judge': 'Decisions judge',
   'stream.phase.outcome_discovery': 'Collecting outcomes',
   'stream.phase.outcome_judge': 'Outcomes judge',
+  'stream.phase.notes_translation': 'Notes translation',
 
   'projectDecisions.idea': 'Stream idea · approved in groups',
   'projectDecisions.taken': 'Taken into account: {ids}',
@@ -541,7 +542,8 @@ export const en = translation({
   'error.outcomes_not_ready':
     'Outcomes can’t be approved now: the step hasn’t started or it was run again. The stream and outcomes are updated.',
   'error.outcome_blocked': 'The outcome is blocked — it lacks a decision, so there’s nothing to approve. Outcomes are updated.',
-  'error.notes_not_ready': 'The stream can’t be written now: the Documentation step hasn’t started yet. The stream is updated.',
+  'error.notes_not_ready':
+    'The stream can’t be written now: the Documentation step hasn’t started or the AI hasn’t translated the notes yet. The stream is updated.',
   'error.tasks_not_ready': 'Nothing to write yet: no stream has reached its outcomes. Tasks are updated.',
   'error.network': 'No connection to the server. Check your network and try again.',
   'error.unknown': 'Something went wrong. Please try again.',
