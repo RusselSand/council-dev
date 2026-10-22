@@ -87,11 +87,15 @@ def counted(stream: Stream) -> tuple[int, int]:
 
 
 def keyed(stream: Stream, question_id: str, key: str) -> OwnOption | None:
-    """Свой вариант вопроса, созданный с этим Idempotency-Key. Пустой ключ — ничей."""
+    """Свой вариант вопроса, созданный с этим Idempotency-Key, — каким его создали: с тем
+    текстом, хоть его потом и правили. Пустой ключ — ничей."""
     if not key:
         return None
-    return next((one for one in own_of(stream)
-                 if one.key == key and one.question_id == question_id), None)
+    own = next((one for one in own_of(stream)
+                if one.key == key and one.question_id == question_id), None)
+    if own is None or own.created is None:
+        return own
+    return own.model_copy(update={"text": own.created})
 
 
 def with_pick(stream: Stream, question_id: str, option: str | None) -> Stream:
@@ -106,7 +110,7 @@ def with_own(stream: Stream, question_id: str, text: str, based_on: str | None,
     """Поток со своим вариантом в конце вариантов вопроса и сам вариант. Выбор он не меняет."""
     taken = [last_used(stream), *(number(one.id) for one in own_of(stream))]
     own = OwnOption(question_id=question_id, id=f"P{max(taken) + 1}", text=text,
-                    based_on=based_on, key=key)
+                    based_on=based_on, key=key, created=text)
     return (stream.model_copy(update={"own_options": [*own_of(stream), own],
                                       "picks": list(picks_of(stream).values())}), own)
 

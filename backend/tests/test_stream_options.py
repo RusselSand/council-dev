@@ -357,6 +357,10 @@ def test_the_same_key_makes_one_own_option(store, pool):
     assert (first.status_code, again.status_code) == (201, 201)
     assert again.json() == first.json()                        # с текстом, с каким создан
     assert ids(sets_of(council_id)["Q2"]) == ["P2", "P3", "P5"]
+    # И после правки повтор отвечает тем, с чем вариант создан; сам вариант — правленый.
+    assert edits(council_id, "Q2", "P5", "Правленый текст").status_code == 200
+    assert adds(council_id, "Q2", "Третий текст", key="k1").json() == first.json()
+    assert sets_of(council_id)["Q2"]["options"][-1]["text"] == "Правленый текст"
     assert adds(council_id, "Q2", OWN, key="k2").json()["option"]["id"] == "P6"
     assert adds(council_id, "Q2", OWN).json()["option"]["id"] == "P7"
 
