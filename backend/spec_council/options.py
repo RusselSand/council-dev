@@ -19,7 +19,9 @@
 Поток прежней версии своих вариантов и выбора отдельно не помнит — только утверждённый выбор
 (свой вариант жил в нём текстом), а до утверждения — выбор прежней работы по тем же вопросам
 (work.earlier_choices): с него начинал и старый фронт. Вопрос, который убрали из отбора, а на
-«Вопросах» вернули, — тоже с выбором прежней работы: он там с тех пор, как вопрос убрали.
+«Вопросах» вернули, — тоже с выбором прежней работы: он там с тех пор, как вопрос убрали. Выбор
+убранного вопроса записывается вместе с остальными, хоть на шаге его и нет: вернут вопрос после
+первой правки — он со своим выбором.
 """
 
 from collections.abc import Mapping
@@ -28,7 +30,7 @@ from typing import Literal
 
 from .models import Choice, OpenQuestion, OwnOption, Pick, Proposal, QuestionOptions, Stream
 from .pipeline import question_key
-from .scope import kept_of, number
+from .scope import kept_of, listed, number
 from .work import earlier_choices, last_used
 
 
@@ -170,11 +172,13 @@ def picks_of(stream: Stream) -> dict[str, Pick]:
 
 def prior_of(stream: Stream) -> list[Choice]:
     """Выбор потока прежней версии: утверждённый, а до утверждения — выбор прежней работы по
-    вопросам отбора (work.earlier_choices). Вопрос, который он убрал из отбора, а на «Вопросах»
-    его вернули, — с выбором прежней работы: убирая вопрос, отбор её запомнил (work.kept_work)."""
+    вопросам отбора (work.earlier_choices). Вопрос, который он убрал из отбора, — с выбором
+    прежней работы: убирая вопрос, отбор её запомнил (work.kept_work). И пока вопрос убран: первая
+    правка на «Вариантах» записывает выбор и свои варианты, и вопрос, который вернут после неё,
+    должен найти свои в записанном — прежнюю работу тогда уже не спрашивают."""
     choices = earlier_choices(stream)
     works = {work.key: work for work in stream.earlier}
-    for question in kept_of(stream):
+    for question in (item.question for item in listed(stream)):
         work = works.get(question_key(question))
         if question.id not in choices and work is not None:
             choices[question.id] = work.choice

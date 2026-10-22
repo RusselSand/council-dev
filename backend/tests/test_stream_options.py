@@ -624,3 +624,33 @@ def test_a_question_the_prior_version_took_out_of_the_scope_comes_back_with_its_
         ("Q1", "P4", OWN)]
     assert sets_of(council_id)["Q1"]["choice"] == {"kind": "option", "option": "P4"}
     assert adds(council_id, "Q1", "Ещё", run=run).json()["option"]["id"] == "P5"
+
+
+def test_a_question_the_prior_version_took_out_of_the_scope_keeps_its_choice_while_removed(store):
+    council_id = streaming(store)
+    questions = [OpenQuestion(id="Q1", text=SEARCH, source="inferred", proposal_ids=[2]),
+                 OpenQuestion(id="Q2", text=MEASURE, source="discovered")]
+    found = [QuestionOptions(question_id="Q2", verdict="alternatives", reason=BOTH, proposals=[
+                 Proposal(id="P2", text=SHARE, reason="мерило"),
+                 Proposal(id="P3", text=POLL, reason="спросить")])]
+    put(store, council_id, project_decisions=[],
+        questions=QuestionDiscovery(state="done", run="q1", steps=[], questions=questions),
+        scope=questions[1:], proposals=ProposalDiscovery(state="done", run="p1", steps=[],
+                                                         options=found),
+        choices=[Choice(question_id="Q2", proposal="P2")],
+        earlier=[QuestionWork(key=f"Q1: {SEARCH}", choice=Choice(
+                     question_id="Q1", proposal="P4", text=OWN, based_on="F2")),
+                 QuestionWork(key=f"Q2: {MEASURE}",
+                              choice=Choice(question_id="Q2", proposal="P2"))])
+    # Правка выбора, пока Q1 убран: записывается и его выбор со своим вариантом.
+    run = round_of(council_id)["run"]
+    assert chooses(council_id, "Q2", "P3", run=run).status_code == 200
+    assert list(sets_of(council_id)) == ["Q2"]
+    # Вернули Q1 — он со своим выбором и своим вариантом.
+    assert client.patch(f"{questions_path(council_id)}/Q1",
+                        json={"removed": False}).status_code == 200
+    q1 = sets_of(council_id)["Q1"]
+    assert ids(q1) == ["F2", "P4"]
+    assert (q1["options"][-1]["text"], q1["options"][-1]["basedOn"]) == (OWN, "F2")
+    assert q1["choice"] == {"kind": "option", "option": "P4"}
+    assert sets_of(council_id)["Q2"]["choice"] == {"kind": "option", "option": "P3"}
