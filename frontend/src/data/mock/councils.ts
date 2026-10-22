@@ -382,30 +382,40 @@ export const researchChanged = (
 
 /**
  * Совет после «К потокам →» — как в макете (prototype.js, toStreams): «Исследование» готово; «Потоки», если ещё
- * не начаты, ждут вас — каждая группа становится потоком на шаге «Решения проекта». Совет встаёт на первый неготовый
- * этап. Строка «Исследования» на Сводке уходит, у новых потоков — по строке. Уже утверждено — совет как есть.
+ * не начаты, — по шагам новых потоков (fresh): каждая группа стала потоком на шаге «Решения проекта», где модели
+ * отбирают прошлые решения, а в каталоге их нет — сразу ждут вас (решение q-005 бекенда). Совет встаёт на первый
+ * неготовый этап. Строка «Исследования» на Сводке уходит, у новых потоков — по строке. Уже утверждено — совет как есть.
  */
-export const researchApproved = (council: CouncilSummary, groups: string[], updatedAt: string): CouncilSummary => {
+export const researchApproved = (council: CouncilSummary, fresh: Stream[], updatedAt: string): CouncilSummary => {
   if (council.stages.research === 'done') return council;
   const starting = council.stages.streams === 'idle';
   const stages: Record<Stage, State> = {
     ...council.stages,
     research: 'done',
-    streams: starting ? 'waiting' : council.stages.streams,
+    streams: starting ? streamsState(fresh) : council.stages.streams,
   };
-  const streams: StreamSummary[] = starting ? groups.map((id) => ({ id, step: 'project' })) : council.streams;
+  const streams: StreamSummary[] = starting
+    ? fresh.map((s) => ({ id: s.id, step: currentStep(s).step }))
+    : council.streams;
   const stage = firstOpen(stages, 'brief');
+  const own = starting
+    ? fresh.map((s) => {
+        const { state, progress } = currentStep(s);
+        const working = progress[0]?.runs.map((run) => run.model) ?? [];
+        return state === 'running'
+          ? atStep(s.id, 'project', 'running', workText('project', working))
+          : atStep(s.id, 'project', 'waiting', STEP_WAITING.project);
+      })
+    : [];
+  const activity = [...council.activity.filter((a) => a.stage !== 'research'), ...own];
   return {
     ...council,
     stage,
     state: stages[stage],
     stages,
     streams,
-    activity: [
-      ...council.activity.filter((a) => a.stage !== 'research'),
-      ...(starting ? streams.map((s) => atStep(s.id, 'project', 'waiting', 'Отметьте прошлые решения проекта')) : []),
-    ],
-    summary: starting ? 'Потоки ждут вас' : council.summary,
+    activity: ACTIVITY_ORDER.flatMap((state) => activity.filter((a) => a.state === state)),
+    summary: starting ? (stages.streams === 'running' ? 'Потоки — модели работают' : 'Потоки ждут вас') : council.summary,
     updatedAt,
   };
 };

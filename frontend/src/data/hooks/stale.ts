@@ -41,10 +41,15 @@ export interface CouncilStreams {
   streams: Stream[];
 }
 
-/** Прошлые решения потока и чьи они — совет и поток. */
+/**
+ * Прошлые решения потока и чьи они — совет и поток, а ещё в каком состоянии был шаг «Решения проекта», когда их
+ * запросили: запрошенные до того, как модели закончили отбор или шаг запустили снова, — другие решения, экран их не
+ * показывает.
+ */
 export interface StreamProjectDecisions extends ProjectDecisions {
   council: string;
   stream: string;
+  state: State;
 }
 
 /**

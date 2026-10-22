@@ -3,10 +3,12 @@ import type { Run, RunState } from './run';
 
 /**
  * Части шага потока, где работают модели, — по порядку; так их называют шаги потока у настоящего совета g1
- * (data-1.json: questions.steps, proposals.steps, analysis.steps, outcomes.steps). У «Решений проекта» и «Документации»
- * частей нет: там модели не работают.
+ * (data-1.json: questions.steps, proposals.steps, analysis.steps, outcomes.steps). На «Решениях проекта» модели отбирают
+ * прошлые решения (решение q-005 бекенда). У «Документации» частей нет: там модели не работают.
  */
 export const STEP_PHASES = [
+  'project_decisions_discovery',
+  'project_decisions_judge',
   'question_discovery',
   'question_judge',
   'proposal_discovery',

@@ -225,6 +225,8 @@ export const en = translation({
   'stream.runs.state.failed': 'failure',
   'stream.runs.state.skipped': 'not needed',
   'stream.runs.thinking': '{model} · thinking {time}',
+  'stream.phase.project_decisions_discovery': 'Selecting past decisions',
+  'stream.phase.project_decisions_judge': 'Selection judge',
   'stream.phase.question_discovery': 'Collecting questions',
   'stream.phase.question_judge': 'Questions judge',
   'stream.phase.proposal_discovery': 'Finding options',
@@ -524,6 +526,8 @@ export const en = translation({
     'The research can’t be approved yet: wait for it to finish, decide on the findings and confirm the groups. The research has been refreshed.',
   'error.stale_map': 'The code map read the council’s folders — research the code again.',
   'error.unknown_decision': 'One of the checked decisions is no longer in the catalog. The list has been refreshed — check your selection.',
+  'error.project_not_ready':
+    'The selection can’t be sent right now: the models are selecting past decisions again. The stream has been refreshed.',
   'error.questions_not_ready':
     'The questions can’t be changed right now: the step hasn’t started or the models are collecting questions again. The stream has been refreshed.',
   'error.text_required': 'Type the text — it can’t be saved empty.',

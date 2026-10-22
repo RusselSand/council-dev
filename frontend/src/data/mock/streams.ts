@@ -14,6 +14,7 @@ import {
 
 /** Части шагов, где работают модели: у каждого такого шага — модели совета и судья. */
 const PHASES: Partial<Record<Step, [StepPhase, StepPhase]>> = {
+  project: ['project_decisions_discovery', 'project_decisions_judge'],
   questions: ['question_discovery', 'question_judge'],
   options: ['proposal_discovery', 'proposal_judge'],
   decisions: ['decision_analysis', 'decision_judge'],
@@ -65,7 +66,8 @@ const PROTO_JUDGE = 'fable';
 /**
  * Поток A совета g1 — из data-1.json (streams[0]): группа, идея, все шаги готовы. Строки шагов — как их пишет макет
  * для g1 (adaptCouncil): каталог решений пуст, вопросы, выбор и решения — по scope, итоги и заметки — по их числу.
- * Модели — sol и opus, судья opus решал на каждом шаге (steps).
+ * Модели — sol и opus, судья opus решал на каждом шаге (steps). Прошлых решений в каталоге не было — отбирать их
+ * моделям было нечего: у «Решений проекта» хода нет.
  */
 const G1: Stream[] = [
   {
@@ -85,7 +87,7 @@ const G1: Stream[] = [
       ['sol', 'opus'],
       'opus',
       'done',
-    ),
+    ).map((step): StreamStep => (step.step === 'project' ? { ...step, progress: [] } : step)),
   },
 ];
 
@@ -280,22 +282,38 @@ const projectWaitingNote = (decisions: ProjectDecisions) =>
       : 'решений в каталоге нет';
 
 /**
- * Потоки после «К потокам →»: каждая группа — поток с её названием и идеей, «Решения проекта» ждут вас, остальные шаги
- * не начаты.
+ * Потоки после «К потокам →»: каждая группа — поток с её названием и идеей; на «Решениях проекта» модели начали
+ * отбирать прошлые решения (now), а в каталоге их нет — шаг ждёт вас (решение q-005 бекенда); остальные шаги не начаты.
+ * В моках отбор не кончается.
  */
-export const newStreams = (groups: Group[], decisionsOf: (stream: string) => ProjectDecisions): Stream[] =>
-  groups.map((group) => ({
-    id: group.id,
-    title: group.title,
-    idea: group.idea,
-    steps: STEPS.map((step) => ({
-      step,
-      state: step === 'project' ? 'waiting' : 'idle',
-      note: step === 'project' ? projectWaitingNote(decisionsOf(group.id)) : '',
-      text: null,
-      progress: [],
-    })),
-  }));
+export const newStreams = (
+  groups: Group[],
+  decisionsOf: (stream: string) => ProjectDecisions,
+  participants: string[],
+  judge: string,
+  now: string,
+): Stream[] =>
+  groups.map((group) => {
+    const decisions = decisionsOf(group.id);
+    const selecting = decisions.catalog !== null && decisions.decisions.length > 0;
+    return {
+      id: group.id,
+      title: group.title,
+      idea: group.idea,
+      steps: STEPS.map((step): StreamStep => {
+        if (step !== 'project') return { step, state: 'idle', note: '', text: null, progress: [] };
+        return selecting
+          ? {
+              step,
+              state: 'running',
+              note: RUNNING_NOTE.project ?? '',
+              text: workText(step, participants),
+              progress: started(step, participants, judge, now),
+            }
+          : { step, state: 'waiting', note: projectWaitingNote(decisions), text: null, progress: [] };
+      }),
+    };
+  });
 
 /** «sol и fable», «sol, fable и opus» — модели в тексте; текст пишет сервер. */
 export const modelsText = (names: string[]) =>
@@ -303,6 +321,7 @@ export const modelsText = (names: string[]) =>
 
 /** Что делают модели на шаге — на плашке «ИИ работает» и в строке шага на Сводке; текст пишет сервер. */
 const WORK: Partial<Record<Step, [one: string, many: string]>> = {
+  project: ['отбирает прошлые решения', 'отбирают прошлые решения'],
   questions: ['собирает вопросы', 'собирают вопросы'],
   options: ['ищет варианты', 'ищут варианты'],
   decisions: ['проверяет решения', 'проверяют решения'],
@@ -317,6 +336,7 @@ export const workText = (step: Step, models: string[]) => {
 
 /** Строка шага в цепочке, пока на нём работают модели. */
 const RUNNING_NOTE: Partial<Record<Step, string>> = {
+  project: 'отбор прошлых решений идёт',
   questions: 'сбор вопросов идёт',
   options: 'поиск вариантов идёт',
   decisions: 'проверка решений идёт',
