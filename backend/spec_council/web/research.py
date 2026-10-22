@@ -29,6 +29,7 @@ from fastapi import APIRouter, HTTPException
 from .. import research as domain
 from ..background import Slot, halt, held, launched, reporter
 from ..chain import Launch, begun, selects
+from ..council_tasks import go, plan_begun
 from ..deps import (
     AgentsDep,
     FigmaDep,
@@ -68,7 +69,7 @@ from ..repository import (
 from ..standing import shown_streams, stream_standing
 from ..standing import structure_of as groups_stage
 from ..store import council_lock
-from .councils import CouncilAnswer, folders_of, missing, shown
+from .councils import CouncilAnswer, context_of, folders_of, missing, shown
 from .errors import ApiError, ContractRoute, not_found
 from .schema import Empty, Schema
 
@@ -359,13 +360,16 @@ def approve(council_id: str, store: StoreDep, agents: AgentsDep, launch: Launche
     каждая группа — потоком со своей копией исследования. Потоки уже есть — копию берут только
     потоки прежней версии, которые не начинали (domain.backfilled): иначе им её не взять. В
     каталоге решений проекта есть прошлые решения — модели сразу, в фоне, отбирают их для
-    каждого нового потока (решение q-005 бекенда). Уже утверждено — в ответ совет как есть."""
+    каждого нового потока (решение q-005 бекенда). Потоки уже были и все готовы — модели сразу
+    строят план задач заново: он читал прежнее исследование (решение q-009 бекенда). Уже
+    утверждено — в ответ совет как есть."""
     # Сверка карты с папками совета зовёт git в каждой рабочей копии — не под замком советов: до
     # него, а под замком — что сверяли ту же карту и те же папки.
     with council_lock:
         seen = map_of(council_of(store, council_id), notes_of, issues_of)
     stale = seen is not None and unskipped_since(seen[0], repositories, seen[1])
     starts: list[Launch] = []
+    planned = None
     with council_lock:
         council = council_of(store, council_id)
         research = stored_of(council)
@@ -401,10 +405,15 @@ def approve(council_id: str, store: StoreDep, agents: AgentsDep, launch: Launche
                 council = store.update_council(council_id, {"streams": [
                     started.get(stream.group, stream) for stream in council.streams or []]}) \
                     or council
+            # Потоки уже были и все готовы, а исследование прошли заново — план задач читал
+            # прежнее: модели строят его заново (решение q-009 бекенда).
+            council, planned = plan_begun(
+                council, context_of(store, agents, launch, projects, repositories))
     # Ходы — в пул после замка: отчёт хода сам берёт замок советов.
-    if not all([launched(launch, start.pipeline, start.report) for start in starts]):
+    if not all([launched(launch, start.pipeline, start.report) for start in starts]) \
+            or not go(launch, planned):
         raise ApiError(500, "internal",
-                       "Сервер останавливается — прошлые решения не начали отбирать")
+                       "Сервер останавливается — модели не начали работать")
     return CouncilAnswer(council=shown(council, projects, repositories))
 
 

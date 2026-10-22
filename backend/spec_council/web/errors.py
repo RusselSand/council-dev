@@ -5,8 +5,8 @@
 (not_found), запрос не разобрать (bad_request), сбой на сервере (internal). Свои коды ручки — у
 её модуля.
 
-Ручки нового API — на ContractRoute: кривой запрос у них — bad_request, а не ответ FastAPI
-своего вида. Старые ручки (api/) отвечают по-старому — {"detail": …}, пока не уйдут по этапам.
+Ручки API — на ContractRoute: кривой запрос у них — bad_request, а не ответ FastAPI своего
+вида. Старых ручек (api/), что отвечали {"detail": …}, больше нет.
 """
 
 from fastapi import FastAPI, HTTPException, Request
@@ -69,7 +69,7 @@ async def on_api_error(request: Request, exc: Exception) -> JSONResponse:
 
 async def on_http_error(request: Request, exc: Exception):
     """Нет ручки по такому пути или с таким методом — not_found. HTTPException самого FastAPI
-    бросают только старые ручки: им — их прежний вид."""
+    (папку проекта не взять — deps.council_notes) — его прежний вид."""
     assert isinstance(exc, StarletteHTTPException)
     if isinstance(exc, HTTPException):
         return await http_exception_handler(request, exc)

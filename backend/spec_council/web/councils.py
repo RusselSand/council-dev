@@ -11,11 +11,13 @@ from pathlib import Path
 from fastapi import APIRouter
 
 from ..config import AppConfig
-from ..deps import AgentsDep, ConfigDep, ProjectsDep, RepositoriesDep, StoreDep
+from ..council_tasks import Context
+from ..deps import AgentsDep, ConfigDep, Launcher, ProjectsDep, RepositoriesDep, StoreDep
 from ..models import Council
+from ..pipeline import Runner
 from ..projects import ProjectError, Projects, issues_root, notes_root
 from ..standing import Folders, Stage, State, Step, standing
-from ..store import council_lock
+from ..store import Store, council_lock
 from .errors import ApiError, ContractRoute, not_found
 from .projects import ProjectRef
 from .schema import Empty, IdempotencyKey, Instant, Schema
@@ -109,9 +111,8 @@ def update_council(council_id: str, fields: CouncilFields, store: StoreDep, conf
                    repositories: RepositoriesDep) -> CouncilAnswer:
     """Меняет присланные поля. Не так хоть одно — не меняется ничего. Вход в подписку моделей
     проверяют их CLI — вне замка советов. Смена проекта — под ним: проект не удалят, пока совет
-    его выбирает. Остальное замка не ждёт: старые ходы и так сверяют состав под замком
-    (api/streams.probed), а новые вход заранее не проверяют — модель без него не справится в
-    самом ходе."""
+    его выбирает. Остальное замка не ждёт: ходы вход заранее не проверяют — модель без него не
+    справится в самом ходе."""
     if store.get_council(council_id) is None:
         raise missing(council_id)
     changes = checked(fields, config, projects)
@@ -182,6 +183,14 @@ def shown(council: Council, projects: Projects, repositories: Path | None) -> Co
         activity=[Activity(stage=place.stage, stream=place.stream, step=place.step,
                            state=place.state, text=place.text) for place in where.activity],
         summary=where.summary)
+
+
+def context_of(store: Store, runner: Runner, launch: Launcher, projects: Projects,
+               repositories: Path | None) -> Context:
+    """С чем идёт цепочка «Задач» (council_tasks.py): ход плана сам начинает перевод задач, уже
+    вне запроса, и папки проекта берёт так же, как ручки, — folders_of."""
+    return Context(store, runner, launch,
+                   lambda council: folders_of(council, projects, repositories), repositories)
 
 
 def folders_of(council: Council, projects: Projects, repositories: Path | None) -> Folders:

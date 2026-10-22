@@ -230,16 +230,20 @@ def test_writing_a_done_step_changes_nothing(store, pool, projects, docs):
     assert not (docs / "ideas" / "IDEA-0001.md").exists()
 
 
-def test_the_last_stream_written_makes_the_streams_done_and_the_tasks_wait(store, pool,
-                                                                           projects):
+def test_the_last_stream_written_makes_the_streams_done_and_starts_the_task_plan(store, pool,
+                                                                                projects):
+    """Записали последний поток — все готовы, и модели сразу строят план задач на весь совет
+    (решение q-009 бекенда)."""
     council_id = outcomes_approved(store, pool, projects)
     store.update_council(council_id, {"streams": [stored(store, council_id)]})  # без потока B
     assert writes(council_id).status_code == 200
     council = summary_of(council_id)
-    assert (council["stages"]["streams"], council["stages"]["tasks"]) == ("done", "waiting")
-    assert (council["stage"], council["state"]) == ("tasks", "waiting")
+    assert (council["stages"]["streams"], council["stages"]["tasks"]) == ("done", "running")
+    assert (council["stage"], council["state"]) == ("tasks", "running")
     assert council["activity"] == [{"stage": "tasks", "stream": None, "step": None,
-                                    "state": "waiting", "text": "Запишите задачи в каталог"}]
+                                    "state": "running",
+                                    "text": "sol и fable режут итоги на задачи"}]
+    assert store.get_council(council_id).tasks.state == "running"
 
 
 def test_numbers_of_another_streams_export_are_not_given_again(store, pool, projects, docs):

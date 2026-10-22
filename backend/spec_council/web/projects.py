@@ -1,7 +1,7 @@
 """Проекты — docs/api-contract.md, «GET /api/projects» и ниже: список, новый, правка, удаление.
 
-Проект хранится по-прежнему (models.Project): repositories — это repos, notes — docs. Папка
-задач (issues) в контракт не входит: правка её не трогает.
+Проект хранится по-прежнему (models.Project): repositories — это repos, notes — docs, issues —
+tasks («Папка задач» в окне проекта, решение q-010 бекенда).
 """
 
 from collections import Counter
@@ -25,6 +25,7 @@ class Project(Schema):
     name: str
     repos: list[str]
     docs: str
+    tasks: str
     council_count: int
 
 
@@ -42,6 +43,7 @@ class ProjectFields(Schema):
     name: str = ""
     repos: list[str] = []
     docs: str = ""
+    tasks: str = ""
 
 
 class ProjectList(Schema):
@@ -103,7 +105,7 @@ def delete_project(project_id: str, projects: ProjectsDep, store: StoreDep) -> R
 
 def checked(fields: ProjectFields, sent: set[str], repositories: Path | None,
             kept: list[str] | None = None) -> dict:
-    """Присланные поля, как их сохранить (поля ProjectDraft): название и папка — без пробелов по
+    """Присланные поля, как их сохранить (поля ProjectDraft): название и папки — без пробелов по
     краям, репозитории — без повторов. Нет названия, репозиториев больше десяти или
     репозитория нет в каталоге — ApiError. kept — репозитории проекта до правки: их можно
     оставить, даже если в каталоге их больше нет."""
@@ -125,6 +127,8 @@ def checked(fields: ProjectFields, sent: set[str], repositories: Path | None,
         changes["repositories"] = repos
     if "docs" in sent:
         changes["notes"] = fields.docs.strip()
+    if "tasks" in sent:
+        changes["issues"] = fields.tasks.strip()
     return changes
 
 
@@ -135,7 +139,7 @@ def council_counts(store: Store) -> Counter[str]:
 
 def shown(project: Saved, counts: Counter[str]) -> Project:
     return Project(id=project.id, name=project.name, repos=project.repositories,
-                   docs=project.notes, council_count=counts[project.id])
+                   docs=project.notes, tasks=project.issues, council_count=counts[project.id])
 
 
 def missing(project_id: str) -> ApiError:

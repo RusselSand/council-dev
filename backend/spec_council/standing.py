@@ -31,6 +31,8 @@ from .models import (
     Slicing,
     Stream,
     Structure,
+    TaskPlan,
+    TasksDraft,
 )
 from .options import counted
 from .research import blocks_of, pending_of, settled, stopped
@@ -49,7 +51,8 @@ ACTIVE: tuple[State, ...] = ("failed", "waiting", "running")
 LONG_AGO = datetime.min.replace(tzinfo=UTC)
 
 Run = (Slicing | Structure | RepositoryScan | DesignScan | DecisionsSearch | QuestionDiscovery
-       | ProposalDiscovery | DecisionAnalysis | OutcomeDiscovery | NotesDraft)
+       | ProposalDiscovery | DecisionAnalysis | OutcomeDiscovery | NotesDraft | TaskPlan
+       | TasksDraft)
 
 
 @dataclass(frozen=True)
@@ -105,11 +108,11 @@ def standing(council: Council, folders: Folders) -> Standing:
         "research": research_of(council),
         "streams": streams_of(streams),
     }
-    stages["tasks"] = tasks_of(council, stages["streams"], folders.issues)
+    stages["tasks"] = tasks_of(council, stages["streams"], folders)
     stage = next((stage for stage in STAGES if stages[stage] != "done"), STAGES[-1])
     return Standing(stage=stage, state=stages[stage], stages=stages, streams=streams,
-                    activity=activity_of(council, stages, streams),
-                    summary=summary_of(council, stage, stages[stage]))
+                    activity=activity_of(council, stages, streams, folders),
+                    summary=summary_of(council, stage, stages[stage], folders))
 
 
 # Этапы.
@@ -175,21 +178,84 @@ def streams_of(streams: list[StreamStanding]) -> State:
                 "waiting")
 
 
-def tasks_of(council: Council, streams: State, issues: str | None) -> State:
-    """«Задачи»: записаны — готово; иначе все потоки готовы — ждут человека; иначе не начаты.
-    Моделей у контракта на «Задачах» нет: план, который строят или переводят, — тоже ждёт."""
-    if written(council, issues):
+def tasks_of(council: Council, streams: State, folders: Folders) -> State:
+    """«Задачи» — после потоков (решение q-009 бекенда): не все потоки готовы или исследование
+    вернули к настройке — не начаты; задачи нынешнего плана записаны или «Записать в каталог»
+    прошли без папки задач (решение q-010 бекенда) — готовы; модели строят план или судья переводит
+    задачи — работает ИИ; план или перевод остановился — ошибка, как и у совета прежней версии, где
+    плана к нынешним потокам нет; иначе — ждут вас. У проекта нет папки документации — потоки не в
+    заметках, и план строить не из чего: «Задачи» сразу ждут вас (council_tasks.py)."""
+    if streams != "done" or not approved(council.research):
+        return "idle"
+    if written(council, folders.issues) or tasks_nowhere(council, folders.issues):
         return "done"
-    return "waiting" if streams == "done" else "idle"
+    if folders.notes is None:
+        return "waiting"
+    work = tasks_work(council, folders.issues)
+    if work is not None:
+        return run_state(work)
+    return "waiting" if current_plan(council) is not None else "failed"
+
+
+def current_plan(council: Council) -> TaskPlan | None:
+    """План задач, который построили к нынешним потокам и исследованию: они с тех пор не
+    менялись (tasks.basis_of)."""
+    plan = council.tasks
+    if plan is None or plan.state != "done" or plan.basis != basis_of(council):
+        return None
+    return plan
+
+
+def tasks_work(council: Council, issues: str | None) -> TaskPlan | TasksDraft | None:
+    """Ход, который ведёт «Задачи», если он идёт или упал: план — ещё идущий или к нынешним
+    потокам и исследованию; план готов — перевод задач (tasks_translation). Нет такого — None."""
+    plan = council.tasks
+    if plan is None:
+        return None
+    if plan.state == "running":
+        return plan
+    if plan.basis != basis_of(council):
+        return None
+    if plan.state == "failed":
+        return plan
+    draft = tasks_translation(council, issues)
+    if draft is not None and draft.state in ("running", "failed"):
+        return draft
+    return None
+
+
+def tasks_translation(council: Council, issues: str | None) -> TasksDraft | None:
+    """Перевод задач, который ведёт «Задачи»: черновик выгрузки с ходом судьи (steps) — к
+    нынешнему плану, в нынешнюю папку задач, и его ещё не записали. Черновик без перевода (язык
+    тот же, что у работы) или записанный — не он."""
+    draft, plan, export = council.tasks_draft, council.tasks, council.tasks_export
+    if (draft is None or not draft.steps or issues is None or plan is None
+            or draft.plan != plan.run or draft.root != issues):
+        return None
+    if export is not None and export.run == draft.run:
+        return None
+    return draft
 
 
 def written(council: Council, issues: str | None) -> bool:
     """Задачи записаны: нынешний план, в нынешнюю папку задач, и он не устарел — потоки и
-    исследование с тех пор не меняли (api/tasks.current_plan)."""
-    plan, export = council.tasks, council.tasks_export
+    исследование с тех пор не меняли."""
+    plan, export = current_plan(council), council.tasks_export
     return (plan is not None and export is not None and issues is not None
-            and export.root == issues and export.plan == plan.run
-            and plan.basis == basis_of(council))
+            and export.root == issues and export.plan == plan.run)
+
+
+def tasks_nowhere(council: Council, issues: str | None) -> bool:
+    """«Записать в каталог» на «Задачах» прошли без папки задач (решение q-010 бекенда) — к
+    нынешним потокам и исследованию, и папки всё ещё нет: появилась — задачи пишут в неё."""
+    return (issues is None and council.tasks_nowhere is not None
+            and council.tasks_nowhere == basis_of(council))
+
+
+def streams_ready(council: Council, notes: str | None) -> bool:
+    """Пора строить план задач: потоки есть, все их шаги готовы, и исследование утверждено."""
+    streams = [stream_standing(stream, notes) for stream in shown_streams(council)]
+    return streams_of(streams) == "done" and approved(council.research)
 
 
 # Исследование: два блока — код и макет (research.blocks_of), а утверждает человек всё
@@ -319,15 +385,16 @@ STEP_RUNS: dict[Step, str] = {
 
 # Что происходит в совете.
 
-def activity_of(council: Council, stages: dict[Stage, State],
-                streams: list[StreamStanding]) -> list[Activity]:
+def activity_of(council: Council, stages: dict[Stage, State], streams: list[StreamStanding],
+                folders: Folders) -> list[Activity]:
     """Черновик — один пункт «Ввода». Иначе по пункту на этап (кроме «Потоков») и на шаг потока
     с ошибкой, ждущий вас и где работают модели: сначала ошибки, потом «ждёт вас», потом «ИИ
     работает»; внутри — сначала то, что менялось позже: этапы дальше по ходу совета раньше, потоки
     — по времени их последней правки."""
     if stages["brief"] == "idle":
         return [Activity("brief", None, None, "waiting", "Допишите текст и нарежьте")]
-    places = [Activity(stage, None, None, stages[stage], stage_text(council, stage, stages[stage]))
+    places = [Activity(stage, None, None, stages[stage],
+                       stage_text(council, stage, stages[stage], folders))
               for stage in reversed(STAGES) if stage != "streams" and stages[stage] in ACTIVE]
     kept = {stream.group: stream for stream in council.streams or []}
     latest = sorted(streams, key=lambda stream: council.streams_changed.get(stream.id, LONG_AGO),
@@ -341,7 +408,7 @@ def activity_of(council: Council, stages: dict[Stage, State],
     return [place for state in ACTIVE for place in places if place.state == state]
 
 
-def stage_text(council: Council, stage: Stage, state: State) -> str:
+def stage_text(council: Council, stage: Stage, state: State, folders: Folders) -> str:
     match stage, state:
         case "slices", "running":
             return doing(working(council.slicing), "режет текст", "режут текст")
@@ -360,6 +427,10 @@ def stage_text(council: Council, stage: Stage, state: State) -> str:
             return researching(council.research or Research())
         case "research", _:
             return research_waiting(council)
+        case "tasks", "running":
+            return tasks_doing(council, folders.issues)
+        case "tasks", "failed":
+            return tasks_stopped(council, folders.issues)
         case _:
             return tasks_waiting(council)
 
@@ -416,6 +487,21 @@ def tasks_waiting(council: Council) -> str:
     if count is None:
         return "Запишите задачи в каталог"
     return f"Запишите {count} {plural(count, 'задачу', 'задачи', 'задач')} в каталог"
+
+
+def tasks_doing(council: Council, issues: str | None) -> str:
+    """«sol и fable режут итоги на задачи»; план готов — «fable переводит задачи»."""
+    work = tasks_work(council, issues)
+    if isinstance(work, TasksDraft):
+        return doing(working(work), "переводит задачи", "переводят задачи")
+    return doing(working(work), "режет итоги на задачи", "режут итоги на задачи")
+
+
+def tasks_stopped(council: Council, issues: str | None) -> str:
+    """Что остановилось: план или перевод задач."""
+    if isinstance(tasks_work(council, issues), TasksDraft):
+        return "Перевод задач остановился"
+    return "План задач остановился"
 
 
 # Строка шага потока: ждёт вас, ИИ работает, остановился.
@@ -490,7 +576,7 @@ def named(models: list[str]) -> str:
 
 # Итог одной строкой.
 
-def summary_of(council: Council, stage: Stage, state: State) -> str:
+def summary_of(council: Council, stage: Stage, state: State, folders: Folders) -> str:
     """Итог совета по его этапу и состоянию. Сводка показывает его у совета без activity — у
     готового: сколько задач и заметок записано."""
     match stage, state:
@@ -520,7 +606,11 @@ def summary_of(council: Council, stage: Stage, state: State) -> str:
         case "streams", _:
             return "Потоки ждут вас"
         case "tasks", "done":
-            return written_text(council)
+            return written_text(council, folders.issues)
+        case "tasks", "running":
+            return "Задачи — модели режут итоги на задачи"
+        case "tasks", "failed":
+            return tasks_stopped(council, folders.issues)
         case _:
             count = planned(council)
             if count is None:
@@ -528,9 +618,13 @@ def summary_of(council: Council, stage: Stage, state: State) -> str:
             return f"{count} {plural(count, 'задача ждёт', 'задачи ждут', 'задач ждут')} записи"
 
 
-def written_text(council: Council) -> str:
-    """«7 задач и 57 заметок записаны»; заметок нет — «3 задачи записаны в каталог»."""
+def written_text(council: Council, issues: str | None) -> str:
+    """«7 задач и 57 заметок записаны»; заметок нет — «3 задачи записаны в каталог»; папки задач
+    нет — сколько задач готово без записи."""
     tasks = planned(council) or 0
+    if tasks_nowhere(council, issues):
+        return (f"{tasks} {plural(tasks, 'задача готова', 'задачи готовы', 'задач готовы')}"
+                " — у проекта нет папки задач")
     notes = notes_written(council)
     if not notes:
         return (f"{tasks} {plural(tasks, 'задача записана', 'задачи записаны', 'задач записаны')}"
@@ -540,9 +634,9 @@ def written_text(council: Council) -> str:
 
 
 def planned(council: Council) -> int | None:
-    """Сколько задач в плане; плана нет — None."""
-    plan = council.tasks
-    return len(plan.issues) if plan is not None and plan.state == "done" else None
+    """Сколько задач в нынешнем плане; плана к нынешним потокам нет — None."""
+    plan = current_plan(council)
+    return len(plan.issues) if plan is not None else None
 
 
 def notes_written(council: Council) -> int:

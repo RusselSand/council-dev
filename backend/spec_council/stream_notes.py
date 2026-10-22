@@ -49,6 +49,8 @@ from .models import (
     NotesExport,
     StatusShift,
     Stream,
+    TasksDraft,
+    TasksExport,
 )
 from .notes import Catalog, Note, NotesError, order
 from .pipeline import NotesRun, Runner, translating
@@ -133,13 +135,15 @@ def prepared(council: Council, stream: Stream, root: Path,
     return draft, shelf, missing
 
 
-def carried(draft: NotesDraft, before: NotesDraft | None, shelf: Shelf,
-            previous: NotesExport | None) -> tuple[NotesDraft, list[str]]:
+def carried[D: (NotesDraft, TasksDraft)](
+        draft: D, before: NotesDraft | TasksDraft | None, shelf: Shelf,
+        previous: NotesExport | TasksExport | None) -> tuple[D, list[str]]:
     """Черновик с переводом судьи (before): заметка, которую совет написал заново, берёт перевод
     того же текста — и тогда, когда номера заметок потока с тех пор сдвинулись (в каталог записали
     другой поток): перевод сохраняет номера, и они сдвигаются так же. Ответ — черновик и ключи
     заметок, к которым перевода нет: судья их не переводил, текст с тех пор другой, перевод не
-    готов или на другом языке."""
+    готов или на другом языке. Так же — у файлов задач на «Задачах» (council_tasks.py): номер
+    задачи сдвинулся — перевод сдвигает его так же."""
     sources = untranslated(draft.notes)
     if not sources:
         return draft, []

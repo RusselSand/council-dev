@@ -18,6 +18,7 @@ from fastapi import APIRouter
 
 from ..background import launched
 from ..chain import replaced
+from ..council_tasks import go, plan_begun
 from ..deps import AgentsDep, LauncherDep, ProjectsDep, RepositoriesDep, StoreDep
 from ..models import Outcome
 from ..models import Stream as Stored
@@ -25,7 +26,7 @@ from ..standing import State, exported, stream_standing
 from ..store import council_lock
 from ..stream_notes import begun
 from ..stream_outcomes import approved, approved_of, shown_of, with_approved
-from .councils import folders_of
+from .councils import context_of, folders_of
 from .errors import ApiError, ContractRoute, not_found
 from .schema import Schema
 from .streams import StreamAnswer, council_of, stream_of
@@ -119,11 +120,13 @@ def approve(council_id: str, stream_id: str, body: Run, store: StoreDep, agents:
 
 @router.post("/councils/{council_id}/streams/{stream_id}/outcomes/{outcome_id}/approve")
 def approve_outcome(council_id: str, stream_id: str, outcome_id: str, body: Run,
-                    store: StoreDep, projects: ProjectsDep,
-                    repositories: RepositoriesDep) -> OutcomeAnswer:
+                    store: StoreDep, agents: AgentsDep, launch: LauncherDep,
+                    projects: ProjectsDep, repositories: RepositoriesDep) -> OutcomeAnswer:
     """«Утвердить → дальше»: итог утверждён. Заблокированный не утверждают. Уже утверждён —
     ничего не меняется. Шаги потока не меняются; у шага — строка «утверждено 2 из 3», у совета —
-    время изменения."""
+    время изменения. Все потоки уже готовы — утверждённый итог уходит в задачи: модели строят план
+    задач заново (решение q-009 бекенда)."""
+    planned = None
     with council_lock:
         council = council_of(store, council_id)
         stream = stream_at(council, stream_id)
@@ -138,7 +141,12 @@ def approve_outcome(council_id: str, stream_id: str, outcome_id: str, body: Run,
                            f"{', '.join(outcome.blocked_by)}")
         if outcome_id not in approved_of(stream):
             stream = with_approved(stream, outcome_id)
-            store.update_council(council_id, {"streams": replaced(council, stream)})
+            council = store.update_council(council_id, {"streams": replaced(council, stream)}) \
+                or council
+            council, planned = plan_begun(
+                council, context_of(store, agents, launch, projects, repositories))
+    # Не отдался план — записан упавшим: итог утверждён, а план запускают снова на «Задачах».
+    go(launch, planned)
     return OutcomeAnswer(outcome=outcome_of(outcome, approved_of(stream), refs_of(stream, notes)))
 
 

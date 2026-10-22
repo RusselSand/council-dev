@@ -83,15 +83,18 @@ def listed():
 
 
 def test_a_new_project_is_saved_as_sent(repos, projects, store):
-    res = creates(name="  Кромка ", repos=["front", "back", "front"], docs=" back/docs/reasoning ")
+    res = creates(name="  Кромка ", repos=["front", "back", "front"], docs=" back/docs/reasoning ",
+                  tasks=" back/docs/tasks ")
     assert res.status_code == 201
     project = res.json()["project"]
-    # Название и папка — без пробелов по краям, повтор репозитория — один репозиторий.
+    # Название и папки — без пробелов по краям, повтор репозитория — один репозиторий.
     assert project == {"id": project["id"], "name": "Кромка", "repos": ["front", "back"],
-                       "docs": "back/docs/reasoning", "councilCount": 0}
+                       "docs": "back/docs/reasoning", "tasks": "back/docs/tasks",
+                       "councilCount": 0}
     assert listed() == [project]
     saved = projects.get_project(project["id"])
-    assert (saved.repositories, saved.notes) == (["front", "back"], "back/docs/reasoning")
+    assert (saved.repositories, saved.notes, saved.issues) == (
+        ["front", "back"], "back/docs/reasoning", "back/docs/tasks")
 
 
 def test_a_new_project_goes_to_the_end_of_the_list(repos, projects, store):
@@ -107,7 +110,7 @@ def test_without_projects_the_list_is_empty(projects, store):
 
 def test_an_empty_new_project_has_no_repos_and_no_docs(repos, projects, store):
     project = client.post("/api/projects", json={"name": "Агенты"}).json()["project"]
-    assert (project["repos"], project["docs"]) == ([], "")
+    assert (project["repos"], project["docs"], project["tasks"]) == ([], "", "")
 
 
 def test_a_repeated_key_does_not_create_a_second_project(repos, projects, store):
@@ -194,12 +197,18 @@ def test_an_edit_keeps_repos_that_left_the_repositories_folder(repos, projects, 
     assert error_of(edits(project.id, repos=["front", "old/back"])) == (422, "unknown_repo")
 
 
-def test_an_edit_keeps_the_issues_folder(repos, projects, store):
+def test_an_edit_keeps_the_tasks_folder_unless_it_is_sent(repos, projects, store):
+    """«Папка задач» — поле окна проекта (решение q-010 бекенда): правка без него её не трогает,
+    с ним — меняет, как папку документации."""
     project = projects.create_project(ProjectDraft(name="Кромка", notes="back/docs",
                                                    issues="back/issues"))
     assert edits(project.id, name="Кромка", repos=[], docs="front/docs").status_code == 200
     saved = projects.get_project(project.id)
     assert (saved.notes, saved.issues) == ("front/docs", "back/issues")
+    res = edits(project.id, tasks=" front/tasks ")
+    assert res.status_code == 200 and res.json()["project"]["tasks"] == "front/tasks"
+    assert edits(project.id, tasks="").json()["project"]["tasks"] == ""
+    assert projects.get_project(project.id).issues == ""
 
 
 @pytest.mark.parametrize(("fields", "status", "code"), [
@@ -207,6 +216,7 @@ def test_an_edit_keeps_the_issues_folder(repos, projects, store):
     ({"repos": [f"r{n}" for n in range(11)]}, 422, "too_many_repos"),
     ({"repos": ["nope"]}, 422, "unknown_repo"),
     ({"docs": 5}, 400, "bad_request"),
+    ({"tasks": None}, 400, "bad_request"),
     ({"councilCount": 2}, 400, "bad_request"),
 ])
 def test_a_wrong_edit_changes_nothing(repos, projects, store, fields, status, code):
@@ -272,7 +282,7 @@ def test_a_project_of_the_previous_version_opens(repos, tmp_path, store):
     app.dependency_overrides[get_projects] = lambda: projects
     try:
         assert listed() == [{"id": "old1", "name": "Кромка", "repos": ["back", "../legacy"],
-                             "docs": "back/docs", "councilCount": 0}]
+                             "docs": "back/docs", "tasks": "back/issues", "councilCount": 0}]
         newer = creates(name="Сайт").json()["project"]
         assert edits("old1", name="Кромка 2").status_code == 200
         assert [project["id"] for project in listed()] == ["old1", newer["id"]]
