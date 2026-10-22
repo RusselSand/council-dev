@@ -4,6 +4,7 @@ import pytest
 
 from spec_council.decisions import (
     Analysis,
+    Clash,
     Context,
     Fix,
     analysis_of,
@@ -16,16 +17,17 @@ from spec_council.slicing import BadAnswer
 def context(selected=None):
     return Context(constraints=frozenset({4}), risks=frozenset({5}),
                    questions=frozenset({"Q2"}), proposals=frozenset({"F3", "P1", "P2"}),
-                   selected=selected)
+                   selected=selected, decisions=frozenset({"ADR-0005"}))
 
 
 CHOSEN, OPEN = context("P2"), context()
 
 
-def checked(valid=True, conflicts=(), risks=(), depends=(), **extra):
+def checked(valid=True, conflicts=(), risks=(), depends=(), clashes=(), **extra):
     return {"status": "user_selected", "selected_proposal_id": "P2",
             "validation": {"valid": valid, "constraint_conflicts": list(conflicts),
-                           "risk_ids": list(risks), "depends_on_question_ids": list(depends)},
+                           "adr_conflicts": list(clashes), "risk_ids": list(risks),
+                           "depends_on_question_ids": list(depends)},
             "summary": "Требует решённого Q2.",
             "adr_draft": {"decision": "Бот", "rationale": "Бот остаётся интерфейсом.",
                           "rationale_source": "ai_suggested"}, **extra}
@@ -37,6 +39,20 @@ def test_a_participant_checks_the_choice_with_its_links():
                              "Бот остаётся интерфейсом.")
     assert analysis_of(checked(valid=False), CHOSEN).kind == "conflict"
     assert analysis_of(checked(conflicts=["F4", "F9"]), CHOSEN).conflicts == (4,)
+
+
+def test_a_choice_against_a_project_decision_in_force_is_a_conflict():
+    found = analysis_of(checked(clashes=[
+        {"adr_id": "adr-5", "text": " статус  ведёт сервер "},   # «ADR-5» — то же, что ADR-0005
+        {"adr_id": "ADR-0005", "text": "повтор"},
+        {"adr_id": "ADR-0008", "text": "не в силе или не отобрано для потока"},
+        {"adr_id": "ADR-0005"},                                  # без сути
+        "не расхождение"]), CHOSEN)
+    assert (found.kind, found.clashes) == ("conflict", (Clash("ADR-0005", "статус ведёт сервер"),))
+    assert analysis_of(checked(clashes=[{"adr_id": "ADR-0005", "text": " "}]), CHOSEN).kind == (
+        "validated")
+    with pytest.raises(BadAnswer, match="расхождение с ADR-0005 длиннее"):
+        analysis_of(checked(clashes=[{"adr_id": "ADR-0005", "text": "x" * 501}]), CHOSEN)
 
 
 def test_a_participant_recommends_one_of_the_options_or_nothing():
@@ -85,6 +101,11 @@ def test_a_problem_the_judge_names_is_a_conflict_whatever_the_status():
                              "validation": {"constraint_conflicts": ["F4"]},
                              "fixes": [{"question_id": "Q2", "change": "Решите Q2."}]}, CHOSEN)
     assert found.kind == "conflict"
+    found = judged_analysis({"status": "validated", "proposal_id": "P2",
+                             "validation": {"adr_conflicts": [{"adr_id": "ADR-0005",
+                                                               "text": "статус ведёт сервер"}]},
+                             "fixes": [{"question_id": "Q2", "change": "Решите Q2."}]}, CHOSEN)
+    assert (found.kind, found.clashes) == ("conflict", (Clash("ADR-0005", "статус ведёт сервер"),))
 
 
 @pytest.mark.parametrize(("answer", "where", "problem"), [
@@ -111,7 +132,11 @@ def test_a_judge_answer_out_of_form_is_bad(answer, where, problem):
 def test_the_judge_sees_each_analysis_as_the_participants_were_asked_for_it():
     found = analysis_of(checked(risks=["F5"]), CHOSEN)
     assert as_prompt(found)["validation"] == {"valid": True, "constraint_conflicts": [],
-                                              "risk_ids": ["F5"], "depends_on_question_ids": []}
+                                              "adr_conflicts": [], "risk_ids": ["F5"],
+                                              "depends_on_question_ids": []}
+    clash = analysis_of(checked(clashes=[{"adr_id": "ADR-5", "text": "сервер"}]), CHOSEN)
+    assert as_prompt(clash)["validation"]["adr_conflicts"] == [
+        {"adr_id": "ADR-0005", "text": "сервер"}]
     assert as_prompt(Analysis("recommended", "P1", reason="дешевле")) == {
         "status": "unresolved", "recommendation": {"proposal_id": "P1", "reason": "дешевле"}}
     assert as_prompt(Analysis("none", None, reason="мало данных"))["recommendation"] is None

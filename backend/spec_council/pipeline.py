@@ -108,6 +108,7 @@ from .models import (
     Choice,
     Decision,
     DecisionAnalysis,
+    DecisionClash,
     DecisionFix,
     DecisionsSearch,
     DesignScan,
@@ -1115,6 +1116,9 @@ class DecisionRun(CouncilRun[DecisionAnalysis]):
         self.repository = repository
         self.design = design
         self.accepted = accepted_prompt(accepted)
+        # Расходиться выбор может только с действующим решением: на пересмотре — не в силе.
+        self.active = frozenset(decision.adr_id for decision in accepted
+                                if decision.status == "active")
         self.scope = scope
         self.choices = {choice.question_id: choice.proposal for choice in choices}
         self.entries = {choice.question_id: choice_entry(choice) for choice in choices}
@@ -1153,7 +1157,8 @@ class DecisionRun(CouncilRun[DecisionAnalysis]):
             frozenset(f.id for f in limits if f.label == "constraint"),
             frozenset(f.id for f in limits if f.label == "risk"),
             frozenset(q.id for q in self.scope if q.id != question.id),
-            frozenset(proposal["id"] for proposal in offered), selected, question.id)
+            frozenset(proposal["id"] for proposal in offered), selected, question.id,
+            self.active)
         values = {
             "idea": self.idea,
             "question": as_json({"id": question.id, "text": question.text}),
@@ -1202,7 +1207,9 @@ def analysis_of_question(question: OpenQuestion, verdict: Analysis,
         depends_on=list(verdict.depends_on), reason=verdict.reason or None,
         rationale=verdict.rationale,
         fixes=[DecisionFix(question_id=fix.question, change=fix.change, why=fix.why)
-               for fix in verdict.fixes])
+               for fix in verdict.fixes],
+        project_conflicts=[DecisionClash(adr_id=clash.adr, text=clash.text)
+                           for clash in verdict.clashes])
     return found.model_copy(update={"context": [entries[name] for name in rests_on(found)
                                                 if name in entries]})
 

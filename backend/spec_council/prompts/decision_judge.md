@@ -55,6 +55,12 @@ Compare the analyses of the independent agents and check on your own:
 
 Form one canonical result of the check.
 
+Name every conflict by ID in `validation`: CONSTRAINTS in `constraint_conflicts`; accepted ADRs in
+`adr_conflicts` — the `adr_id` of an `active` decision from ACCEPTED ADRS and `text`, a few words
+on what in it the choice goes against. A decision that is not `active` is not in force: the choice
+cannot conflict with it. A conflict with a constraint or an accepted ADR is a problem: the status
+is `conflict`.
+
 ### When there is a problem
 
 The user has to understand at a glance what is wrong and what to do about it.
@@ -159,6 +165,7 @@ the input. JSON keys, IDs and enum values stay exactly as specified below.
   "proposal_id": "F3",
   "validation": {
     "constraint_conflicts": [],
+    "adr_conflicts": [],
     "risk_ids": ["F9"],
     "depends_on_question_ids": ["Q2"]
   },
@@ -176,15 +183,16 @@ the input. JSON keys, IDs and enum values stay exactly as specified below.
   "proposal_id": "F3",
   "validation": {
     "constraint_conflicts": ["F7"],
+    "adr_conflicts": [{"adr_id": "ADR-0004", "text": "logs stay on the plant server"}],
     "risk_ids": [],
     "depends_on_question_ids": ["Q4"]
   },
-  "reason": "The chosen option copies the logs to the cloud, and F7 keeps them on site.",
+  "reason": "The chosen option copies the logs to the cloud, and F7 and ADR-0004 keep them on site.",
   "fixes": [
     {
       "question_id": "Q1",
       "change": "Remove \"and copies them to the cloud every night\" from the option text.",
-      "why": "F7: logs stay on site."
+      "why": "F7 and ADR-0004: logs stay on site."
     },
     {
       "question_id": "Q4",

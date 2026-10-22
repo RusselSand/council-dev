@@ -1,23 +1,26 @@
 """Анализ решения по одному вопросу: разбор ответов участников и судьи. Без ввода-вывода.
 
-Где человек выбрал вариант, его проверяют: совместим ли с идеей, соблюдает ли ограничения,
-от каких вопросов зависит, какие риски с ним связаны. Нашёл судья проблему — говорит и что
-поправить: в каком вопросе, что поменять и с чем это расходится. Где вопрос unresolved, сравнивают
-его варианты и, если один обоснованно лучше, рекомендуют его. Новых вариантов здесь нет:
-рекомендовать можно только из тех, что у вопроса есть. Выбор человека не меняется: проверка не
-того варианта или рекомендация вместо проверки — негодный ответ. Ссылки вторичны: чужой номер
-просто отбрасывается.
+Где человек выбрал вариант, его проверяют: совместим ли с идеей, соблюдает ли ограничения, не
+расходится ли с действующими решениями проекта, от каких вопросов зависит, какие риски с ним
+связаны. Нашёл судья проблему — говорит и что поправить: в каком вопросе, что поменять и с чем это
+расходится. Где вопрос unresolved, сравнивают его варианты и, если один обоснованно лучше,
+рекомендуют его. Новых вариантов здесь нет: рекомендовать можно только из тех, что у вопроса
+есть. Выбор человека не меняется: проверка не того варианта или рекомендация вместо проверки —
+негодный ответ. Ссылки вторичны: чужой номер просто отбрасывается.
 """
 
 from dataclasses import dataclass
 
 from .ideas import reason_of
+from .outcomes import project_decisions_in
 from .proposals import fragments_in, questions_in
 from .slicing import BadAnswer
 
 RATIONALE_MAX = 2000
 # Сколько знаков в одной правке: что поменять и почему.
 FIX_MAX = 1000
+# Сколько знаков в том, чем вариант расходится с решением проекта.
+CLASH_MAX = 500
 
 # Ответы участника и судьи — в своих словах (decision_analysis.md, decision_judge.md).
 JUDGED = {"validated": "validated", "conflict": "conflict", "recommended": "recommended",
@@ -38,6 +41,8 @@ class Context:
     selected: str | None
     # Сам вопрос: правка может быть и в нём.
     question: str = ""
+    # Действующие решения проекта, отобранные для потока: с ними вариант может расходиться.
+    decisions: frozenset[str] = frozenset()
 
 
 @dataclass(frozen=True)
@@ -47,6 +52,14 @@ class Fix:
     question: str
     change: str
     why: str = ""
+
+
+@dataclass(frozen=True)
+class Clash:
+    """Действующее решение проекта, с которым расходится вариант: его номер в каталоге и чем."""
+
+    adr: str
+    text: str
 
 
 @dataclass(frozen=True)
@@ -63,6 +76,8 @@ class Analysis:
     rationale: str | None = None
     # У conflict от судьи: что поправить, по шагу на правку.
     fixes: tuple[Fix, ...] = ()
+    # С какими действующими решениями проекта расходится выбор.
+    clashes: tuple[Clash, ...] = ()
 
 
 def proposal_id(value: object) -> str | None:
@@ -87,10 +102,30 @@ def checked(data: dict, context: Context, field: str) -> Analysis:
     validation = data.get("validation")
     validation = validation if isinstance(validation, dict) else {}
     conflicts = fragments_in(validation.get("constraint_conflicts"), context.constraints)
+    clashes = clashes_of(validation.get("adr_conflicts"), context)
     return Analysis(
-        "conflict" if conflicts or validation.get("valid") is False else "validated",
+        "conflict" if conflicts or clashes or validation.get("valid") is False else "validated",
         context.selected, conflicts, fragments_in(validation.get("risk_ids"), context.risks),
-        questions_in(validation.get("depends_on_question_ids"), context.questions))
+        questions_in(validation.get("depends_on_question_ids"), context.questions),
+        clashes=clashes)
+
+
+def clashes_of(value: object, context: Context) -> tuple[Clash, ...]:
+    """Расхождения с решениями проекта: только с действующими, отобранными для потока («ADR-7» —
+    то же, что «ADR-0007»), и у каждого сказано, чем. Чужой номер или расхождение без сути
+    отбрасывается, как чужой номер фрагмента; повтор — первое."""
+    found: dict[str, Clash] = {}
+    for item in value if isinstance(value, list) else []:
+        if not isinstance(item, dict):
+            continue
+        named = project_decisions_in([item.get("adr_id")], context.decisions)
+        text = reason_of(item.get("text"))
+        if not named or not text or named[0] in found:
+            continue
+        if len(text) > CLASH_MAX:
+            raise BadAnswer(f"расхождение с {named[0]} длиннее {CLASH_MAX} знаков")
+        found[named[0]] = Clash(named[0], text)
+    return tuple(sorted(found.values(), key=lambda clash: clash.adr))
 
 
 def fixes_of(value: object, context: Context) -> tuple[Fix, ...]:
@@ -132,7 +167,8 @@ def analysis_of(data: dict, context: Context) -> Analysis:
         draft = data.get("adr_draft")
         return Analysis(found.kind, found.proposal, found.conflicts, found.risks,
                         found.depends_on, reason_of(data.get("summary")),
-                        rationale_of(draft.get("rationale")) if isinstance(draft, dict) else None)
+                        rationale_of(draft.get("rationale")) if isinstance(draft, dict) else None,
+                        clashes=found.clashes)
     if status == "unresolved":
         if context.selected is not None:
             raise BadAnswer(f"вопрос unresolved, а выбран {context.selected}")
@@ -154,10 +190,10 @@ def judged_analysis(data: dict, context: Context) -> Analysis:
     if kind in ("validated", "conflict"):
         found = checked(data, context, "proposal_id")
         # Судья назвал проблему — это конфликт, даже если status «validated».
-        kind = "conflict" if found.conflicts or kind == "conflict" else "validated"
+        kind = "conflict" if found.conflicts or found.clashes or kind == "conflict" else "validated"
         fixes = fixes_of(data.get("fixes"), context) if kind == "conflict" else ()
         return Analysis(kind, found.proposal, found.conflicts, found.risks, found.depends_on,
-                        reason, rationale, fixes)
+                        reason, rationale, fixes, found.clashes)
     if kind == "recommended":
         return Analysis(kind, recommended(data.get("proposal_id"), context), reason=reason,
                         rationale=rationale)
@@ -172,6 +208,8 @@ def as_prompt(analysis: Analysis) -> dict:
         return {"status": "user_selected", "selected_proposal_id": analysis.proposal,
                 "validation": {"valid": analysis.kind == "validated",
                                "constraint_conflicts": [f"F{i}" for i in analysis.conflicts],
+                               "adr_conflicts": [{"adr_id": clash.adr, "text": clash.text}
+                                                 for clash in analysis.clashes],
                                "risk_ids": [f"F{i}" for i in analysis.risks],
                                "depends_on_question_ids": list(analysis.depends_on)},
                 "summary": analysis.reason,

@@ -24,6 +24,7 @@ from ..models import Choice, Council
 from ..models import Stream as Stored
 from ..options import OptionSet as Offering
 from ..options import sets_of
+from ..pipeline import rests_on
 from ..scope import Listed
 from ..standing import State, exported, stream_standing
 from ..store import council_lock
@@ -198,7 +199,8 @@ def editable(stream: Stored, notes: str | None, run: int) -> State:
 
 def decisions_of(council: Council, stream: Stored, notes: str | None) -> list[StreamDecision]:
     """Решения шага: вопрос — тот же, что на «Вопросах»; вариант — тот же, что на «Вариантах»;
-    «в контексте» — варианты решений вопросов, от которых это зависит, как они на шаге. Номер в
+    «в контексте» — варианты решений вопросов, на которые опирается проверка (pipeline.rests_on:
+    от которых зависит и где судья велел что-то поправить), как они на шаге. Номер в
     каталоге — пока поток выгружен (standing.exported, как у «Документации»): выгрузка к другим
     итогам знает ADR-n других решений — вопросы с тех пор могли отобрать заново."""
     shown = shown_of(stream)
@@ -216,7 +218,8 @@ def decisions_of(council: Council, stream: Stored, notes: str | None) -> list[St
 def decision_of(item: Shown, question: Question, options: dict[str, Option | None],
                 catalog_id: str | None) -> StreamDecision:
     """Что совет сказал о решении: противоречие — проблемой и что поправить, без заметки судьи;
-    иначе — заметкой судьи. Противоречит вариант ограничениям группы — «последствия»."""
+    иначе — заметкой судьи. Противоречит вариант ограничениям группы или решениям проекта —
+    «последствия»: сначала ограничения, потом решения проекта, с тем, чем противоречит."""
     found, ruling = item.analysis, item.ruling
     conflict = found.verdict == "conflict"
     problem = DecisionProblem(text=found.reason or "", fixes=[
@@ -227,9 +230,11 @@ def decision_of(item: Shown, question: Question, options: dict[str, Option | Non
         question=question, adr=item.adr, catalog_id=catalog_id,
         option=options[item.question.id], verdict=VERDICTS[found.verdict],
         note=None if conflict else found.reason or None, problem=problem,
-        context=[context_of(other, options) for other in dict.fromkeys(found.depends_on)
+        context=[context_of(other, options) for other in rests_on(found)
                  if other != item.question.id],
-        conflicts=[DecisionConflict(id=f"F{n}", text=None) for n in found.constraint_conflicts],
+        conflicts=[*(DecisionConflict(id=f"F{n}", text=None) for n in found.constraint_conflicts),
+                   *(DecisionConflict(id=clash.adr_id, text=clash.text or None)
+                     for clash in found.project_conflicts)],
         risks=[f"F{n}" for n in found.risk_ids], fixes=[], rationale=ruling.rationale,
         rationale_by=AUTHORS[ruling.rationale_by], status=ruling.status)
 

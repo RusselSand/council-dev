@@ -774,6 +774,14 @@ class DecisionFix(BaseModel):
     why: str = ""
 
 
+class DecisionClash(BaseModel):
+    """Действующее решение проекта, с которым расходится выбор: номер в каталоге (adr_id) и чем
+    (text)."""
+
+    adr_id: str
+    text: str = ""
+
+
 class QuestionAnalysis(BaseModel):
     """Что совет сказал по вопросу перед решением: проверил выбор человека или, если вопрос
     unresolved, сравнил его варианты. Новых вариантов здесь нет, выбор человека не меняется."""
@@ -790,6 +798,8 @@ class QuestionAnalysis(BaseModel):
     constraint_conflicts: list[int] = []
     risk_ids: list[int] = []
     depends_on: list[str] = []
+    # С какими действующими решениями проекта, отобранными для потока, вариант расходится.
+    project_conflicts: list[DecisionClash] = []
     # Выбор по вопросам из depends_on и из правок (fixes), каким он был при проверке («Q2: P5»):
     # поменялся — проблема могла уйти или появиться, и проверку не переносят, а повторяют.
     context: list[str] = []

@@ -15,6 +15,7 @@ from spec_council.models import (
     DecisionAnalysis,
     NotesExport,
     OpenQuestion,
+    ProjectDecision,
     ProjectDraft,
     Proposal,
     ProposalDiscovery,
@@ -130,10 +131,13 @@ def repositories(tmp_path):
     app.dependency_overrides.pop(get_repositories)
 
 
-def chosen(store, pool) -> tuple[str, str]:
+def chosen(store, pool, **stream) -> tuple[str, str]:
     """Выбор утверждён: Q1 — P1, Q2 — «Пока не решаю», Q3 — свой вариант; модели проверяют
-    решения потока A. В ответ — совет и id своего варианта."""
+    решения потока A (stream — что ещё есть у потока, когда выбор утверждают). В ответ — совет и
+    id своего варианта."""
     council_id = offered(store, pool)
+    if stream:
+        put(store, council_id, **stream)
     own = adds(council_id, "Q3", OWN).json()["option"]["id"]
     assert chooses(council_id, "Q1", "P1").status_code == 200
     assert chooses(council_id, "Q2").status_code == 200
@@ -142,10 +146,10 @@ def chosen(store, pool) -> tuple[str, str]:
     return council_id, own
 
 
-def checked(store, pool) -> tuple[str, str]:
+def checked(store, pool, **stream) -> tuple[str, str]:
     """Модели проверили решения: Q1 и свой вариант Q3 — проверены, по Q2 судья рекомендует P2.
     Шаг ждёт вас."""
-    council_id, own = chosen(store, pool)
+    council_id, own = chosen(store, pool, **stream)
     pool.run()
     assert steps_of(stream_of(council_id))["decisions"]["state"] == "waiting"
     return council_id, own
@@ -238,6 +242,39 @@ def test_a_conflict_is_a_problem_with_what_to_fix(store, pool, agents):
     assert q1["context"] == [{"question": "Q2", "option": "P2", "text": None},
                              {"question": "Q3", "option": own, "text": OWN}]
     assert (q1["risks"], q1["fixes"]) == ([], [])
+
+
+def test_a_question_the_judge_asks_to_change_is_in_context_too(store, pool, agents):
+    """Судья велел поправить другой вопрос, а в зависимостях его не назвал: проверка всё равно
+    опирается на выбор по нему — он «в контексте», после зависимостей."""
+    agents.judged["Q1"] = {
+        "status": "conflict", "proposal_id": "P1", "reason": PROBLEM,
+        "validation": {"depends_on_question_ids": ["Q3"]},
+        "fixes": [{"question_id": "Q2", "change": "Выберите вариант."}]}
+    council_id, own = checked(store, pool)
+    assert decisions_of(council_id)["Q1"]["context"] == [
+        {"question": "Q3", "option": own, "text": OWN},
+        {"question": "Q2", "option": "P2", "text": None}]
+
+
+def test_a_conflict_with_a_project_decision_says_what_it_goes_against(store, pool, agents):
+    """Решение проекта — в «последствиях» после ограничений, с тем, чем вариант ему противоречит.
+    Решение на пересмотре не в силе, а не отобранного для потока модели не видели — им вариант
+    не противоречит."""
+    agents.judged["Q1"] = {
+        "status": "validated", "proposal_id": "P1", "reason": PROBLEM,
+        "validation": {"constraint_conflicts": ["F3"], "adr_conflicts": [
+            {"adr_id": "ADR-5", "text": "статус ведёт сервер"},
+            {"adr_id": "ADR-0008", "text": "хранить в Notion"},
+            {"adr_id": "ADR-0009", "text": "не отобрано"}]},
+        "fixes": [{"question_id": "Q1", "change": "Искать по заголовкам."}]}
+    council_id, _ = checked(store, pool, project_decisions=[
+        ProjectDecision(adr_id="ADR-0005", decision="Сервер — источник истины для статуса."),
+        ProjectDecision(adr_id="ADR-0008", decision="Хранить в Notion.", status="under_review")])
+    q1 = decisions_of(council_id)["Q1"]
+    assert q1["verdict"] == "conflict"
+    assert q1["conflicts"] == [{"id": "F3", "text": None},
+                               {"id": "ADR-0005", "text": "статус ведёт сервер"}]
 
 
 def test_a_question_the_council_could_not_pick_for_is_blocked_without_an_option(store, pool,
