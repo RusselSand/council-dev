@@ -82,6 +82,7 @@ import tempfile
 from collections.abc import Callable, Collection, Iterable, Iterator, Mapping, Sequence
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
+from datetime import UTC, datetime
 from functools import partial
 from pathlib import Path
 from threading import Event, Lock
@@ -626,6 +627,8 @@ class CouncilRun[S: (Slicing, Structure, IdeaDiscovery, RepositoryScan, DesignSc
         with self._lock:
             run = next(run for run in self._step(name).runs if run.model == model)
             run.state, run.error = state, error
+            if state == "running":
+                run.started_at = datetime.now(UTC)
             self._publish()
 
     def _finish(self, *, error: str | None = None, **result: Any) -> None:

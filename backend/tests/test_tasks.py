@@ -76,7 +76,6 @@ from tests.test_streams import (
     scans,
     section,
     streams_of,
-    takes,
 )
 
 
@@ -276,6 +275,8 @@ def test_a_decision_on_a_finding_after_the_plan_makes_it_stale(agents, folders, 
     прежнему, и его не выгрузить, пока не сбросят."""
     council_id = single()
     scans(council_id, "C")
+    passes(council_id, "C")
+    # Вывод ИИ, решения по которому ещё нет: появился в карте уже после «К потокам →».
     research = council(council_id).research
     inferred = RepositoryFinding(id="R2", statement="Очередь можно хранить в SQLite.",
                                  status="inferred")
@@ -283,8 +284,6 @@ def test_a_decision_on_a_finding_after_the_plan_makes_it_stale(agents, folders, 
         update={"findings": [*research.scan.result.findings, inferred]})
     get_store().update_council(council_id, {"research": research.model_copy(
         update={"scan": research.scan.model_copy(update={"result": result})})})
-    takes(council_id, "C")
-    passes(council_id, "C")
     all_decided(council_id)
     exported(council_id)
     assert plans(council_id).status_code == 202
@@ -308,7 +307,8 @@ def test_the_plan_names_a_stream_by_its_title_not_by_its_edited_group(agents, fo
     before = council(council_id)
     structure = before.structure.model_copy(update={"groups": [
         group.model_copy(update={"title": "Переименована"}) for group in before.structure.groups]})
-    edited = before.model_copy(update={"structure": structure})
+    edited = before.model_copy(update={"structure": structure, "streams": [
+        stream.model_copy(update={"title": None}) for stream in before.streams]})
     assert "C. Переименована:" in ideas_text(edited)
     titled = edited.model_copy(update={"streams": [
         stream.model_copy(update={"title": "Группа C"}) for stream in edited.streams]})
@@ -456,7 +456,6 @@ def test_research_changed_while_the_code_was_read_refuses_the_plan(agents, folde
                                                                     monkeypatch):
     council_id = single()
     scans(council_id, "C")
-    takes(council_id, "C")
     passes(council_id, "C")
     all_decided(council_id)
     exported(council_id)
@@ -477,7 +476,6 @@ def test_research_changed_while_the_code_was_read_refuses_the_plan(agents, folde
 def test_with_an_approved_scan_the_plan_reads_the_code_anew(agents, folders, repos):  # noqa: F811
     council_id = single()
     scans(council_id, "C")
-    takes(council_id, "C")
     passes(council_id, "C")
     (repos / "later.py").write_text("x = 1\n", encoding="utf-8")       # код после скана
     all_decided(council_id)
@@ -501,7 +499,6 @@ def test_the_plan_does_not_read_the_council_folders_in_the_repository(agents, fo
     app.dependency_overrides[get_issues_of] = lambda: lambda council: issues
     council_id = single()
     scans(council_id, "C")
-    takes(council_id, "C")
     passes(council_id, "C")
     all_decided(council_id)
     exported(council_id)
@@ -520,7 +517,6 @@ def test_a_map_made_while_the_scan_read_the_council_folders_refuses_the_plan(  #
     app.dependency_overrides[get_issues_of] = lambda: lambda council: issues
     council_id = single()
     scans(council_id, "C")
-    takes(council_id, "C")
     passes(council_id, "C")
     all_decided(council_id)
     exported(council_id)
@@ -537,7 +533,6 @@ def test_a_map_made_while_the_scan_read_the_council_folders_refuses_the_plan(  #
 def test_a_working_copy_gone_since_the_scan_refuses_the_plan(agents, folders, repos):  # noqa: F811
     council_id = single()
     scans(council_id, "C")
-    takes(council_id, "C")
     passes(council_id, "C")
     all_decided(council_id)
     exported(council_id)
