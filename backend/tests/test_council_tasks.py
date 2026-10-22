@@ -23,6 +23,7 @@ from spec_council.models import LabeledFragment as Fragment
 from spec_council.notes import Note, path_of, rendered
 from spec_council.pipeline import ModelFailed
 from spec_council.repository import STALE_MAP
+from spec_council.store import council_lock
 from spec_council.web import notes as web_notes
 from spec_council.web import tasks as web_tasks
 from spec_council.web.councils import context_of
@@ -500,6 +501,30 @@ def test_an_outcome_approved_while_the_plan_runs_plans_again(agents, base, monke
     assert council(council_id).tasks.run == plan.run
 
 
+def test_a_plan_replaced_before_it_went_to_the_pool_never_asks_the_models(agents, base):
+    """Два действия разом: первое положило план в совет, но в пул его ещё не отдало, а второе уже
+    поставило на его место новый. Прежний остановлен: в пул он уходит, но моделей не зовёт."""
+    council_id = ready()
+    store = get_store()
+    context = context_of(store, agents, lambda job: job(), get_projects(), base)
+
+    def replaced():
+        # План к прежним потокам — его строят заново, а в пул ход ещё не отдан.
+        plan = council(council_id).tasks
+        store.update_council(council_id, {"tasks": plan.model_copy(update={"basis": {}})})
+        with council_lock:
+            return council_tasks.plan_begun(council(council_id), context)[1]
+
+    first = replaced()
+    second = replaced()
+    asked = len(agents.asked)
+    assert council_tasks.go(context.launch, first)
+    assert len(agents.asked) == asked
+    assert council(council_id).tasks.run == second.pipeline.state.run
+    assert council_tasks.go(context.launch, second)
+    assert council(council_id).tasks.state == "done" and len(agents.asked) > asked
+
+
 def test_a_stream_written_before_note_numbers_were_kept_stops_the_plan(agents, base):
     """Поток прежней версии записан, когда совет не помнил номера заметок (или помнил только у
     решений и итогов): тексты задач назвали бы вопросы и варианты не номерами заметок."""
@@ -635,6 +660,50 @@ def test_a_working_copy_gone_since_the_scan_stops_the_plan(agents, repos):  # no
     plan = council(council_id).tasks
     assert plan.state == "failed" and "не прочитать" in plan.error
     assert tasks_of(council_id)["stages"]["tasks"] == "failed"
+
+
+def moving_tasks(agents, council_id, issues):
+    """Пока модели строят план, папку задач проекта переносят в issues — один раз."""
+    moved = []
+
+    def plan(prompt):
+        if not moved:
+            moved.append(project_of(council_id, notes="notes", issues=issues))
+        return Agents.task_plan(prompt)
+
+    agents.task_plan = plan
+
+
+def asked_to_plan(agents):
+    return sum(key.split("-")[1] == "task_plan" for key in agents.asked)
+
+
+def test_a_tasks_folder_moved_into_the_repository_while_planning_plans_again(agents,
+                                                                              repos):  # noqa: F811
+    """Папку задач перенесли в репозиторий, пока модели строили план: код он читал, не пропуская
+    её, — его не принимают, а строят заново, к нынешним папкам. Скан её тоже не пропускал — и
+    план останавливается, как и начатый после переноса: код исследуют заново."""
+    folders = {"notes": "notes", "issues": "issues"}
+    council_id = coded(**folders)
+    moving_tasks(agents, council_id, "project/docs/issues")
+    exported(council_id, **folders)
+    plan = council(council_id).tasks
+    assert (plan.state, plan.error) == ("failed", STALE_MAP)
+    assert plan_of(council_id)["error"] == f"{STALE_MAP}."
+
+
+def test_a_tasks_folder_moved_outside_the_repository_while_planning_keeps_the_plan(agents,
+                                                                                   repos):  # noqa: F811
+    """Папку задач перенесли, пока модели строили план, но не в репозиторий: код план читал тот же,
+    что прочёл бы сейчас, — его принимают."""
+    folders = {"notes": "notes", "issues": "issues"}
+    council_id = coded(**folders)
+    moving_tasks(agents, council_id, "issues2")
+    exported(council_id, **folders)
+    plan = council(council_id).tasks
+    assert plan.state == "done" and plan.code, plan.error
+    assert asked_to_plan(agents) == 2                                # sol и fable, один раз
+    assert plan_of(council_id)["catalog"]["path"] == "issues2"
 
 
 # --- перевод задач

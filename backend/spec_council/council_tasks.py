@@ -26,7 +26,7 @@ from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
-from .background import Slot, halt, launched, reporter, running
+from .background import Slot, halt, held, launched, reporter, running
 from .chain import resumed
 from .deps import Launcher
 from .export import (
@@ -60,6 +60,7 @@ from .repository import (
     Source,
     council_folders,
     same_copy,
+    skipped_of,
     working_copy,
 )
 from .standing import Folders, current_plan, streams_ready, tasks_translation, tasks_work
@@ -98,8 +99,10 @@ class Context:
 @dataclass(frozen=True)
 class TasksLaunch:
     """Работа моделей на «Задачах»: правка совета с её ходом — её кладут в совет под замком
-    советов — и сам ход с отчётом: его отдают в пул после замка (go). Работать моделям нечего —
-    хода нет, в совет кладут только правку."""
+    советов — и сам ход с отчётом: его отдают в пул после замка (go). Остановить ход можно уже с
+    правкой (background.held): иначе действие, что между замком и пулом поставило на его место
+    новый, не нашло бы его, и он потом звал бы модели зря. Работать моделям нечего — хода нет, в
+    совет кладут только правку."""
 
     changes: dict[str, Any]
     pipeline: CouncilRun | None = None
@@ -207,6 +210,7 @@ def planning(council: Council, folders: Folders, context: Context,
         resumed(run.state, before, datetime.now(UTC), context.runner.identity)
         run.replayed = {(part.name, one.model) for part in run.state.steps for one in part.runs
                         if one.state == "done"}
+    held(run)
     return TasksLaunch({"tasks": run.state.model_copy(deep=True), "tasks_draft": None}, run,
                        run.report)
 
@@ -234,7 +238,11 @@ class PlanRun(TaskRun):
 def plan_report(council_id: str, context: Context) -> Callable[[TaskPlan], None]:
     """Отчёт хода плана: кладёт его на место, если там всё ещё он, — как background.reporter. План
     готов — в той же правке судья начинает переводить задачи (translation_begun): «Задачи» не
-    покажутся ждущими между планом и переводом. Ход перевода — в пул после замка."""
+    покажутся ждущими между планом и переводом. Но если папки проекта, пока модели строили план,
+    сменили так, что код он читал не с теми пропусками, что сейчас (misread), — план не
+    принимают: его строят заново, к нынешним папкам (begun), а строить не пора — плана нет. Иначе
+    план, прочитавший папку совета как код, обошёл бы сверку с картой (code_of). Ход — в пул после
+    замка."""
     def report(state: TaskPlan) -> None:
         start = None
         with council_lock:
@@ -243,13 +251,31 @@ def plan_report(council_id: str, context: Context) -> Callable[[TaskPlan], None]
                 return
             changes: dict[str, Any] = {"tasks": state}
             if state.state == "done":
-                planned = council.model_copy(update={"tasks": state})
-                start = translation_begun(planned, context.folders(planned), context)
+                folders = context.folders(council)
+                if misread(state, folders):
+                    changes = {"tasks": None, "tasks_draft": None}
+                    start = begun(council.model_copy(update=changes), context)
+                else:
+                    start = translation_begun(council.model_copy(update={"tasks": state}),
+                                              folders, context)
                 if start is not None:
                     changes |= start.changes
             context.store.update_council(council_id, changes, touch=state.state != "running")
         go(context.launch, start)
     return report
+
+
+def misread(plan: TaskPlan, folders: Folders) -> bool:
+    """Код плана читали, пропуская не те папки совета, что пропустили бы сейчас (folders): папки
+    проекта сменили, пока модели строили план, — нынешнюю он, может быть, прочёл как код. Кода
+    план не читал — сверять нечего."""
+    skip = council_folders(Path(folders.notes) if folders.notes else None,
+                           Path(folders.issues) if folders.issues else None)
+    try:
+        return any(list(skipped_of(Path(source.root), skip)[0]) != source.skipped
+                   for source in plan.sources)
+    except RepositoryError:     # копия теперь — в самой папке совета
+        return True
 
 
 def research_snapshot(council: Council, notes: Path) -> list[str]:
@@ -334,6 +360,7 @@ def translation_of(council: Council, draft: TasksDraft, shelf: Shelf, context: C
                         council.judge, context.runner, report)
     pipeline.replayed = {(part.name, run.model) for part in state.steps for run in part.runs
                          if run.state == "done"}
+    held(pipeline)
     return TasksLaunch({"tasks_draft": state.model_copy(deep=True)}, pipeline, report)
 
 
