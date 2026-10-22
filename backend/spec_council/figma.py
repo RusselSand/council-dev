@@ -120,6 +120,20 @@ class Figma:
         return fetched(url, {}, limit)
 
 
+# Токена нет — макет не снять: так и пишем, когда исследование макета остановилось.
+NO_TOKEN = "Токен Figma не задан: впишите FIGMA_TOKEN в .env и перезапустите сервер"
+
+
+class Tokenless:
+    """Figma без токена: любой запрос — отказ с тем, что делать."""
+
+    def json(self, path: str, params: Mapping[str, str]) -> dict:
+        raise FigmaError(NO_TOKEN)
+
+    def content(self, url: str, limit: int) -> bytes:
+        raise FigmaError(NO_TOKEN)
+
+
 def fetched(url: str, headers: Mapping[str, str], limit: int) -> bytes:
     request = urllib.request.Request(url, headers={**headers, "User-Agent": "spec-council"})
     try:

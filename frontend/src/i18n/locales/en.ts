@@ -188,6 +188,10 @@ export const en = translation({
     other: '{count} findings are waiting for your decision — inferences and conflicts.',
   },
   'research.note.groups': 'Confirm the groups — then they become streams.',
+  'research.note.ideas': {
+    one: 'Group {groups} has no idea — wait for AI to find it or write it on “Groups”.',
+    other: 'Groups {groups} have no idea — wait for AI to find them or write them on “Groups”.',
+  },
   'research.note.running': 'Wait for the research to finish.',
   'research.note.start': 'Start or skip both researches — then the groups become streams.',
 

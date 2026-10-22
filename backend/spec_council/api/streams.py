@@ -3,7 +3,7 @@
 подтверждает новый API (web/structure.py), а потоки этих ручек — у советов прежней версии,
 пока потоки не переедут в новый API. Человек утверждает идею потока —
 найденную советом, свою или записанную в тексте, — ещё на этапе «Группы». Когда исследование
-совета пройдено (research.py), человек начинает поток: поток берёт себе копию карты кода и
+совета пройдено (web/research.py), человек начинает поток: поток берёт себе копию карты кода и
 описания макета, и совет сразу ищет открытые вопросы. Человек отбирает, какие из них решать, и
 добавляет свои, — и совет сразу ищет к ним новые варианты ответа. Человек выбирает по варианту
 на вопрос или оставляет его unresolved — и совет сразу проверяет выбор, а для unresolved
@@ -333,12 +333,14 @@ def map_scan(council: Council) -> RepositoryScan | None:
 
 def taken(council: Council, stream: Stream, edit: StartStream) -> Stream:
     """Поток с копией исследования совета, с которой его начинают: идея утверждена и та, что
-    человек видел, исследование пройдено."""
+    человек видел, исследование утверждено («К потокам →», web/research.py). Пропущенное после
+    «Вернуть исследование» — ещё не утверждено, хоть оба шага и пройдены."""
     if stream.idea is None:
         raise HTTPException(409, NO_IDEA)
     seen_idea(stream, edit)
     research = council.research
-    if research is None or research.repository is None or research.design is None:
+    if research is None or not research.approved or research.repository is None \
+            or research.design is None:
         raise HTTPException(409, NO_RESEARCH)
     return stream.model_copy(update={
         "scan": research.scan if research.repository.by == "scan" else None,

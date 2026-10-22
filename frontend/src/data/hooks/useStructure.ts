@@ -1,19 +1,24 @@
 import { useEffect, useRef, useState } from 'react';
-import type { GroupFields, Structure } from '../../domain/structure';
+import { withoutIdea, type GroupFields, type Structure } from '../../domain/structure';
 import { source } from '../config';
 import { toApiError, type ApiError } from '../errors';
 import { markStale } from './stale';
 import type { Query } from './useQuery';
-import { useStageQuery } from './useStageQuery';
+import { useModelsPoll, useStageQuery } from './useStageQuery';
 import { without } from './without';
 
 /**
  * Раскладка совета по группам — GET /api/councils/<id>/structure: ход работы, группы, почему остановилась. Пока модели
  * раскладывают фрагменты (running), раскладка и список советов перезапрашиваются через 5 с после ответа на раскладку;
  * раскладка началась или кончилась — до ответа на новый запрос её нет (data — undefined). См. useStageQuery().
+ * awaitsIdeas — экран ждёт идей групп («К потокам →» на «Исследовании»): пока у группы нет идеи (ИИ её ещё ищет),
+ * раскладка и список советов так же перезапрашиваются через 5 с, а прежняя раскладка остаётся на экране, пока не
+ * пришла новая.
  */
-export function useCouncilStructure(id: string, running: boolean): Query<Structure> {
-  return useStageQuery('structure', () => source.getStructure(id), id, running);
+export function useCouncilStructure(id: string, running: boolean, awaitsIdeas = false): Query<Structure> {
+  const query = useStageQuery('structure', () => source.getStructure(id), id, running);
+  useModelsPoll(awaitsIdeas && !running && withoutIdea(query.data?.groups ?? []).length > 0, query);
+  return query;
 }
 
 export interface GroupEdits {

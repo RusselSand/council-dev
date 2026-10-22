@@ -58,7 +58,7 @@ class Agents:
     def availability(self, aliases, *, fresh=False):
         raise AssertionError("группы вход в подписку заранее не проверяют")
 
-    def ask(self, model, prompt, key, workspace=None):
+    def ask(self, model, prompt, key, workspace=None, stop=None):
         self.asked.append(key)
         if model in self.offline:
             raise ModelFailed("нет входа в подписку")
@@ -762,9 +762,15 @@ def test_a_started_research_is_told_again_once_the_groups_are_confirmed(store, p
     assert listed(council_id)["activity"] == [
         at_stage("research", "waiting", "Подтвердите группы — потом они станут потоками."),
         at_stage("structure", "waiting", "Подтвердите группы")]
+    # У группы B идеи нет — её ищет ИИ; нашёл — исследование можно утвердить (решение q-002
+    # бекенда).
     activity = confirms(council_id).json()["council"]["activity"]
     assert activity == [at_stage("research", "waiting",
-                                 "Утвердите исследование — потом группы станут потоками.")]
+                                 "У группы B нет идеи — дождитесь, пока ИИ её найдёт, или "
+                                 "впишите её на «Группах».")]
+    pool.run()
+    assert listed(council_id)["activity"] == [at_stage(
+        "research", "waiting", "Утвердите исследование — потом группы станут потоками.")]
 
 
 def test_confirmation_of_a_missing_council_is_not_found():

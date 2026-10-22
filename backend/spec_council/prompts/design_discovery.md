@@ -145,7 +145,23 @@ Do not resolve these uncertainties yourself.
 
 Do not create OPEN QUESTIONS at this stage. Only record observations that may require questions later.
 
-## 8. Restrictions
+## 8. Groups
+
+The IDEA has one line per group: `A. title: idea`. Every finding, unknown and contradiction concerns the idea of some group: put the letter of that group into `group` (`A`, `B` …). If it concerns several ideas, take the one it matters most for.
+
+## 9. Contradictions with the request
+
+Record a contradiction where the fragments (the request of the human) say one thing and the design shows another:
+
+- `subject` — what it is about, in one sentence;
+- `claim` — what the fragments say;
+- `found` — what the design actually shows;
+- `where` — the page and the frame;
+- `group` — the letter of the group.
+
+A contradiction is an observation: do not decide which side is right.
+
+## 10. Restrictions
 
 - Do not change Figma.
 - Do not create new screens or components.
@@ -181,7 +197,8 @@ Return only JSON:
           "name": "Catalog / Desktop"
         }
       ],
-      "relevance": "Search concerns the approved IDEA."
+      "relevance": "Search concerns the approved IDEA.",
+      "group": "A"
     }
   ],
   "screens": [
@@ -238,10 +255,19 @@ Return only JSON:
           "page_id": "12:34",
           "node_id": "56:78"
         }
-      ]
+      ],
+      "group": "A"
     }
   ],
-  "design_conflicts": []
+  "conflicts": [
+    {
+      "subject": "What the search finds.",
+      "claim": "The fragments say that the search finds works by their author.",
+      "found": "The search field of the catalog only filters by title.",
+      "where": "Catalog / Desktop",
+      "group": "A"
+    }
+  ]
 }
 
 Allowed values of coverage.status:
@@ -266,6 +292,8 @@ Before answering, check:
 - Demo data is not turned into requirements.
 - Inferred and unknown are explicitly marked.
 - Contradictions are kept.
+- Contradictions of the fragments with the design are recorded.
+- Every finding, unknown and contradiction has the letter of its group.
 - The design is not changed.
 - No new product or architectural decisions are proposed.
 

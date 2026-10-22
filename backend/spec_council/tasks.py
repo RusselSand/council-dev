@@ -27,7 +27,18 @@ from .export import (
     terms_of,
 )
 from .groups import stream_group
-from .models import Council, Issue, LabeledFragment, Outcome, Research, Stream
+from .models import (
+    Council,
+    DesignScan,
+    DesignStep,
+    Issue,
+    LabeledFragment,
+    Outcome,
+    RepositoryScan,
+    RepositoryStep,
+    Research,
+    Stream,
+)
 from .slicing import BadAnswer
 
 TEXT_MAX = 4000
@@ -229,13 +240,27 @@ RESEARCH = "research"
 
 def basis_of(council: Council) -> dict[str, str]:
     """К чему план: у каждого потока — его утверждённые итоги и выгрузка, а у исследования
-    (RESEARCH) — как пройдены его шаги: план читает его карту кода и описание макета."""
+    (RESEARCH) — как пройдены его шаги и решения человека по находкам: план читает его карту кода
+    и описание макета с этими решениями."""
     research = council.research
-    steps = [research.repository, research.design] if research else [None, None]
+    steps = ([(research.repository, research.scan), (research.design, research.design_scan)]
+             if research else [(None, None), (None, None)])
     return {**{stream.group: f"{stream.outcomes.run if stream.outcomes else ''}:"
                              f"{stream.notes.run if stream.notes else ''}"
                for stream in council.streams or []},
-            RESEARCH: "|".join(f"{step.by}:{step.scan_run}" if step else "" for step in steps)}
+            RESEARCH: "|".join(step_basis(step, scan) for step, scan in steps)}
+
+
+def step_basis(step: RepositoryStep | DesignStep | None,
+               scan: RepositoryScan | DesignScan | None) -> str:
+    """«scan:run» — как пройден шаг; пройден сканом, у находок которого есть решения, — и они:
+    решение поменяли — план к прежнему. Решений нет (и у планов прежней версии) — как было."""
+    if step is None:
+        return ""
+    taken = step.by == "scan" and scan is not None and scan.run == step.scan_run
+    decisions = ",".join(f"{finding}={decision}"
+                         for finding, decision in sorted(scan.decisions.items())) if taken else ""
+    return f"{step.by}:{step.scan_run}" + (f":{decisions}" if decisions else "")
 
 
 def not_ready(council: Council, notes: str | None) -> list[str]:
@@ -261,8 +286,14 @@ def not_ready(council: Council, notes: str | None) -> list[str]:
 
 
 def ideas_text(council: Council) -> str:
+    """Идеи потоков — «A. название: идея». Название — то, с которым группа стала потоком: правки
+    групп его не меняют (решение q-002); у потока прежней версии — у его группы."""
     titles = {group.id: group.title for group in council.structure.groups}
-    return "\n".join(f"{stream.group}. {titles.get(stream.group, '')}: {stream.idea.text}"
+
+    def title(stream: Stream) -> str:
+        return stream.title if stream.title is not None else titles.get(stream.group, "")
+
+    return "\n".join(f"{stream.group}. {title(stream)}: {stream.idea.text}"
                      for stream in council.streams or [] if stream.idea is not None)
 
 

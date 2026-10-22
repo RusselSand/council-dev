@@ -95,6 +95,14 @@ def seeks_idea(council: Council, group: Group) -> bool:
     return group.idea is None and not idea_of(council, group).text
 
 
+def without_idea(council: Council) -> list[str]:
+    """Буквы групп раскладки без идеи, по порядку: ИИ её ещё ищет или не нашёл, а человек не
+    вписал. Пока такие есть, исследование не утверждается: поток пошёл бы без идеи (решение
+    q-002 бекенда)."""
+    groups = council.structure.groups if council.structure else []
+    return [group.id for group in groups if not idea_of(council, group).text.strip()]
+
+
 def own_idea(idea: Idea) -> dict:
     """Идея группы после правки, которая поменяла её состав, — своя: из фрагментов-идей и
     поиска совета её уже не посчитать. Пустая идея от ИИ своей не становится — её ещё

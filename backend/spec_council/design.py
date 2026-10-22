@@ -1,13 +1,14 @@
 """Шаг «Дизайн»: разбор описаний макета от участников и судьи и что о макете знают следующие
 шаги. Находка держится на узле, который лёг в снимок: ссылка на узел, которого там нет, —
-не подтверждение, и verified без подтверждения становится inferred."""
+не подтверждение, и verified без подтверждения становится inferred. Находка — к идее одной из
+групп совета; противоречие — текста человека с макетом."""
 
 import itertools
 import json
 import re
 from collections import Counter
-from collections.abc import Sequence
-from dataclasses import dataclass
+from collections.abc import Mapping, Sequence
+from dataclasses import dataclass, field
 
 from .figma import node_id_of
 from .models import (
@@ -22,9 +23,11 @@ from .models import (
     DesignState,
     DesignUnknown,
     FigmaSource,
+    FindingDecision,
     FlowStep,
 )
-from .repository import conflicts_of, strings, text_of
+from .repository import conflicts_of, contradictions_of, group_of, strings, text_of
+from .research import decided
 from .slicing import BadAnswer
 
 FINDING_ID = re.compile(r"D?(\d+)", re.IGNORECASE)
@@ -34,10 +37,12 @@ COVERAGE = ("covered", "partial", "not_investigated", "not_applicable")
 
 @dataclass(frozen=True)
 class Context:
-    """На что могут ссылаться находки: узлы и страницы, что легли в снимок."""
+    """На что могут ссылаться находки: узлы и страницы, что легли в снимок, и буквы групп
+    совета."""
 
     nodes: frozenset[str]
     pages: frozenset[str]
+    groups: frozenset[str] = field(default_factory=frozenset)
 
     def node_of(self, value: object) -> str:
         return node_id_of(value) if isinstance(value, str) else ""
@@ -91,7 +96,8 @@ def findings_of(value: object, context: Context) -> list[DesignFinding]:
             status = "inferred"   # verified без узла в снимке — только вывод
         found[name] = DesignFinding(id=name, statement=text_of(item.get("statement")),
                                     status=status, evidence=evidence,
-                                    relevance=text_of(item.get("relevance")))
+                                    relevance=text_of(item.get("relevance")),
+                                    group=group_of(item.get("group"), context.groups))
     return list(found.values())
 
 
@@ -157,7 +163,8 @@ def coverage_of(value: object) -> list[DesignCoverage]:
 def unknowns_of(value: object, context: Context) -> list[DesignUnknown]:
     return [DesignUnknown(question=text_of(item.get("question")),
                           reason=text_of(item.get("reason")),
-                          investigate=node_refs(item.get("investigate"), context))
+                          investigate=node_refs(item.get("investigate"), context),
+                          group=group_of(item.get("group"), context.groups))
             for item in listed(value) if text_of(item.get("question"))]
 
 
@@ -168,10 +175,13 @@ def map_of(data: dict, context: Context) -> DesignMap:
         raise BadAnswer("нет списка findings")
     findings = findings_of(data.get("findings"), context)
     known = linkable(findings, data.get("findings"))
+    # Документации проекта модели макета не видят: противоречие у них — только с текстом.
     return DesignMap(findings=findings, screens=screens_of(data.get("screens"), known, context),
                      flows=flows_of(data.get("flows"), known),
                      coverage=coverage_of(data.get("coverage")),
                      unknowns=unknowns_of(data.get("unknowns"), context),
+                     conflicts=contradictions_of(data.get("conflicts"), context.groups,
+                                                 by="text"),
                      design_conflicts=conflicts_of(data.get("design_conflicts")))
 
 
@@ -208,10 +218,12 @@ def as_prompt(result: DesignMap) -> dict:
 
 
 def context_prompt(result: DesignMap | None, source: FigmaSource | None = None, *,
-                   complete: bool = True, follow_up: Sequence[DesignFollowUp] = ()) -> str:
-    """Что о макете знают следующие шаги: проверенное описание или честное «не смотрели».
-    Какой файл и версия; complete — судья счёл исследование достаточным, а
-    remaining_follow_up — что доисследовать не успели: недоисследованное — не установленное."""
+                   complete: bool = True, follow_up: Sequence[DesignFollowUp] = (),
+                   decisions: Mapping[str, FindingDecision] | None = None) -> str:
+    """Что о макете знают следующие шаги: проверенное описание — с решениями человека по его
+    находкам (decisions, research.decided) — или честное «не смотрели». Какой файл и версия;
+    complete — судья счёл исследование достаточным, а remaining_follow_up — что доисследовать
+    не успели: недоисследованное — не установленное."""
     if result is None:
         return "Макет не исследовался: шаг «Дизайн» пропущен."
     source = source or FigmaSource()
@@ -221,4 +233,5 @@ def context_prompt(result: DesignMap | None, source: FigmaSource | None = None, 
                        "complete": complete,
                        "remaining_follow_up": [item.model_dump(mode="json")
                                                for item in follow_up],
-                       "design": as_prompt(result)}, ensure_ascii=False, indent=2)
+                       "design": decided(as_prompt(result), decisions or {}, "design")},
+                      ensure_ascii=False, indent=2)

@@ -9,8 +9,9 @@ Inventory — обычный список файлов, его даёт git пр
 
 Факт verified держится на evidence, и evidence — на файлах, которые в репозитории есть: путь
 не из inventory отбрасывается, verified без единого подтверждения становится inferred. Ссылки
-на факты — только на свои; чужой номер просто отбрасывается. Модели описывают, как система
-устроена сейчас: это вход для следующих шагов, а не решения.
+на факты — только на свои; чужой номер просто отбрасывается, чужая буква группы — тоже. Модели
+описывают, как система устроена сейчас, и где текст человека или документация говорят иное: это
+вход для следующих шагов, а не решения.
 """
 
 import hashlib
@@ -24,7 +25,7 @@ import tempfile
 import threading
 import unicodedata
 from collections import Counter
-from collections.abc import Iterable, Iterator, Mapping, Sequence
+from collections.abc import Collection, Iterable, Iterator, Mapping, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass, field, replace
 from functools import cached_property
@@ -34,8 +35,10 @@ from uuid import uuid4
 
 from .ideas import reason_of
 from .models import (
+    Conflict,
     CoverageArea,
     Evidence,
+    FindingDecision,
     FlowStep,
     FollowUp,
     RepositoryFinding,
@@ -45,6 +48,7 @@ from .models import (
     RepositoryUnknown,
     ScannedRepository,
 )
+from .research import decided
 from .slicing import BadAnswer
 
 # Больше файлов в промпт не кладём: модели всё равно ищут по репозиторию сами.
@@ -1200,10 +1204,12 @@ def sha_prompt(found: Inventory) -> str:
 @dataclass(frozen=True)
 class Context:
     """На что могут ссылаться находки: файлы репозитория. roots — где лежит снимок: модель
-    может назвать файл и полным путём в нём."""
+    может назвать файл и полным путём в нём. groups — буквы групп совета: находка — к идее
+    одной из них."""
 
     files: frozenset[str]
     roots: tuple[Path, ...] = field(default_factory=tuple)
+    groups: frozenset[str] = frozenset()
 
     def path_of(self, value: object) -> str:
         """Путь файла, как его назвала модель, — относительный, как в inventory. Сначала как
@@ -1284,8 +1290,15 @@ def findings_of(value: object, context: Context) -> list[RepositoryFinding]:
             status = "inferred"   # verified без подтверждения в репозитории — только вывод
         found[name] = RepositoryFinding(id=name, statement=text_of(item.get("statement")),
                                         status=status, evidence=evidence,
-                                        relevance=text_of(item.get("relevance")))
+                                        relevance=text_of(item.get("relevance")),
+                                        group=group_of(item.get("group"), context.groups))
     return list(found.values())
+
+
+def group_of(value: object, groups: Collection[str]) -> str:
+    """Буква группы, к идее которой находка: только группы совета — чужая буква не группа."""
+    letter = text_of(value).upper()
+    return letter if letter in groups else ""
 
 
 def given_findings(value: object) -> list[dict]:
@@ -1346,16 +1359,31 @@ def coverage_of(value: object, known: set[str]) -> list[CoverageArea]:
         for item in items if isinstance(item, dict) and text_of(item.get("area"))]
 
 
-def unknowns_of(value: object) -> list[RepositoryUnknown]:
+def unknowns_of(value: object, groups: Collection[str] = ()) -> list[RepositoryUnknown]:
     items = value if isinstance(value, list) else []
     return [RepositoryUnknown(question=text_of(item.get("question")),
                               reason=text_of(item.get("reason")),
-                              investigate=strings(item.get("investigate")))
+                              investigate=strings(item.get("investigate")),
+                              group=group_of(item.get("group"), groups))
             for item in items if isinstance(item, dict) and text_of(item.get("question"))]
 
 
+def contradictions_of(value: object, groups: Collection[str] = (),
+                      by: str | None = None) -> list[Conflict]:
+    """Противоречия со сторонами: о чём, что говорит текст человека (by text) или документация
+    (docs), что на деле и где. by — чья сторона у всех (модели макета документации не видят);
+    иначе её называет модель. Без того, о чём, или без стороны — не противоречие."""
+    items = value if isinstance(value, list) else []
+    return [Conflict(by=by or item["by"], subject=text_of(item.get("subject")),
+                     claim=text_of(item.get("claim")), found=text_of(item.get("found")),
+                     where=text_of(item.get("where")), group=group_of(item.get("group"), groups))
+            for item in items if isinstance(item, dict) and text_of(item.get("subject"))
+            and (by or item.get("by")) in ("text", "docs")]
+
+
 def conflicts_of(value: object) -> list[str]:
-    """Расхождения документации и кода: формат не задан — строка или объект словами."""
+    """Расхождения документации и кода строками, как их писал скан до противоречий со
+    сторонами: формат не задан — строка или объект словами."""
     items = value if isinstance(value, list) else []
     texts = []
     for item in items:
@@ -1377,7 +1405,8 @@ def map_of(data: dict, context: Context) -> RepositoryMap:
     known = linkable(findings, data.get("findings"))
     return RepositoryMap(findings=findings, flows=flows_of(data.get("flows"), known, context),
                          coverage=coverage_of(data.get("coverage"), known),
-                         unknowns=unknowns_of(data.get("unknowns")),
+                         unknowns=unknowns_of(data.get("unknowns"), context.groups),
+                         conflicts=contradictions_of(data.get("conflicts"), context.groups),
                          documentation_conflicts=conflicts_of(data.get("documentation_conflicts")))
 
 
@@ -1416,10 +1445,12 @@ def as_prompt(result: RepositoryMap) -> dict:
 
 def context_prompt(result: RepositoryMap | None,
                    repositories: Sequence[ScannedRepository] = (), *, complete: bool = True,
-                   follow_up: Sequence[FollowUp] = ()) -> str:
-    """Что получают следующие шаги: проверенная карта или честное «не сканировали». По каждой
-    рабочей копии (repositories): folder — папка её файлов в путях карты ("" — одна копия, пути
-    без папки), commit_sha; uncommitted_changes — карта снята с рабочей копии с
+                   follow_up: Sequence[FollowUp] = (),
+                   decisions: Mapping[str, FindingDecision] | None = None) -> str:
+    """Что получают следующие шаги: проверенная карта — с решениями человека по её находкам
+    (decisions, research.decided) — или честное «не сканировали». По каждой рабочей копии
+    (repositories): folder — папка её файлов в путях карты ("" — одна копия, пути без папки),
+    commit_sha; uncommitted_changes — карта снята с рабочей копии с
     незакоммиченными правками, а не с самого коммита: следующие шаги не припишут ему то, чего в
     нём нет; files_outside_checkout — сколько файлов коммита вне sparse checkout, а
     not_in_snapshot — чего ещё нет в снимке (нескачанные подмодули, ссылки; первые, всего —
@@ -1440,5 +1471,5 @@ def context_prompt(result: RepositoryMap | None,
                        "remaining_follow_up": [
                            {"objective": item.objective, "reason": item.reason,
                             "targets": item.targets} for item in follow_up[:ABSENT_SHOWN]],
-                       **as_prompt(result)},
+                       **decided(as_prompt(result), decisions or {}, "code")},
                       ensure_ascii=False, indent=2)

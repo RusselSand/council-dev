@@ -18,15 +18,17 @@
    (idea_discovery.md);
 2. idea_judge — если вариантов несколько, судья выбирает или сводит их (idea_judge.md).
 
-Скан репозитория (RepositoryRun) — необязательный, к утверждённой идее; модели читают
-рабочую копию сами:
+Скан репозитория (RepositoryRun) — исследование кода совета, необязательное, под идеи всех
+групп; модели читают снимок рабочих копий сами. Исследование кода по именам рабочих копий
+проекта (CodeResearchRun) сначала берёт их inventory — уже в ходе, в фоне:
 1. repository_discovery — каждый участник по inventory и коду устанавливает, как система
-   устроена сейчас относительно идеи (repository_discovery.md);
+   устроена сейчас относительно идеи, к идее какой группы каждая находка и где текст человека
+   или документация говорят иное, чем код (repository_discovery.md);
 2. repository_judge — судья проверяет находки по коду, сводит их в одну карту и, если пробелы
    существенны, даёт задания follow_up (repository_judge.md); участники доисследуют их, судья
    проверяет снова — до двух раз. Карта идёт во все следующие шаги: {{repository}}.
 
-Скан макета (DesignRun) — необязательный, после шага «Репозиторий»; совет сам снимает файл
+Скан макета (DesignRun) — исследование макета совета, необязательное; совет сам снимает файл
 Figma через REST API, модели читают снимок:
 1. design_discovery — каждый участник по снимку устанавливает, какой интерфейс и какое
    поведение предусмотрены в макете для идеи (design_discovery.md);
@@ -68,18 +70,21 @@ Figma через REST API, модели читают снимок:
 Каждый вызов модели идёт с ключом из совета, шага, модели и хеша промпта. Повтор после
 сбоя берёт уже оплаченный ответ даром, изменённый текст — это новый вызов. Негодный
 ответ из лотка выбрасывается сразу, иначе повтор получал бы его же.
+
+Ход можно остановить (CouncilRun.stop): модели больше не зовут, а идущий вызов CLI обрывается;
+оплаченное остаётся в лотке.
 """
 
 import hashlib
 import json
 import logging
 import tempfile
-from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
+from collections.abc import Callable, Collection, Iterable, Iterator, Mapping, Sequence
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
 from functools import partial
 from pathlib import Path
-from threading import Lock
+from threading import Event, Lock
 from typing import Any, Protocol
 from uuid import uuid4
 
@@ -127,6 +132,7 @@ from .models import (
     QuestionDiscovery,
     QuestionOptions,
     RepositoryScan,
+    ScannedRepository,
     Slicing,
     Step,
     StepName,
@@ -170,18 +176,22 @@ from .questions import (
 )
 from .repository import Context as RepositoryContext
 from .repository import (
+    Inventory,
     RepositoryError,
     Source,
     commits_prompt,
     context_prompt,
+    fits,
     judged_map,
     map_of,
     rerooted,
     scanned,
     snapshot_all,
+    sources_of,
     sources_prompt,
 )
 from .repository import as_prompt as map_prompt
+from .repository import merged as merged_inventory
 from .slicing import (
     WORD,
     BadAnswer,
@@ -218,9 +228,10 @@ class StageFailed(RuntimeError):
 
 
 class Runner(Protocol):
-    def ask(self, model: str, prompt: str, key: str, workspace: Path | None = None) -> str:
+    def ask(self, model: str, prompt: str, key: str, workspace: Path | None = None,
+            stop: Callable[[], bool] | None = None) -> str:
         """Текст ответа модели или ModelFailed. workspace — каталог, который модель читает:
-        ход идёт в нём, только на чтение."""
+        ход идёт в нём, только на чтение. stop — ход остановили: вызов обрывается."""
 
     def forget(self, keys: Iterable[str]) -> None:
         """Убрать оплаченные ответы из лотка: они больше не нужны."""
@@ -430,8 +441,17 @@ class CouncilRun[S: (Slicing, Structure, IdeaDiscovery, RepositoryScan, DesignSc
         self.state = state
         self._lock = Lock()
         self._keys: dict[StepName, list[str]] = {}  # принятые ответы по шагам
+        self._halt = Event()
+
+    def stop(self) -> None:
+        """Ход остановил человек: моделей больше не зовут, идущий вызов CLI обрывается. Его
+        отчёт уже никуда не пишется: хода на месте нет."""
+        self._halt.set()
 
     def run(self) -> S:
+        if self._halt.is_set():     # остановили, пока ход ждал места в пуле
+            self._finish(error="ход остановлен")
+            return self.state
         try:
             result = self.work()
         except (StageFailed, PromptError) as exc:
@@ -539,9 +559,13 @@ class CouncilRun[S: (Slicing, Structure, IdeaDiscovery, RepositoryScan, DesignSc
         # модель: провайдер и модель за alias тоже в ключе.
         state = self.runner.identity(model) + self.fingerprint
         key = f"{self.council_id}-{step}-{model}-{digest(state + prompt)}"
+        if self._halt.is_set():
+            self._set_run(step, model, "failed", "ход остановлен")
+            return None
         self._set_run(step, model, "running")
         try:
-            reply = self.runner.ask(model, prompt, key, workspace=self.workspace)
+            reply = self.runner.ask(model, prompt, key, workspace=self.workspace,
+                                    stop=self._halt.is_set)
         except ModelFailed as exc:
             self._set_run(step, model, "failed", str(exc))
             return None
@@ -1311,17 +1335,19 @@ class RepositoryRun(CouncilRun[RepositoryScan]):
     def __init__(self, council_id: str, idea: str, sources: Sequence[Source],
                  fragments: list[LabeledFragment], participants: list[str], judge: str,
                  runner: Runner, report: Callable[[RepositoryScan], None], *,
-                 copy: Copier = snapshot_all) -> None:
+                 copy: Copier = snapshot_all, groups: Collection[str] = ()) -> None:
+        """groups — буквы групп, под идеи которых скан: находка — к одной из них."""
         super().__init__(council_id, participants, judge, runner, report,
                          start_scan(participants, judge, idea, sources))
         self.idea = idea
         self.sources = sources
         self.fragments = fragments
         self.copy = copy
+        self.groups = frozenset(groups)
 
     def work(self) -> dict[str, Any]:
         with self._reading(self.sources, self.copy) as folder:
-            context = RepositoryContext(self.copied, (folder,))
+            context = RepositoryContext(self.copied, (folder,), self.groups)
             values = {
                 "idea": self.idea,
                 "fragments": fragments_prompt(self.fragments),
@@ -1331,6 +1357,37 @@ class RepositoryRun(CouncilRun[RepositoryScan]):
             return self._explored(StepName.repository_discovery, StepName.repository_judge,
                                   values, partial(map_of, context=context),
                                   partial(judged_map, context=context), map_prompt)
+
+
+class CodeResearchRun(RepositoryRun):
+    """Исследование кода совета по рабочим копиям проекта — их именам (names) в каталоге
+    репозиториев. Inventory каждой (read: git и файлы) — уже в ходе, в фоне: git на большой
+    рабочей копии не держит ни ответ человеку, ни замок советов. Копию не прочитать, копии
+    пересекаются или снимок вышел бы слишком большим — ход упал с причиной. Пока inventory не
+    готов, у скана рабочие копии — только по имени."""
+
+    def __init__(self, council_id: str, idea: str, names: Sequence[str],
+                 read: Callable[[str], Inventory], fragments: list[LabeledFragment],
+                 participants: list[str], judge: str, runner: Runner,
+                 report: Callable[[RepositoryScan], None], *, copy: Copier = snapshot_all,
+                 groups: Collection[str] = ()) -> None:
+        super().__init__(council_id, idea, [], fragments, participants, judge, runner, report,
+                         copy=copy, groups=groups)
+        self.names = list(names)
+        self.read = read
+        self.state.repositories = [ScannedRepository(path=name) for name in self.names]
+
+    def work(self) -> dict[str, Any]:
+        try:
+            sources = sources_of([(name, self.read(name)) for name in self.names])
+            fits(merged_inventory(sources))
+        except RepositoryError as exc:
+            raise StageFailed(str(exc)) from exc
+        self.sources = sources
+        with self._lock:
+            self.state.repositories = [scanned(source) for source in sources]
+            self._publish()
+        return super().work()
 
 
 def accepted_prompt(decisions: Sequence[ProjectDecision]) -> str:
@@ -1361,13 +1418,15 @@ class DesignRun(CouncilRun[DesignScan]):
     def __init__(self, council_id: str, idea: str, links: Sequence[Link],
                  fragments: list[LabeledFragment], participants: list[str], judge: str,
                  runner: Runner, report: Callable[[DesignScan], None], *,
-                 fetch: Fetcher) -> None:
+                 fetch: Fetcher, groups: Collection[str] = ()) -> None:
+        """groups — буквы групп, под идеи которых скан: находка — к одной из них."""
         super().__init__(council_id, participants, judge, runner, report,
                          start_design(participants, judge, idea, links))
         self.idea = idea
         self.links = links
         self.fragments = fragments
         self.fetch = fetch
+        self.groups = frozenset(groups)
 
     def work(self) -> dict[str, Any]:
         with tempfile.TemporaryDirectory(prefix="council-design-") as place:
@@ -1380,7 +1439,7 @@ class DesignRun(CouncilRun[DesignScan]):
             with self._lock:
                 self.state.source = shot.source
                 self._publish()
-            context = DesignContext(shot.nodes, shot.pages)
+            context = DesignContext(shot.nodes, shot.pages, self.groups)
             values = {"idea": self.idea, "fragments": fragments_prompt(self.fragments),
                       "figma_source": shot.prompt}
             self.workspace = folder

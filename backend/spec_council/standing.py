@@ -16,31 +16,28 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Literal
 
-from .groups import confirmed
+from .groups import confirmed, without_idea
 from .models import (
     Council,
     DecisionAnalysis,
     DecisionsSearch,
     DesignScan,
-    DesignStep,
     NotesDraft,
     OutcomeDiscovery,
     ProposalDiscovery,
     QuestionDiscovery,
     RepositoryScan,
-    RepositoryStep,
     Research,
     Slicing,
     Stream,
     Structure,
 )
+from .research import blocks_of, pending_of, settled, stopped
 from .tasks import basis_of
 
 State = Literal["done", "running", "waiting", "failed", "idle"]
 Stage = Literal["brief", "slices", "structure", "research", "streams", "tasks"]
 Step = Literal["project", "questions", "options", "decisions", "outcomes", "notes"]
-# Блок «Исследования»: код или макет.
-Block = Literal["setup", "running", "done", "skipped"]
 
 STAGES: tuple[Stage, ...] = ("brief", "slices", "structure", "research", "streams", "tasks")
 STEPS: tuple[Step, ...] = ("project", "questions", "options", "decisions", "outcomes", "notes")
@@ -194,39 +191,22 @@ def written(council: Council, issues: str | None) -> bool:
             and plan.basis == basis_of(council))
 
 
-# Исследование. У контракта два блока — код и макет, — а утверждает человек всё исследование;
-# в хранении это два шага по очереди: «Репозиторий» и «Дизайн», каждый — сканом или пропуском.
+# Исследование: два блока — код и макет (research.blocks_of), а утверждает человек всё
+# исследование.
 
 def approved(research: Research | None) -> bool:
-    """Исследование утверждено: оба шага пройдены."""
-    return research is not None and research.repository is not None and research.design is not None
-
-
-def blocks_of(research: Research) -> tuple[Block, Block]:
-    return (block_of(research.scan, research.repository),
-            block_of(research.design_scan, research.design))
-
-
-def block_of(scan: RepositoryScan | DesignScan | None,
-             step: RepositoryStep | DesignStep | None) -> Block:
-    """Скан идёт — идёт; шаг пройден — пропущено или готово; скан кончился — готово (находки
-    ждут утверждения); не было его или упал — не начато."""
-    if scan is not None and scan.state == "running":
-        return "running"
-    if step is not None:
-        return "skipped" if step.by == "skipped" else "done"
-    if scan is not None and scan.state == "done":
-        return "done"
-    return "setup"
+    """Исследование утверждено («К потокам →»)."""
+    return research is not None and research.approved
 
 
 # Потоки. У контракта они появляются на «К потокам →», и все шесть шагов идут по порядку; в
-# хранении поток есть с подтверждения групп, а начинают его по одному (копия исследования —
-# stream.design), и отбор прошлых решений и поиск вопросов — внутри шага «Вопросы».
+# хранении их заводит «К потокам →» (web/research.py), и каждый сразу берёт копию исследования
+# (stream.design). У советов прежней версии поток был с подтверждения групп, а начинали его по
+# одному; отбор прошлых решений и поиск вопросов — внутри шага «Вопросы».
 
 def shown_streams(council: Council) -> list[Stream]:
-    """Потоки, какие видит контракт: исследование утверждено — все; начатый поток виден и тогда,
-    когда исследование потом прошли заново, — как потоки после «вернуть к настройке»."""
+    """Потоки, какие видит контракт: исследование утверждено — все; поток с копией исследования
+    виден и тогда, когда исследование вернули к настройке, — его оно не трогает."""
     streams = council.streams or []
     if approved(council.research) or any(stream.design is not None for stream in streams):
         return streams
@@ -373,13 +353,39 @@ def researching(research: Research) -> str:
 
 
 def research_waiting(council: Council) -> str:
-    """Что нужно от человека — как пояснение на плашке «Утвердить исследование». Находок, которые
-    ждут решения, хранение пока не знает: у старых сканов решений по находкам нет."""
-    if all(block in ("done", "skipped") for block in blocks_of(council.research or Research())):
+    """Что нужно от человека — как пояснение на плашке «Утвердить исследование»; исследование
+    вернулось к настройке, потому что его скан упал, — и это."""
+    research = council.research or Research()
+    blocks = blocks_of(research)
+    if all(settled(block) for block in blocks):
+        pending = pending_of(research)
+        if pending:
+            return (f"{pending} {plural(pending, 'находка ждёт', 'находки ждут', 'находок ждут')}"
+                    " вашего решения — выводы и противоречия.")
         if not confirmed(council):
             return "Подтвердите группы — потом они станут потоками."
+        missing = without_idea(council)
+        if missing:
+            return idea_wanted(missing)
         return "Утвердите исследование — потом группы станут потоками."
+    halted = [what for what, scan, block in (("кода", research.scan, blocks[0]),
+                                             ("макета", research.design_scan, blocks[1]))
+              if stopped(scan, block)]
+    if len(halted) == 2:
+        return "Исследования кода и макета остановились — начните их снова или пропустите."
+    if halted:
+        return f"Исследование {halted[0]} остановилось — начните его снова или пропустите."
     return "Начните или пропустите оба исследования — потом группы станут потоками."
+
+
+def idea_wanted(groups: list[str]) -> str:
+    """«У группы B нет идеи — …»: пока у группы нет идеи, исследование не утвердить (решение
+    q-002 бекенда)."""
+    if len(groups) == 1:
+        return (f"У группы {groups[0]} нет идеи — дождитесь, пока ИИ её найдёт, или впишите её "
+                "на «Группах».")
+    return (f"У групп {named(groups)} нет идеи — дождитесь, пока ИИ их найдёт, или впишите их "
+            "на «Группах».")
 
 
 def tasks_waiting(council: Council) -> str:

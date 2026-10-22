@@ -4,7 +4,7 @@ from datetime import datetime
 from enum import StrEnum
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field, computed_field, model_validator
+from pydantic import BaseModel, ConfigDict, computed_field, model_validator
 
 
 class CouncilStatus(StrEnum):
@@ -248,6 +248,8 @@ class RepositoryFinding(BaseModel):
     status: Literal["verified", "inferred", "unknown"]
     evidence: list[Evidence] = []
     relevance: str = ""
+    # Группа, к идее которой находка, — её буква. Пусто — скан, сделанный до этого.
+    group: str = ""
 
 
 class FlowStep(BaseModel):
@@ -281,6 +283,20 @@ class RepositoryUnknown(BaseModel):
     question: str
     reason: str = ""
     investigate: list[str] = []
+    group: str = ""
+
+
+class Conflict(BaseModel):
+    """Противоречие: текст человека (фрагменты, by text) или документация проекта (docs)
+    говорят одно, код или макет — другое. Кто прав, решает человек."""
+
+    by: Literal["text", "docs"]
+    # О чём, что говорит текст или документация, что на деле, где это в коде или макете.
+    subject: str
+    claim: str = ""
+    found: str = ""
+    where: str = ""
+    group: str = ""
 
 
 class FollowUp(BaseModel):
@@ -300,7 +316,15 @@ class RepositoryMap(BaseModel):
     flows: list[RepositoryFlow] = []
     coverage: list[CoverageArea] = []
     unknowns: list[RepositoryUnknown] = []
+    conflicts: list[Conflict] = []
+    # Расхождения документации и кода строками — так их записывал скан, пока противоречия не
+    # стали со сторонами (conflicts).
     documentation_conflicts: list[str] = []
+
+
+# Решение человека по находке исследования: вывод ИИ — верно, неверно; противоречие — прав
+# текст, прав код или макет (source), в вопрос; пробел — вопросом в поток или не важно.
+FindingDecision = Literal["accept", "reject", "text", "source", "question", "drop"]
 
 
 # Поля рабочей копии, как их хранил скан, пока она была у него одна.
@@ -358,6 +382,9 @@ class RepositoryScan(BaseModel):
     result: RepositoryMap | None = None
     follow_up: list[FollowUp] = []
     error: str | None = None
+    # Решения человека по находкам карты: id находки в контракте (findings.py) — решение. Вместе
+    # со сканом их берёт себе поток.
+    decisions: dict[str, FindingDecision] = {}
 
     @model_validator(mode="before")
     @classmethod
@@ -400,6 +427,8 @@ class DesignFinding(BaseModel):
     status: Literal["verified", "inferred", "unknown"]
     evidence: list[DesignNode] = []
     relevance: str = ""
+    # Группа, к идее которой находка, — её буква. Пусто — скан, сделанный до этого.
+    group: str = ""
 
 
 class DesignAction(BaseModel):
@@ -450,6 +479,7 @@ class DesignUnknown(BaseModel):
     question: str
     reason: str = ""
     investigate: list[DesignNode] = []
+    group: str = ""
 
 
 class DesignFollowUp(BaseModel):
@@ -470,6 +500,9 @@ class DesignMap(BaseModel):
     flows: list[DesignFlow] = []
     coverage: list[DesignCoverage] = []
     unknowns: list[DesignUnknown] = []
+    # Противоречия текста человека с макетом; where — страница и фрейм.
+    conflicts: list[Conflict] = []
+    # Противоречия строками — так их записывал скан, пока они не стали со сторонами.
     design_conflicts: list[str] = []
 
 
@@ -505,6 +538,8 @@ class DesignScan(BaseModel):
     result: DesignMap | None = None
     follow_up: list[DesignFollowUp] = []
     error: str | None = None
+    # Решения человека по находкам описания, как у скана репозитория.
+    decisions: dict[str, FindingDecision] = {}
 
 
 class DesignStep(BaseModel):
@@ -959,16 +994,33 @@ class NotesExport(BaseModel):
 
 
 class Research(BaseModel):
-    """Этап «Исследование» — на весь совет, между группами и потоками: необязательный скан
-    репозитория и шаг «Репозиторий», потом необязательный скан макета и шаг «Дизайн». Одна карта
-    кода и одно описание макета под идеи всех групп. Поток берёт их себе копией, когда его
-    начинают (Stream.scan, repository, design_scan, design): исследование потом можно пройти
-    заново, а начатые потоки работают с тем, с чем начали, пока их не начнут заново."""
+    """Этап «Исследование» — на весь совет, между группами и потоками: необязательное
+    исследование кода (scan) и макета (design_scan). Одна карта кода и одно описание макета под
+    идеи всех групп. Как они пройдены — repository и design: пропущены или взяты сканом; взятым
+    скан становится, когда человек утверждает исследование («К потокам →», approved). Поток берёт
+    их себе копией (Stream.scan, repository, design_scan, design): исследование потом можно
+    пройти заново, а потоки работают с тем, что взяли."""
 
     scan: RepositoryScan | None = None
     repository: RepositoryStep | None = None
     design_scan: DesignScan | None = None
     design: DesignStep | None = None
+    # С какими рабочими копиями проекта и какой ссылкой исследование запускали последний раз:
+    # «Остановить» и «Изменить и перезапустить» возвращают к ним. None — код не исследовали; у
+    # советов прежней версии — копии их скана (findings.taken_repos), ссылка — его первая.
+    repos: list[str] | None = None
+    link: str = ""
+    approved: bool = False
+
+    @model_validator(mode="before")
+    @classmethod
+    def passed_before(cls, data: object) -> object:
+        """Исследование прежней версии утверждали, проходя оба шага — «Репозиторий» и
+        «Дизайн»: пройдены оба — утверждено."""
+        if isinstance(data, dict) and "approved" not in data:
+            return {**data, "approved": data.get("repository") is not None
+                    and data.get("design") is not None}
+        return data
 
 
 class Stream(BaseModel):
@@ -984,6 +1036,9 @@ class Stream(BaseModel):
     совет (Council.tasks)."""
 
     group: str
+    # Название группы, когда она стала потоком («К потокам →»): правки групп его не меняют
+    # (решение q-002). None — поток прежней версии: название — у его группы.
+    title: str | None = None
     discovery: IdeaDiscovery | None = None
     idea: StreamIdea | None = None
     scan: RepositoryScan | None = None
@@ -1157,40 +1212,9 @@ class ApproveIdea(GroupsEdit):
     text: str | None = None
 
 
-# Сколько рабочих копий можно сканировать разом: у каждой свои вызовы git.
+# Сколько рабочих копий можно сканировать разом: у каждой свои вызовы git. Столько же их и у
+# проекта.
 REPOSITORIES_MAX = 10
-
-
-class ScanRepository(GroupsEdit):
-    """Человек запускает скан репозиториев совета: пути к рабочим копиям — абсолютные или от
-    каталога репозиториев (COUNCIL_REPOS); бэкенд и фронтенд в разных репозиториях — два пути."""
-
-    paths: list[str] = Field(min_length=1, max_length=REPOSITORIES_MAX)
-
-
-class ApproveRepository(GroupsEdit):
-    """Человек проходит шаг «Репозиторий» исследования: scan_run — утверждает карту этого
-    скана, None — пропускает шаг. Дальше — шаг «Дизайн»."""
-
-    scan_run: str | None = None
-
-
-# Сколько ссылок на макет можно дать разом: страницы и фреймы одного файла.
-LINKS_MAX = 10
-
-
-class ScanDesign(GroupsEdit):
-    """Человек запускает скан макета совета: ссылки на страницы или фреймы одного файла Figma
-    (без node-id — весь файл)."""
-
-    links: list[str] = Field(min_length=1, max_length=LINKS_MAX)
-
-
-class ApproveDesign(GroupsEdit):
-    """Человек проходит шаг «Дизайн» исследования: scan_run — утверждает описание этого скана
-    макета, None — пропускает шаг. Исследование пройдено — потоки можно начинать."""
-
-    scan_run: str | None = None
 
 
 class StartStream(GroupsEdit):

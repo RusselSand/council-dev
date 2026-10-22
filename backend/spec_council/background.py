@@ -1,8 +1,9 @@
-"""Ходы совета в фоне: где ход лежит в совете, его отчёт и отдача в пул. Общее для старых ручек
-(api/) и нового API (web/): новый слой от старого не зависит."""
+"""Ходы совета в фоне: где ход лежит в совете, его отчёт, отдача в пул и остановка. Общее для
+старых ручек (api/) и нового API (web/): новый слой от старого не зависит."""
 
 from collections.abc import Callable
 from dataclasses import dataclass
+from threading import Lock
 from typing import Any
 
 from .deps import Launcher, Store
@@ -45,16 +46,55 @@ class Slot:
 SLICING = Slot(lambda council: council.slicing, lambda council, state: {"slicing": state})
 STRUCTURE = Slot(lambda council: council.structure, lambda council, state: {"structure": state})
 
+# Ходы, отданные в пул и ещё не кончившиеся, — по номеру хода: остановка находит свой (halt).
+_going: dict[str, CouncilRun] = {}
+_going_lock = Lock()
+
+
+def held(pipeline: CouncilRun) -> None:
+    """Ход можно остановить (halt) ещё до того, как он отдан в пул. Ход, который можно
+    остановить, кладут в совет так: held, под замком советов — его состояние в совет, после
+    замка — launched. Иначе «Остановить» между ними не нашла бы хода, а он потом пошёл бы и
+    звал модели."""
+    with _going_lock:
+        _going[pipeline.state.run] = pipeline
+
 
 def launched(launch: Launcher, pipeline: CouncilRun, report: Callable[[RunState], None]) -> bool:
     """Отдать ход в пул. Пул закрыт — приложение останавливается: ход не начался, так и
-    записываем, иначе совет навсегда остался бы «идёт» и повтор получал бы 409."""
+    записываем, иначе совет навсегда остался бы «идёт» и повтор получал бы 409. Пока ход не
+    кончился, его можно остановить — и тот, что ещё ждёт места в пуле."""
+    run = pipeline.state.run
+    held(pipeline)
+
+    def job() -> None:
+        try:
+            pipeline.run()
+        finally:
+            gone(run, pipeline)
+
     try:
-        launch(pipeline.run)
+        launch(job)
     except RuntimeError as exc:
+        gone(run, pipeline)
         report(pipeline.state.model_copy(update={"state": "failed", "error": f"не запущен: {exc}"}))
         return False
     return True
+
+
+def gone(run: str, pipeline: CouncilRun) -> None:
+    with _going_lock:
+        if _going.get(run) is pipeline:
+            del _going[run]
+
+
+def halt(run: str) -> None:
+    """Остановить ход с этим номером: модели больше не зовут, идущий вызов обрывается. Хода
+    нет — он уже кончился или шёл в прежнем процессе: останавливать нечего."""
+    with _going_lock:
+        pipeline = _going.get(run)
+    if pipeline is not None:
+        pipeline.stop()
 
 
 def reporter(store: Store, council_id: str, slot: Slot) -> Callable[[RunState], None]:
