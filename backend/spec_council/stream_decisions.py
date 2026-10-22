@@ -10,8 +10,8 @@
 «Почему» сначала — обоснование совета, решение — черновик. Человек правит «почему» и то, где
 решение (Stream.rulings): зафиксировать, оставить открытым, вернуть в черновик. «Зафиксировать
 решения» кладёт решения шага в зафиксированные (Stream.decisions) — из них модели собирают итоги:
-открытое решение и решение без варианта — открытый вопрос. Правка решений на готовом шаге
-зафиксированные не меняет: по ним итоги уже собирали.
+открытое решение, решение без варианта и без «почему» — открытый вопрос. Правка решений на
+готовом шаге зафиксированные не меняет: по ним итоги уже собирали.
 
 Поток прежней версии решений на экране отдельно не помнит — только зафиксированные, а до них —
 решения прежней работы к тому же выбору (work.known_decisions): с них начинал и старый фронт.
@@ -75,9 +75,9 @@ def with_ruling(stream: Stream, question_id: str, rationale: str, status: str) -
 def approved(stream: Stream) -> Stream:
     """Поток, где решения зафиксированы: решения шага — как они на экране, и такими же
     остаются на нём. По каждому вопросу отбора — решение: вариант с «почему» или открытый
-    вопрос — открытое, без варианта, а у вопросов, которых на шаге нет (модели их не проверили
-    или вопрос убрали), — тоже открытый. Последние собранные итоги запоминаются: готовые на тех
-    же решениях закрепятся (work.kept_outcomes)."""
+    вопрос — открытое, без варианта или без «почему», а у вопросов, которых на шаге нет (модели
+    их не проверили или вопрос убрали), — тоже открытый. Последние собранные итоги запоминаются:
+    готовые на тех же решениях закрепятся (work.kept_outcomes)."""
     shown = {item.question.id: item.ruling for item in shown_of(stream)}
     decisions = [decision_of(question.id, shown.get(question.id))
                  for question in stream.scope or []]
@@ -88,11 +88,13 @@ def approved(stream: Stream) -> Stream:
 
 def decision_of(question_id: str, ruling: Ruling | None) -> Decision:
     """Решение вопроса, каким его видят модели итогов и выгрузка: «почему» — одной строкой, как
-    его фиксировал старый фронт."""
-    if ruling is None or ruling.status == "open" or ruling.option is None:
+    его фиксировал старый фронт. Без «почему» решения нет — ADR без обоснования не бывает
+    (rationale_required): черновик, где его не написали (у противоречия модели его не пишут), —
+    открытый вопрос."""
+    rationale = " ".join(ruling.rationale.split()) if ruling is not None else ""
+    if ruling is None or ruling.status == "open" or ruling.option is None or not rationale:
         return Decision(question_id=question_id)
-    rationale = " ".join(ruling.rationale.split())
-    return Decision(question_id=question_id, proposal=ruling.option, rationale=rationale or None,
+    return Decision(question_id=question_id, proposal=ruling.option, rationale=rationale,
                     rationale_by=ruling.rationale_by)
 
 

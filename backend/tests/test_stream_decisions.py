@@ -8,13 +8,14 @@ import pytest
 from fastapi.testclient import TestClient
 
 from spec_council.app import app
-from spec_council.deps import get_agents, get_launcher, get_store
+from spec_council.deps import get_agents, get_launcher, get_projects, get_repositories, get_store
 from spec_council.models import (
     Choice,
     Decision,
     DecisionAnalysis,
     NotesExport,
     OpenQuestion,
+    ProjectDraft,
     Proposal,
     ProposalDiscovery,
     QuestionAnalysis,
@@ -22,6 +23,7 @@ from spec_council.models import (
     QuestionOptions,
 )
 from spec_council.pipeline import ModelFailed
+from spec_council.projects import Projects
 from spec_council.store import InMemoryStore
 from tests.test_stream_options import ONE, OWN, SHARE, WHY, adds, chooses, offered, sets_of
 from tests.test_stream_options import Agents as OptionAgents
@@ -110,6 +112,22 @@ def fresh_store():
     app.dependency_overrides[get_store] = lambda: store
     yield store
     app.dependency_overrides.pop(get_store)
+
+
+@pytest.fixture(name="projects")
+def fresh_projects():
+    projects = Projects()
+    app.dependency_overrides[get_projects] = lambda: projects
+    yield projects
+    app.dependency_overrides.pop(get_projects)
+
+
+@pytest.fixture(name="repos")
+def repositories(tmp_path):
+    """Каталог репозиториев: в нём и папка документации проекта."""
+    app.dependency_overrides[get_repositories] = lambda: tmp_path
+    yield tmp_path
+    app.dependency_overrides.pop(get_repositories)
 
 
 def chosen(store, pool) -> tuple[str, str]:
@@ -231,6 +249,22 @@ def test_a_question_the_council_could_not_pick_for_is_blocked_without_an_option(
         None, "blocked", LACKING, "", "draft")
 
 
+def test_a_decision_names_its_note_while_the_stream_is_exported(store, pool, projects, repos):
+    council_id, _ = checked(store, pool)
+    assert approves(council_id).status_code == 200
+    pool.run()
+    project = projects.create_project(ProjectDraft(name="Кромка", notes="docs"))
+    store.update_council(council_id, {"project": project.id})
+    assembled = stored(store, council_id).outcomes.model_copy(update={"approved": True})
+    put(store, council_id, outcomes=assembled,
+        notes=NotesExport(run="n1", outcomes=assembled.run, language="ru",
+                          root=str((repos / "docs").resolve()), refs={"ADR-1": "ADR-0041"}))
+    assert decisions_of(council_id)["Q1"]["catalogId"] == "ADR-0041"
+    # Итоги собрали заново — выгрузка не к ним: её ADR-1 мог быть решением другого вопроса.
+    put(store, council_id, outcomes=assembled.model_copy(update={"run": "o2"}))
+    assert decisions_of(council_id)["Q1"]["catalogId"] is None
+
+
 def test_decisions_of_a_missing_council_or_stream_are_not_found(store):
     assert error_of(client.get(path("нет"))) == (404, "not_found")
     council_id = streaming(store)
@@ -338,6 +372,24 @@ def test_fixed_decisions_go_on_and_the_outcomes_start(store, pool, agents):
         ("ADR-1", "P1", ONE, MINE), ("ADR-3", own, OWN, WHY)]
     assembled = stored(store, council_id).outcomes
     assert (assembled.launch, [o.blocked_by for o in assembled.outcomes]) == (1, [["Q2"]])
+
+
+def test_a_draft_without_a_rationale_goes_on_as_an_open_question(store, pool, agents):
+    agents.judged["Q1"] = {
+        "status": "conflict", "proposal_id": "P1", "reason": PROBLEM,
+        "validation": {"constraint_conflicts": ["F3"]},
+        "fixes": [{"question_id": "Q1", "change": "Искать по заголовкам.", "why": "F3 — бюджет."}]}
+    council_id, own = checked(store, pool)
+    assert decisions_of(council_id)["Q1"]["rationale"] == ""
+    assert approves(council_id).status_code == 200
+    # ADR без обоснования не бывает: черновик, где «почему» не написали, — открытый вопрос.
+    assert [(d.question_id, d.proposal, d.rationale)
+            for d in stored(store, council_id).decisions] == [
+        ("Q1", None, None), ("Q2", "P2", WHY), ("Q3", own, WHY)]
+    assert decisions_of(council_id)["Q1"]["status"] == "draft"
+    pool.run()
+    adrs = json.loads(section(agents.prompts["outcome_discovery"][0], "ACCEPTED ADRS"))
+    assert [adr["id"] for adr in adrs] == ["ADR-2", "ADR-3"]
 
 
 def test_a_done_step_is_edited_without_changing_the_steps_or_the_fixed_decisions(store, pool):
@@ -450,8 +502,9 @@ def test_a_stream_of_the_prior_version_shows_its_fixed_decisions(store):
     shown = round_of(council_id)
     assert shown["run"] == 1
     q1, q2 = shown["decisions"]
+    # Выгрузка — не к нынешним итогам (их нет): номера в каталоге нет.
     assert (q1["catalogId"], q1["option"]["id"], q1["rationale"], q1["rationaleBy"],
-            q1["status"]) == ("ADR-0041", "P1", MINE, "user", "fixed")
+            q1["status"]) == (None, "P1", MINE, "user", "fixed")
     # Открытый — с вариантом и «почему» совета: щелчок по варианту вернёт его в черновик.
     assert (q2["catalogId"], q2["option"]["id"], q2["rationale"], q2["rationaleBy"],
             q2["status"]) == (None, "P2", WHY, "ai", "open")

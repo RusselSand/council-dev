@@ -25,7 +25,7 @@ from ..models import Stream as Stored
 from ..options import OptionSet as Offering
 from ..options import sets_of
 from ..scope import Listed
-from ..standing import State, stream_standing
+from ..standing import State, exported, stream_standing
 from ..store import council_lock
 from ..stream_decisions import Shown, approved, shown_of, with_ruling
 from .councils import folders_of
@@ -117,13 +117,13 @@ def list_decisions(council_id: str, stream_id: str, store: StoreDep, projects: P
     модели успели проверить."""
     council = council_of(store, council_id)
     stream = stream_at(council, stream_id)
-    state = stream_standing(stream, folders_of(council, projects, repositories).notes) \
-        .steps["decisions"]
+    notes = folders_of(council, projects, repositories).notes
+    state = stream_standing(stream, notes).steps["decisions"]
     if state == "idle":
         return DecisionsRound(run=0, decisions=[])
     if state == "running":
         return DecisionsRound(run=run_of(stream), decisions=[])
-    return DecisionsRound(run=run_of(stream), decisions=decisions_of(council, stream))
+    return DecisionsRound(run=run_of(stream), decisions=decisions_of(council, stream, notes))
 
 
 # «Зафиксировать решения» — раньше ручки с {question_id}: иначе «approve» был бы id вопроса.
@@ -159,7 +159,8 @@ def update_decision(council_id: str, stream_id: str, question_id: str, body: Edi
     with council_lock:
         council = council_of(store, council_id)
         stream = stream_at(council, stream_id)
-        editable(stream, folders_of(council, projects, repositories).notes, body.run)
+        notes = folders_of(council, projects, repositories).notes
+        editable(stream, notes, body.run)
         if not any(item.question.id == question_id for item in shown_of(stream)):
             raise not_found(f"У вопроса {question_id} потока {stream.group} нет решения на "
                             "«Решениях»")
@@ -169,7 +170,8 @@ def update_decision(council_id: str, stream_id: str, question_id: str, body: Edi
         stream = with_ruling(stream, question_id, body.rationale, body.status)
         council = store.update_council(council_id,
                                        {"streams": replaced(council, stream)}) or council
-    decision = next(one for one in decisions_of(council, stream) if one.question.id == question_id)
+    decision = next(one for one in decisions_of(council, stream, notes)
+                    if one.question.id == question_id)
     return DecisionAnswer(decision=decision)
 
 
@@ -194,9 +196,11 @@ def editable(stream: Stored, notes: str | None, run: int) -> State:
 
 # Решения по контракту.
 
-def decisions_of(council: Council, stream: Stored) -> list[StreamDecision]:
+def decisions_of(council: Council, stream: Stored, notes: str | None) -> list[StreamDecision]:
     """Решения шага: вопрос — тот же, что на «Вопросах»; вариант — тот же, что на «Вариантах»;
-    «в контексте» — варианты решений вопросов, от которых это зависит, как они на шаге."""
+    «в контексте» — варианты решений вопросов, от которых это зависит, как они на шаге. Номер в
+    каталоге — пока поток выгружен (standing.exported, как у «Документации»): выгрузка к другим
+    итогам знает ADR-n других решений — вопросы с тех пор могли отобрать заново."""
     shown = shown_of(stream)
     offered = {item.question.id: item for item in sets_of(stream, texts_of(council, stream))}
     choices = {choice.question_id: choice for choice in stream.choices or []}
@@ -204,7 +208,7 @@ def decisions_of(council: Council, stream: Stored) -> list[StreamDecision]:
                                             choices.get(item.question.id))
                for item in shown}
     questions = questions_of(council, stream, [Listed(item.question) for item in shown])
-    refs = stream.notes.refs if stream.notes is not None else {}
+    refs = stream.notes.refs if stream.notes is not None and exported(stream, notes) else {}
     return [decision_of(item, question, options, refs.get(item.adr))
             for item, question in zip(shown, questions, strict=True)]
 
