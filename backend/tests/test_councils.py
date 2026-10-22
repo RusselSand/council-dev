@@ -428,8 +428,8 @@ DONE_UP_TO_OUTCOMES = {
       "proposals": going(ProposalDiscovery, StepName.proposal_discovery,
                          StepName.proposal_judge)},
      "options", "running", "fable ищет варианты"),
-    ({**STARTED, "questions": finished(QuestionDiscovery), "scope": QUESTIONS,
-      "proposals": finished(ProposalDiscovery)},
+    ({**STARTED, "questions": finished(QuestionDiscovery, questions=QUESTIONS),
+      "scope": QUESTIONS, "proposals": finished(ProposalDiscovery)},
      "options", "waiting", "Выберите вариант на 2 вопроса из 2"),
     ({**STARTED, "questions": finished(QuestionDiscovery), "scope": [],
       "proposals": finished(ProposalDiscovery)},
@@ -464,8 +464,8 @@ def test_activity_goes_from_errors_to_waiting_to_work_and_the_later_change_first
     council = store.create_council(participants=["sol", "fable"], judge="fable")
     store.update_council(council.id, {**BEFORE_STREAMS, "streams": [
         Stream(group="A", **STARTED, questions=finished(QuestionDiscovery)),
-        Stream(group="B", **STARTED, questions=finished(QuestionDiscovery), scope=QUESTIONS,
-               proposals=finished(ProposalDiscovery)),
+        Stream(group="B", **STARTED, questions=finished(QuestionDiscovery, questions=QUESTIONS),
+               scope=QUESTIONS, proposals=finished(ProposalDiscovery)),
         Stream(group="C", **STARTED, questions=stopped(QuestionDiscovery)),
         Stream(group="D", **STARTED,
                questions=going(QuestionDiscovery, StepName.question_discovery)),

@@ -21,6 +21,7 @@ from ..deps import AgentsDep, LauncherDep, ProjectsDep, RepositoriesDep, StoreDe
 from ..groups import stream_group
 from ..models import Council
 from ..models import Stream as Stored
+from ..options import counted
 from ..standing import (
     STEP_RUNS,
     STEP_STOPPED,
@@ -242,8 +243,10 @@ def questions_note(stream: Stored, done: bool, notes: str | None) -> str:
 
 
 def options_note(stream: Stored, done: bool, notes: str | None) -> str:
-    """Сколько вопросов с выбором из всех: «выбрано 2 из 3»."""
-    return f"выбрано {len(stream.choices or [])} из {len(stream.scope or [])}"
+    """Сколько вопросов шага с выбором из всех: «выбрано 2 из 3» — и у готового шага: выбор на
+    нём правят дальше."""
+    chosen, total = counted(stream)
+    return f"выбрано {chosen} из {total}"
 
 
 def decisions_note(stream: Stored, done: bool, notes: str | None) -> str:

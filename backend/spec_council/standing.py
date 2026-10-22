@@ -32,6 +32,7 @@ from .models import (
     Stream,
     Structure,
 )
+from .options import counted
 from .research import blocks_of, pending_of, settled, stopped
 from .tasks import basis_of
 
@@ -428,9 +429,8 @@ def step_text(stream: Stream, step: Step, state: State) -> str:
     if state == "running":
         return doing(working(getattr(stream, STEP_RUNS[step])), *STEP_WORKING[step])
     if step == "options":
-        # Выбор хранится разом, когда его утверждают: до того выбрать осталось на все вопросы.
-        total = len(stream.scope or [])
-        return choose_text(total, total)
+        chosen, total = counted(stream)
+        return choose_text(total - chosen, total)
     return STEP_WAITING[step]
 
 

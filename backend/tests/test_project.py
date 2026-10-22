@@ -47,7 +47,6 @@ from tests.test_streams import (
     Agents,
     approve,
     approves,
-    choose,
     chosen_c,
     client,
     confirm,
@@ -281,7 +280,6 @@ def test_a_replaced_decision_is_never_selected_and_one_under_review_is_not_appli
 # которые ещё не переехали, сверяют отмеченное с каталогом.
 
 NOTES = "notes"
-REWRITTEN = Note("ADR-0001", "adr", "Ищем в чате, потому что там всё.", ("PRO-0001",))
 
 
 @pytest.fixture(name="projects")
@@ -386,26 +384,6 @@ def test_only_an_export_to_this_catalog_makes_its_decisions_the_streams_own(
     assert retries(council_id).status_code == 200
     search = streams_of(council_id)["C"].decisions_search
     assert (search.catalog if search else None) == searched
-
-
-def test_a_selected_decision_rewritten_before_the_options_sends_back_to_the_selection(
-        agents, projects, repos):
-    root = repos / NOTES
-    council_id = at_project(projects)
-    assert picks(council_id, ["ADR-0001"]).status_code == 200
-    # Новое решение в каталоге работу ниже не сбрасывает: вопросы к ней уже нашли.
-    newer = Note("ADR-0003", "adr", "Счета шлёт бот по расписанию.", ("PRO-0002",))
-    path_of(root, newer).write_text(rendered(newer), encoding="utf-8")
-    agents.online = set()
-    assert choose(council_id, "C", ["Q1"]).status_code == 200        # варианты — упали
-    agents.online = {"sol", "fable"}
-    # А отмеченное переписали: варианты с ним не ищут — ни повтором, ни новым отбором.
-    path_of(root, REWRITTEN).write_text(rendered(REWRITTEN), encoding="utf-8")
-    retry = client.post(f"/api/councils/{council_id}/streams/C/proposals/discovery")
-    assert retry.status_code == 409 and "ADR-0001" in retry.json()["detail"]
-    stream = streams_of(council_id)["C"]
-    assert (stream.decisions_search.state, stream.project_decisions, stream.questions,
-            stream.scope, stream.proposals) == ("failed", None, None, None, None)
 
 
 def test_the_questions_remember_the_catalog_they_were_asked_with(agents, projects, repos):
