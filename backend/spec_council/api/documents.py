@@ -13,6 +13,8 @@ from uuid import uuid4
 
 from fastapi import APIRouter, HTTPException
 
+from ..background import reporter, running
+from ..chain import replaced, stream_slot
 from ..deps import AgentsDep, ConfigDep, LauncherDep, NotesOfDep, Store, StoreDep
 from ..export import (
     Shelf,
@@ -40,7 +42,8 @@ from ..models import (
 from ..notes import Catalog, NotesError
 from ..pipeline import CouncilRun, NotesRun, translating
 from ..prompts import language, notes_language
-from .councils import MISSING, NOT_FOUND, council_lock, reporter, running
+from ..store import council_lock
+from .councils import MISSING, NOT_FOUND
 from .groups import NOT_THESE_GROUPS, current
 from .streams import (
     CHANGING,
@@ -51,9 +54,7 @@ from .streams import (
     group_of,
     launched_all,
     probed,
-    replaced,
     stream_in,
-    stream_slot,
     unconnected,
 )
 

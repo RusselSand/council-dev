@@ -42,16 +42,11 @@ from spec_council.projects import Projects
 from spec_council.repository import checkout_of, rerooted
 from spec_council.slicing import BadAnswer
 from tests.test_streams import (
-    DECIDED,
     IDEA_C,
     Agents,
     approve,
-    approves,
-    chosen_c,
     client,
     confirm,
-    decide,
-    free_c,
     grouped,
     section,
     skip,
@@ -390,41 +385,6 @@ def test_the_questions_remember_the_catalog_they_were_asked_with(agents, project
     council_id = at_project(projects)
     assert picks(council_id, []).status_code == 200                   # ни одного решения
     assert streams_of(council_id)["C"].questions.notes == str((repos / NOTES).resolve())
-
-
-def test_outcomes_are_not_approved_past_a_project_with_unselected_decisions(agents, tmp_path):
-    empty = tmp_path / "empty"
-    empty.mkdir()
-    app.dependency_overrides[get_notes_of] = lambda: lambda council: empty
-    council_id = grouped()
-    confirm(council_id)
-    free_c(council_id)                                                     # итоги собраны
-    app.dependency_overrides[get_notes_of] = lambda: lambda council: put(tmp_path / "other")
-    res = approves(council_id, "C")
-    assert res.status_code == 409 and "сменили" in res.json()["detail"]
-    stream = streams_of(council_id)["C"]
-    assert (stream.decisions_search.state, stream.questions, stream.outcomes) == (
-        "failed", None, None)
-
-
-def test_outcomes_are_not_assembled_again_past_a_project_with_unselected_decisions(
-        agents, tmp_path):
-    empty = tmp_path / "empty"
-    empty.mkdir()
-    app.dependency_overrides[get_notes_of] = lambda: lambda council: empty
-    council_id = grouped()
-    confirm(council_id)
-    chosen_c(council_id)                                     # выбор проверен без решений проекта
-    agents.online = set()
-    assert decide(council_id, "C", DECIDED).status_code == 200          # итоги — упали
-    agents.online = {"sol", "fable"}
-    # Совету выбрали проект, в папке которого есть прошлые решения: их никто не отбирал.
-    app.dependency_overrides[get_notes_of] = lambda: lambda council: put(tmp_path / "other")
-    res = client.post(f"/api/councils/{council_id}/streams/C/outcomes/discovery")
-    assert res.status_code == 409 and "сменили" in res.json()["detail"]
-    stream = streams_of(council_id)["C"]
-    assert (stream.decisions_search.state, stream.questions, stream.decisions,
-            stream.outcomes) == ("failed", None, None, None)
 
 
 def coded(projects, repos) -> str:

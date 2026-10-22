@@ -109,8 +109,9 @@ def update_council(council_id: str, fields: CouncilFields, store: StoreDep, conf
                    repositories: RepositoriesDep) -> CouncilAnswer:
     """Меняет присланные поля. Не так хоть одно — не меняется ничего. Вход в подписку моделей
     проверяют их CLI — вне замка советов. Смена проекта — под ним: проект не удалят, пока совет
-    его выбирает. Остальное замка не ждёт: запуск хода и так сверяет состав под замком
-    (api/councils.start_run)."""
+    его выбирает. Остальное замка не ждёт: старые ходы и так сверяют состав под замком
+    (api/streams.probed), а новые вход заранее не проверяют — модель без него не справится в
+    самом ходе."""
     if store.get_council(council_id) is None:
         raise missing(council_id)
     changes = checked(fields, config, projects)

@@ -14,6 +14,7 @@ from . import (
     errors,
     models,
     options,
+    outcomes,
     project_decisions,
     projects,
     questions,
@@ -27,7 +28,7 @@ from . import (
 API_PREFIX = "/api"
 
 MODULES = (councils, brief, slicing, structure, research, streams, project_decisions, questions,
-           options, decisions, models, projects, repos)
+           options, decisions, outcomes, models, projects, repos)
 
 router = APIRouter(prefix=API_PREFIX)
 for module in MODULES:

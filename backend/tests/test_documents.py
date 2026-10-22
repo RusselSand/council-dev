@@ -8,7 +8,6 @@ import threading
 import pytest
 
 from spec_council.api import documents
-from spec_council.api.councils import council_lock
 from spec_council.app import app
 from spec_council.deps import (
     get_agents,
@@ -20,6 +19,7 @@ from spec_council.deps import (
 from spec_council.models import ExportedNote, ProjectDraft
 from spec_council.notes import Catalog, Note, path_of, rendered
 from spec_council.projects import Projects
+from spec_council.store import council_lock
 from tests.test_project import put
 from tests.test_streams import (
     Agents,

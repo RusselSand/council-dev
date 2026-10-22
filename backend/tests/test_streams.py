@@ -1,8 +1,9 @@
-"""Старые ручки шагов потока — пока шаги не переехали в новый API: повтор сборки итогов и
-утверждение итогов. Потоки заводят, как теперь: группы подтверждены, исследование пройдено,
-«К потокам →»; вопросы утверждают новые ручки (web/questions.py) — и совет сразу ищет к ним
-варианты, выбор — тоже новые (web/options.py) — и совет сразу проверяет решения, решения
-фиксируют тоже новые (web/decisions.py) — и совет сразу собирает итоги."""
+"""Цепочка шагов потока целиком — то, что под ручками шагов: карта кода и описание макета в
+каждом шаге, перенос найденного при повторе, закрепление готовых итогов. Потоки заводят, как
+теперь: группы подтверждены, исследование пройдено, «К потокам →»; вопросы утверждают новые ручки
+(web/questions.py) — и совет сразу ищет к ним варианты, выбор — тоже новые (web/options.py) — и
+совет сразу проверяет решения, решения фиксируют тоже новые (web/decisions.py) — и совет сразу
+собирает итоги, итоги утверждают тоже новые (web/outcomes.py)."""
 
 import json
 import re
@@ -539,10 +540,6 @@ def test_without_models_the_choice_is_approved_and_the_check_can_be_retried(agen
 
 # --- итоги
 
-def assembles(council_id, group):
-    return client.post(f"/api/councils/{council_id}/streams/{group}/outcomes/discovery")
-
-
 DECIDED = [("Q1", "P1", WHY), ("Q2", None, None)]
 
 
@@ -654,7 +651,10 @@ def test_an_outcome_whose_decision_changed_is_not_kept(agents):
     assert stream.outcomes.kept == [] and [o.id for o in stream.outcomes.outcomes] == ["O1"]
 
 
-def test_a_touched_outcome_waits_for_the_human_who_keeps_it(agents):
+def test_a_touched_outcome_of_the_prior_version_does_not_hold_the_step(agents):
+    """Прежняя версия ждала, пока человек оставит или пересоберёт закреплённый итог, который
+    задевают новые решения. У контракта такого выбора нет: шаг утверждают как есть, пометка
+    остаётся в сборке."""
     council_id = grouped()
     confirm(council_id)
     open_c(agents, council_id)
@@ -662,42 +662,25 @@ def test_a_touched_outcome_waits_for_the_human_who_keeps_it(agents):
     resolved_c(council_id)
     outcomes = streams_of(council_id)["C"].outcomes
     assert [(t.outcome_id, t.adr_ids) for t in outcomes.touched] == [("O1", ["ADR-2"])]
-    res = approves(council_id, "C")
-    assert res.status_code == 409 and "задевают" in res.json()["detail"]
-    assert settles(council_id, outcomes.run, "O1").status_code == 200
-    stream = streams_of(council_id)["C"]
-    assert stream.outcomes.touched == [] and stream.outcomes.run == outcomes.run
     assert approves(council_id, "C").status_code == 200
-
-
-def test_a_touched_outcome_the_human_rebuilds_is_assembled_again(agents):
-    council_id = grouped()
-    confirm(council_id)
-    open_c(agents, council_id)
-    agents.touching = True
-    resolved_c(council_id)
-    outcomes = streams_of(council_id)["C"].outcomes
-    agents.touching = False
-    assert settles(council_id, outcomes.run, "O1", rebuild=True).status_code == 200
     stream = streams_of(council_id)["C"]
-    # O1 пересобирают; O2 своих решений не реализует (новое было в пометке) — не закреплён.
-    assert stream.outcomes.run != outcomes.run and stream.outcomes.kept == []
-    assert json.loads(section(agents.prompts["outcome_discovery"], "FIXED OUTCOMES")) == []
-    assert approves(council_id, "C").status_code == 200
+    assert stream.outcomes.approved and stream.outcomes.touched == outcomes.touched
 
 
 def test_an_outcome_that_got_blocked_is_not_approved(agents):
     council_id = grouped()
     confirm(council_id)
     ready_c(council_id)
-    # Решение по Q2 сняли: итог тот же по тексту, но его держит Q2 — утверждать рано.
+    # Решение по Q2 сняли: итог тот же по тексту, но его держит Q2 — утверждать нечего.
     reopened(council_id)
     assert decide(council_id, "C", DECIDED).status_code == 200
     outcomes = streams_of(council_id)["C"].outcomes
     assert outcomes.outcomes[0].blocked_by == ["Q2"] and not outcomes.approved
-    res = approves(council_id, "C")
-    assert res.status_code == 409 and "держит" in res.json()["detail"]
-    assert not streams_of(council_id)["C"].outcomes.approved
+    assert outcomes.approved_ids == []                     # новая сборка — без прежних утверждений
+    res = client.post(f"/api/councils/{council_id}/streams/C/outcomes/O1/approve",
+                      json={"run": outcomes.launch})
+    assert res.json()["error"]["code"] == "outcome_blocked"
+    assert streams_of(council_id)["C"].outcomes.approved_ids == []
 
 
 def test_kept_outcomes_are_there_from_the_start_of_their_run(agents):
@@ -711,7 +694,7 @@ def test_kept_outcomes_are_there_from_the_start_of_their_run(agents):
     assert (outcomes.state, outcomes.kept) == ("failed", ["O1"])
     assert outcomes.outcomes == before.outcomes.outcomes
     agents.online = {"sol", "fable"}
-    assert assembles(council_id, "C").status_code == 202
+    assert retries(council_id, "C").status_code == 200
     stream = streams_of(council_id)["C"]
     assert [o.id for o in stream.outcomes.outcomes] == ["O1", "O2"]
 
@@ -736,12 +719,6 @@ def test_runs_saved_before_kept_work_lay_in_them_get_it_on_reading(agents):
     assert (read.outcomes.state, read.outcomes.outcomes) == ("failed", before.outcomes.outcomes)
 
 
-def settles(council_id, outcomes_run, outcome_id, rebuild=False):
-    return client.post(f"/api/councils/{council_id}/streams/C/outcomes/touched",
-                       json={"run": "g1", "revision": 0, "outcomes_run": outcomes_run,
-                             "outcome_id": outcome_id, "rebuild": rebuild})
-
-
 def test_fixed_decisions_start_the_outcomes_and_an_open_question_blocks(agents):
     council_id = grouped()
     confirm(council_id)
@@ -755,7 +732,7 @@ def test_fixed_decisions_start_the_outcomes_and_an_open_question_blocks(agents):
             for o in outcomes.outcomes] == [("O1", RESULT, ["ADR-1"], ["Q2"], [4])]
     assert outcomes.uncovered_adr_ids == []
     # Собранные итоги повтор не затирает: за них заплачено, а решения те же.
-    assert assembles(council_id, "C").status_code == 409
+    assert retries(council_id, "C").status_code == 200
     assert streams_of(council_id)["C"].outcomes.run == outcomes.run
 
 
@@ -773,20 +750,20 @@ def test_nothing_upstream_changes_while_the_outcomes_are_assembled(agents):
     assert decide(council_id, "C", [("Q1", None, None), ("Q2", None, None)]).status_code == 200
     after = streams_of(council_id)["C"]
     assert (after.decisions, after.outcomes) == (stream.decisions, assembling)
-    assert assembles(council_id, "C").status_code == 409                       # уже идёт
+    assert retries(council_id, "C").status_code == 200                         # уже идёт
+    assert streams_of(council_id)["C"].outcomes == assembling
 
 
 def test_without_models_the_decisions_are_fixed_and_the_outcomes_can_be_retried(agents):
     council_id = grouped()
     confirm(council_id)
     chosen_c(council_id)
-    assert assembles(council_id, "C").status_code == 409                       # решений ещё нет
     agents.online = set()
     assert decide(council_id, "C", DECIDED).status_code == 200
     outcomes = streams_of(council_id)["C"].outcomes
     assert outcomes.state == "failed" and "нет подключения" in outcomes.error
     agents.online = {"sol", "fable"}
-    assert assembles(council_id, "C").status_code == 202
+    assert retries(council_id, "C").status_code == 200
     assert streams_of(council_id)["C"].outcomes.state == "done"
 
 
@@ -883,10 +860,16 @@ def test_research_done_again_leaves_the_stream_as_it_is(agents, repos):
 
 # --- утверждение итогов
 
-def approves(council_id, group, outcomes_run=None, revision=0):
-    run = outcomes_run or streams_of(council_id)[group].outcomes.run
-    return client.post(f"/api/councils/{council_id}/streams/{group}/outcomes",
-                       json={"run": "g1", "revision": revision, "outcomes_run": run})
+def approves(council_id, group):
+    """«Утвердить итоги» новой ручкой (web/outcomes.py) — с итогами, которые на экране: сначала
+    утверждён каждый итог, который не заблокирован, как его утвердил бы человек."""
+    path = f"/api/councils/{council_id}/streams/{group}/outcomes"
+    shown = client.get(path).json()
+    for outcome in shown["outcomes"]:
+        if not outcome["blockedBy"]:
+            assert client.post(f"{path}/{outcome['id']}/approve",
+                               json={"run": shown["run"]}).status_code == 200
+    return client.post(f"{path}/approve", json={"run": shown["run"]})
 
 
 def decided_c(council_id):
@@ -909,28 +892,10 @@ def test_approving_outcomes_only_marks_them_approved_and_reads_no_code(agents):
     res = approves(council_id, "C")
     assert res.status_code == 200
     outcomes = streams_of(council_id)["C"].outcomes
-    assert outcomes.approved and outcomes.state == "done"
+    assert outcomes.approved and outcomes.state == "done" and outcomes.approved_ids == ["O1"]
     assert len(agents.asked) == asked_before                           # моделей не звали
     assert approves(council_id, "C").status_code == 200                # повтор — то же
-    assert streams_of(council_id)["C"].outcomes.run == outcomes.run
-
-
-def test_outcomes_held_by_an_open_question_are_not_approved(agents):
-    council_id = grouped()
-    confirm(council_id)
-    decided_c(council_id)
-    res = approves(council_id, "C")
-    assert res.status_code == 409 and "держит" in res.json()["detail"]
-    assert not streams_of(council_id)["C"].outcomes.approved
-
-
-def test_outcomes_of_another_assembly_are_not_approved(agents):
-    council_id = grouped()
-    confirm(council_id)
-    assert approves(council_id, "C", outcomes_run="o0").status_code == 409   # итогов нет
-    free_c(council_id)
-    assert approves(council_id, "C", outcomes_run="o0").status_code == 409
-    assert not streams_of(council_id)["C"].outcomes.approved
+    assert streams_of(council_id)["C"].outcomes == outcomes
 
 
 # --- макет
