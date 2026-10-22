@@ -51,6 +51,8 @@ export function Screen() {
                   idea={stream.idea}
                   state={step.state}
                   unexported={unexported(streams, stream.id)}
+                  retrying={retrying}
+                  onBusy={onBusy}
                 />
               ) : route.step === 'questions' ? (
                 <Questions

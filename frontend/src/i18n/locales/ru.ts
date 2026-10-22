@@ -248,6 +248,8 @@ export const ru = {
   'stream.runs.state.failed': 'сбой',
   'stream.runs.state.skipped': 'не понадобился',
   'stream.runs.thinking': '{model} · думает {time}',
+  'stream.phase.project_decisions_discovery': 'Отбор прошлых решений',
+  'stream.phase.project_decisions_judge': 'Судья отбора',
   'stream.phase.question_discovery': 'Сбор вопросов',
   'stream.phase.question_judge': 'Судья вопросов',
   'stream.phase.proposal_discovery': 'Поиск вариантов',
@@ -563,6 +565,7 @@ export const ru = {
     'Исследование ещё нельзя утвердить: дождитесь его окончания, решите находки и подтвердите группы. Исследование обновлено.',
   'error.stale_map': 'Карта кода читала папки совета — исследуйте код заново.',
   'error.unknown_decision': 'Одного из отмеченных решений уже нет в каталоге. Список обновлён — проверьте отметки.',
+  'error.project_not_ready': 'Отбор сейчас не отправить: модели заново отбирают прошлые решения. Поток обновлён.',
   'error.questions_not_ready':
     'Вопросы сейчас не изменить: шаг ещё не начат или модели собирают вопросы заново. Поток обновлён.',
   'error.text_required': 'Впишите текст — пустым его не сохранить.',

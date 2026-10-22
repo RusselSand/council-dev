@@ -740,14 +740,16 @@ export const mockSource: DataSource = {
         409,
       );
     }
-    const starting = stages.streams === 'idle';
-    councils[index] = researchApproved(councils[index], groups.map((g) => g.id), new Date().toISOString());
-    // «Потоки» не начаты — каждая группа становится потоком; прошлые решения — из папки документации проекта.
-    if (starting) {
+    const now = new Date().toISOString();
+    // «Потоки» не начаты — каждая группа становится потоком; прошлые решения из папки документации проекта отбирают
+    // модели (решение q-005 бекенда).
+    if (stages.streams === 'idle') {
+      const { participants, judge } = councils[index];
       const docs = projects.find((p) => p.id === councils[index].project?.id)?.docs ?? '';
       for (const group of groups) projectDecisions.set(streamKey(id, group.id), newDecisions(docs));
-      streams.set(id, newStreams(groups, (stream) => decisionsOf(id, stream)));
+      streams.set(id, newStreams(groups, (stream) => decisionsOf(id, stream), participants, judge, now));
     }
+    councils[index] = researchApproved(councils[index], streams.get(id) ?? [], now);
     return copy(councils[index]);
   },
   async listStreams(id) {
@@ -771,13 +773,25 @@ export const mockSource: DataSource = {
   },
   async getProjectDecisions(id, streamId) {
     councilAt(id);
-    streamAt(id, streamId);
-    return copy(decisionsOf(id, streamId));
+    const at = streamAt(id, streamId);
+    const decisions = decisionsOf(id, streamId);
+    // Пока модели отбирают или отбор остановился, прошлых решений нет, а след в коде ещё не искали.
+    const { state } = stepOf((streams.get(id) ?? [])[at], 'project');
+    if (state === 'running' || state === 'failed') {
+      return copy({ catalog: decisions.catalog && { ...decisions.catalog, traced: 0 }, decisions: [] });
+    }
+    return copy(decisions);
   },
   async approveProjectDecisions(id, streamId, selected) {
     const index = councilAt(id);
     const at = streamAt(id, streamId);
-    const decisions = decisionsOf(id, streamId);
+    const { state } = stepOf((streams.get(id) ?? [])[at], 'project');
+    if (state === 'running') {
+      throw new ApiError('project_not_ready', `Модели ещё отбирают прошлые решения потока ${streamId}`, 409);
+    }
+    // Отбор остановился — прошлых решений нет.
+    const decisions =
+      state === 'failed' ? { ...decisionsOf(id, streamId), decisions: [] } : decisionsOf(id, streamId);
     const unknown = selected.find((d) => !decisions.decisions.some((known) => known.id === d));
     if (unknown !== undefined) throw new ApiError('unknown_decision', `Решения ${unknown} нет у потока ${streamId}`, 422);
     // Отмеченные — по порядку списка, без повторов.

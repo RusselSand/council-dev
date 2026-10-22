@@ -35,6 +35,7 @@ from spec_council.models import (
     StructureProposal,
 )
 from spec_council.pipeline import (
+    ModelFailed,
     start_analysis,
     start_outcomes,
     start_proposals,
@@ -88,6 +89,8 @@ class Agents:
         return {alias: alias in self.online for alias in aliases}
 
     def ask(self, model, prompt, key, workspace=None, stop=None):
+        if model not in self.online:     # новые ручки вход заранее не проверяют — модель падает
+            raise ModelFailed(f"{model}: нет подключения")
         self.asked.append(key)
         self.prompts[key.split("-")[1]] = prompt
         self.workspaces[key.split("-")[1]] = workspace
@@ -270,15 +273,10 @@ def streams_made(council_id):
 
 
 def starts(council_id, group):
-    """Модели начинают работать в потоке — старыми ручками «Решений проекта», пока они не
-    переехали: в каталоге заметок есть прошлые решения проекта — совет их отбирает, нет — сразу
-    ищет вопросы, без решений."""
-    res = client.post(f"/api/councils/{council_id}/streams/{group}/project-decisions/search")
-    if res.status_code != 422 or "нет прошлых решений" not in res.json()["detail"]:
-        return res
-    return client.post(f"/api/councils/{council_id}/streams/{group}/project-decisions",
-                       json={"run": "g1", "revision": 0, "search_run": None, "keep": [],
-                             "idea": seen_idea(council_id, group)})
+    """«Без прошлых решений → к вопросам» на «Решениях проекта» (web/project_decisions.py): шаг
+    готов, и модели ищут вопросы потока."""
+    return client.post(f"/api/councils/{council_id}/streams/{group}/project-decisions/approve",
+                       json={"selected": []})
 
 
 def passes(council_id, group):
@@ -310,7 +308,7 @@ def test_a_stream_takes_the_idea_and_the_research_and_goes_to_questions(agents):
     assert asks(council_id, "C").status_code == 409              # потоков ещё нет
     res = passes(council_id, "C")
     assert res.status_code == 200
-    assert res.json()["streams"][2]["questions"]["state"] == "running"
+    assert res.json()["stream"]["steps"][1]["state"] == "running"
     assert streams_of(council_id)["B"].questions is None         # другие потоки ждут своего начала
     stream = streams_of(council_id)["C"]
     assert (stream.title, stream.idea.text) == ("Группа C", IDEA_C)
@@ -346,7 +344,7 @@ def test_without_models_the_questions_fail_and_their_search_can_be_retried(agent
     stream = streams_of(council_id)["A"]
     assert stream.repository is not None and stream.design is not None
     assert stream.questions.state == "failed"
-    assert stream.questions.error.startswith("Нет подключения к моделям")
+    assert "нет подключения" in stream.questions.error
 
     agents.online = {"sol", "fable"}
     assert asks(council_id, "A").status_code == 202

@@ -1,3 +1,4 @@
+import type { State } from '../../domain/council';
 import type { Stream } from '../../domain/stream';
 import { source } from '../config';
 import { ApiError } from '../errors';
@@ -58,20 +59,28 @@ export function useRetryStream(): Mutation<[id: string, streamId: string], Strea
   );
 }
 
-/** Прошлые решения потока — GET /api/councils/<id>/streams/<streamId>/project-decisions: каталог и решения. */
-export function useProjectDecisions(id: string, streamId: string): Query<StreamProjectDecisions> {
-  return useQuery(
-    async () => ({ ...(await source.getProjectDecisions(id, streamId)), council: id, stream: streamId }),
-    [id, streamId],
+/**
+ * Прошлые решения потока — GET /api/councils/<id>/streams/<streamId>/project-decisions: каталог и решения. Шаг
+ * «Решения проекта» сменил состояние (state: модели закончили отбор или остановились, шаг запустили снова) — решения
+ * запрашиваются заново, а прежние экран уже не показывает.
+ */
+export function useProjectDecisions(id: string, streamId: string, state: State): Query<StreamProjectDecisions> {
+  const query = useQuery(
+    async () => ({ ...(await source.getProjectDecisions(id, streamId)), council: id, stream: streamId, state }),
+    [id, streamId, state],
     'projectDecisions',
   );
+  const { data, loading, error } = query;
+  const fresh = data?.council === id && data.stream === streamId && data.state === state;
+  return { ...query, data: fresh ? data : undefined, loading: loading || (!fresh && error === undefined) };
 }
 
 /**
  * «Учитывать отмеченные → к вопросам» и «Без прошлых решений → к вопросам» — POST
  * /api/councils/<id>/streams/<streamId>/project-decisions/approve с отмеченными решениями (пусто — без прошлых
  * решений); ответ — поток. Он сразу встаёт на место прежнего; потоки, прошлые решения и список советов
- * перезапрашиваются. Отмеченного решения уже нет — прошлые решения тоже перезапрашиваются.
+ * перезапрашиваются. Отмеченного решения уже нет — прошлые решения тоже перезапрашиваются; модели заново отбирают
+ * решения (шаг запустили снова в другой вкладке) — ещё и потоки.
  */
 export function useApproveProjectDecisions(): Mutation<[id: string, streamId: string, selected: string[]], Stream> {
   return useMutation(
@@ -80,6 +89,10 @@ export function useApproveProjectDecisions(): Mutation<[id: string, streamId: st
         return await source.approveProjectDecisions(id, streamId, selected);
       } catch (error) {
         if (error instanceof ApiError && error.code === 'unknown_decision') markStale('projectDecisions');
+        if (error instanceof ApiError && error.code === 'project_not_ready') {
+          markStale('streams');
+          markStale('projectDecisions');
+        }
         staleOnMissing(error);
         throw error;
       }

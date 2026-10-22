@@ -10,21 +10,55 @@
 
 import hashlib
 import json
+import logging
 import re
 from collections.abc import Collection, Iterable, Mapping, Sequence
 from pathlib import Path
 
-from .models import CodeTrail, ProjectDecision, RepositoryScan
-from .notes import Catalog, declared_issues, issues_in
+from .export import export_in
+from .models import CodeTrail, ProjectDecision, RepositoryScan, Stream
+from .notes import Catalog, NotesError, declared_issues, issues_in
 from .repository import RepositoryError, git_bytes, has_commit
 from .repository import text_of as reason_text
 from .slicing import BadAnswer
+
+log = logging.getLogger(__name__)
 
 # Сколько файлов карты и коммитов на файл смотреть: след — довод, а не полный аудит.
 FILES_MAX = 100
 COMMITS_MAX = 200
 RELEVANCE = ("applicable", "potential_conflict", "uncertain")
 ADR_ID = re.compile(r"\s*([A-Za-z]+)-0*(\d+)\s*")
+
+
+def catalog_at(notes: Path | None) -> Catalog | None:
+    """Каталог заметок как есть. Нет его или не прочитать — None."""
+    if notes is None or not notes.exists():
+        return None
+    try:
+        return Catalog.load(notes)
+    except NotesError as exc:
+        log.warning("Каталог заметок %s не прочитан, решения проекта не отбираются: %s", notes,
+                    exc)
+        return None
+
+
+def own_ids(stream: Stream, notes: Path | None) -> list[str]:
+    """Заметки, которые выгрузил сам поток в этот каталог: его решения ему не «прошлые».
+    Выгрузка в другой каталог (проект или его папку сменили) здесь ничего не значит."""
+    record = export_in(stream.notes, notes)
+    return [note.id for note in record.notes] if record else []
+
+
+def project_catalog(notes: Path | None, stream: Stream) -> Catalog | None:
+    """Каталог заметок, если в нём есть прошлые решения проекта (кроме решений самого потока).
+    Каталога нет или его не прочитать — блока решений нет: вопросы ищутся сразу."""
+    catalog = catalog_at(notes)
+    if catalog is None:
+        return None
+    own = set(own_ids(stream, notes))
+    adrs = [note for note in catalog.notes.values() if note.type == "adr" and note.id not in own]
+    return catalog if adrs else None
 
 
 def records(catalog: Catalog, trails: Mapping[str, list[CodeTrail]],

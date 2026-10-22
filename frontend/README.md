@@ -615,6 +615,8 @@ id); `QuestionHead` — открытый вопрос крупно, метка �
 | последний запуск | last run         |
 | Сбор вопросов   | Collecting questions |
 | Поиск вариантов | Finding options   |
+| Отбор прошлых решений | Selecting past decisions |
+| Судья отбора    | Selection judge   |
 | прошлое решение | past decision     |
 | каталог решений | catalog           |
 | относится       | relevant          |

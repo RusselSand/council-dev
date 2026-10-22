@@ -27,6 +27,8 @@ export interface DecisionView {
 }
 
 export interface ProjectDecisionsStep {
+  /** Модели отбирают прошлые решения: на месте каталога и решений — серые строки, кнопок нет. */
+  running: boolean;
   /** Прошлые решения пришли; нет — грузятся или не загрузились. */
   loaded: boolean;
   loading: boolean;
@@ -40,7 +42,7 @@ export interface ProjectDecisionsStep {
   edit: () => void;
   /** «Потоки B, C не выгружены в заметки — …»; других невыгруженных потоков нет — null. */
   unexported: string | null;
-  /** Строка каталога; у проекта нет папки документации — null. */
+  /** Строка каталога; у проекта нет папки документации или отбор остановился — null. */
   catalog: string | null;
   decisions: DecisionView[];
   toggle: (id: string) => void;
@@ -51,8 +53,8 @@ export interface ProjectDecisionsStep {
   /** «Учитывать отмеченные → к вопросам». */
   approve: () => void;
   /**
-   * Отбор уходит на сервер, прошлые решения перезапрашиваются или не обновились: галочки и кнопки не действуют —
-   * на экране, может быть, решения, которых уже нет.
+   * Отбор уходит на сервер, прошлые решения перезапрашиваются или не обновились (на экране, может быть, решения,
+   * которых уже нет), шаг запускают снова: галочки и кнопки не действуют.
    */
   busy: boolean;
   /** Прошлые решения перезапрашиваются, а на экране — прежние: под кнопками «Загружаем…». */
@@ -73,19 +75,25 @@ function statusLabel(decision: PastDecision, t: Translate): string | null {
 /**
  * Шаг «Решения проекта», как в макете. Шаг ждёт вас или нажали «Изменить отбор» — отбор: невыгруженные потоки,
  * каталог, прошлые решения с галочками, «Без прошлых решений → к вопросам» и «Учитывать отмеченные → к вопросам». Шаг
- * готов — что учтено и «Изменить отбор». Галочки человек ставит на экране, на сервер они уходят с «… → к вопросам»;
- * ушёл с экрана раньше — при возврате снова как на сервере. Отмеченного решения уже нет — прошлые решения
- * перезапрашиваются, и, пока не пришли, отбор не отправляется. После ответа открываются «Вопросы» потока; ушёл с экрана,
- * пока отбор уходил, — не открываются. Другой поток — другой экран: ставьте с key по совету и потоку.
+ * готов — что учтено и «Изменить отбор». Прошлые решения отбирают модели (решение q-005 бекенда): пока отбирают — на
+ * месте каталога и решений серые строки, кнопок нет; отбор остановился — решений и строки каталога нет, а дальше можно
+ * без них. Галочки человек ставит на экране, на сервер они уходят с «… → к вопросам»; ушёл с экрана раньше — при
+ * возврате снова как на сервере. Отмеченного решения уже нет — прошлые решения перезапрашиваются, и, пока не пришли,
+ * отбор не отправляется. После ответа открываются «Вопросы» потока; ушёл с экрана, пока отбор уходил, — не
+ * открываются. Отбор не уходит вместе с «Запустить снова» шага: retrying — шаг запускают снова, и галочки и кнопки не
+ * действуют; пока отбор уходит, onBusy(true) — не действует «Запустить снова». Другой поток — другой экран: ставьте с
+ * key по совету и потоку.
  */
 export function useProjectDecisionsStep(
   councilId: string,
   streamId: string,
   state: State,
   unexported: string[],
+  retrying: boolean,
+  onBusy: (busy: boolean) => void,
 ): ProjectDecisionsStep {
   const { t } = useI18n();
-  const query = useProjectDecisions(councilId, streamId);
+  const query = useProjectDecisions(councilId, streamId, state);
   const action = useApproveProjectDecisions();
   /** «Изменить отбор» нажали у готового шага. */
   const [editOpen, setEditOpen] = useState(false);
@@ -111,7 +119,15 @@ export function useProjectDecisionsStep(
   /** Прошлые решения на экране, но перезапрашиваются (отмеченного уже нет) или не обновились. */
   const refreshing = loaded && query.loading;
   const outdated = refreshing || (loaded && query.error !== undefined);
-  const busy = action.pending || outdated;
+  const busy = action.pending || outdated || retrying;
+
+  // Пока отбор ждёт ответа, «Запустить снова» не действует; ответили или ушли с шага — снова действует.
+  const sending = action.pending;
+  useEffect(() => {
+    if (!sending) return undefined;
+    onBusy(true);
+    return () => onBusy(false);
+  }, [sending, onBusy]);
 
   const send = (ids: string[], skip: boolean) => {
     if (busy) return;
@@ -126,6 +142,7 @@ export function useProjectDecisionsStep(
   };
 
   return {
+    running: state === 'running',
     loaded,
     loading: query.loading,
     error: query.error,
@@ -137,11 +154,13 @@ export function useProjectDecisionsStep(
     unexported: unexported.length
       ? t('projectDecisions.unexported', { count: unexported.length, streams: unexported.join(', ') })
       : null,
-    catalog: catalog
-      ? decisions.length
-        ? t('projectDecisions.catalog', { total: catalog.total, traced: catalog.traced, path: catalog.path })
-        : t('projectDecisions.catalog.empty', { path: catalog.path })
-      : null,
+    // Отбор остановился — каталог не скажет, что относится к идее: строки нет.
+    catalog:
+      catalog && state !== 'failed'
+        ? decisions.length
+          ? t('projectDecisions.catalog', { total: catalog.total, traced: catalog.traced, path: catalog.path })
+          : t('projectDecisions.catalog.empty', { path: catalog.path })
+        : null,
     decisions: decisions.map((d) => ({
       id: d.id,
       relation: t(`projectDecisions.relation.${d.relation}`),
