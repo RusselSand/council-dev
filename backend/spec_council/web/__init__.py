@@ -1,8 +1,9 @@
-"""Новый API — по контракту docs/api-contract.md, под /api.
+"""API — по контракту docs/api-contract.md, под /api.
 
 Этап совета — свой модуль: его router (на errors.ContractRoute), объекты контракта (наследники
 schema.Schema) и свои коды ошибок (errors.ApiError). Новый модуль встаёт одной строкой в
-MODULES; чужие модули он не трогает. Старые ручки (api/) уходят по этапам.
+MODULES; чужие модули он не трогает. Старых ручек (api/) больше нет: последним в новый API
+переехал этап «Задачи».
 """
 
 from fastapi import APIRouter, FastAPI
@@ -24,12 +25,13 @@ from . import (
     slicing,
     streams,
     structure,
+    tasks,
 )
 
 API_PREFIX = "/api"
 
 MODULES = (councils, brief, slicing, structure, research, streams, project_decisions, questions,
-           options, decisions, outcomes, notes, models, projects, repos)
+           options, decisions, outcomes, notes, tasks, models, projects, repos)
 
 router = APIRouter(prefix=API_PREFIX)
 for module in MODULES:
@@ -37,6 +39,6 @@ for module in MODULES:
 
 
 def install(app: FastAPI) -> None:
-    """Ручки нового API и общий вид ошибок."""
+    """Ручки API и общий вид ошибок."""
     errors.install(app)
     app.include_router(router)

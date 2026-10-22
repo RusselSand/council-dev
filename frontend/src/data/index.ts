@@ -8,6 +8,7 @@ export {
   useCouncils,
   useCreateCouncil,
   useRetryStructure,
+  useRetryTasks,
   useStartSlicing,
   useStartStructure,
   useUpdateCouncil,

@@ -8,7 +8,8 @@
 пишет черновик в каталог файлом на заметку, и шаг готов; после записи выгрузка та же — записанный
 черновик, с теми же метками и сменами статуса. Каталог с тех пор поменялся так, что перевод к
 черновику уже не подходит, — судья сначала переводит заново, и шаг снова «ИИ работает». Каталога
-нет — записывать некуда: шаг так же готов, а заметок нет.
+нет — записывать некуда: шаг так же готов, а заметок нет. Записали последний поток — все готовы, и
+модели сразу строят план задач на весь совет (council_tasks.py, решение q-009 бекенда).
 
 Раньше черновик собирали и записывали старые ручки …/notes/draft и …/notes: человек правил тексты
 и отмечал исчезнувшие к удалению. У контракта этого нет — записывается то, что написал совет.
@@ -22,6 +23,7 @@ from pydantic import Field
 
 from ..background import launched
 from ..chain import Launch, replaced
+from ..council_tasks import go, plan_begun
 from ..deps import AgentsDep, LauncherDep, ProjectsDep, RepositoriesDep, StoreDep
 from ..export import Shelf
 from ..models import Council, NotePlan, NotesDraft, StatusShift
@@ -33,7 +35,7 @@ from ..prompts import notes_language
 from ..standing import Folders, stream_standing, translation
 from ..store import Store, council_lock
 from ..stream_notes import headline, launch_of, prepared, written, written_draft
-from .councils import folders_of
+from .councils import context_of, folders_of
 from .errors import ApiError, ContractRoute
 from .schema import Empty, Schema
 from .streams import StreamAnswer, council_of, shown_of, stream_of
@@ -114,7 +116,7 @@ def approve(council_id: str, stream_id: str, store: StoreDep, agents: AgentsDep,
     есть; не начат, судья переводит или перевод остановился — notes_not_ready. Каталог не
     прочитать или не записать, граф вышел бы не по правилам — internal с причиной, каталог как
     был."""
-    start = None
+    start = planned = None
     with council_lock:
         council = council_of(store, council_id)
         stream = shown_of(council, stream_id)
@@ -129,9 +131,16 @@ def approve(council_id: str, stream_id: str, store: StoreDep, agents: AgentsDep,
                            "или перевод остановился")
         if state == "waiting":
             council, start = wrote(store, council, stream, folders, agents)
+            if start is None:
+                # Записали последний поток — все готовы: модели строят план задач (решение
+                # q-009 бекенда).
+                council, planned = plan_begun(
+                    council, context_of(store, agents, launch, projects, repositories))
     if start is not None and start.pipeline is not None \
             and not launched(launch, start.pipeline, start.report):
         raise ApiError(500, "internal", "Сервер останавливается — заметки не начали переводить")
+    # Не отдался план — записан упавшим: поток записан, а план запускают снова на «Задачах».
+    go(launch, planned)
     return StreamAnswer(stream=stream_of(council, shown_of(council, stream_id), folders))
 
 

@@ -1,3 +1,4 @@
+import { FailedBanner } from '../../components/FailedBanner';
 import { LoadState } from '../../components/LoadState';
 import { RunningStage } from '../../components/RunningStage';
 import { RunProgress } from '../../components/RunProgress';
@@ -6,7 +7,6 @@ import { useI18n } from '../../i18n';
 import { BlockTitle } from '../../ui/BlockTitle';
 import { Button } from '../../ui/Button';
 import { NextStep } from '../../ui/NextStep';
-import { FailedBanner } from './parts/FailedBanner';
 import { GroupGrid } from './parts/GroupGrid';
 import { useStructure } from './useStructure';
 
@@ -32,6 +32,7 @@ export function Structure({ council }: { council: CouncilSummary }) {
     <>
       {screen.failed && (
         <FailedBanner
+          title={t('structure.failed.title')}
           text={screen.failure}
           disabled={screen.retryDisabled}
           error={screen.retryError}

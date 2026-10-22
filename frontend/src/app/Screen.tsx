@@ -97,7 +97,7 @@ export function Screen() {
             }
           </Stream>
         ) : (
-          <Tasks key={council.id} councilId={council.id} />
+          <Tasks key={council.id} council={council} />
         )
       }
     </Council>

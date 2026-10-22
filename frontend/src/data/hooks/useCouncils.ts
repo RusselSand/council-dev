@@ -165,8 +165,8 @@ export function useApproveResearch(): Mutation<[id: string], CouncilSummary> {
 /**
  * «Записать в каталог» на «Задачах» — POST /api/councils/<id>/tasks/approve: записать задачи плана; ответ — совет после
  * записи. Он сразу встаёт в список советов на место старого: вкладки этапов, меню и Сводка видят, что «Задачи» готовы;
- * план перезапрашивается. Записывать нечего — план перезапрашивается: экран увидит, каких потоков ещё ждут; совета
- * нет — список советов: экран совета уведёт на Сводку.
+ * план перезапрашивается. «Задачи» не ждут записи (не все потоки готовы, модели строят план, он остановился) — план
+ * перезапрашивается: экран увидит, каких потоков ещё ждут; совета нет — список советов: экран совета уведёт на Сводку.
  */
 export function useApproveTasks(): Mutation<[id: string], CouncilSummary> {
   return useMutation(
@@ -194,5 +194,27 @@ export function useRetryStructure(): Mutation<[id: string], CouncilSummary> {
   return useMutation(
     (id: string) => source.retryStructure(id),
     (council) => markStale('councils', (list) => replaceIn(list, council)),
+  );
+}
+
+/**
+ * «Запустить снова» на «Задачах» — POST /api/councils/<id>/tasks/retry: план задач, который остановился, строится
+ * снова; ответ — совет после запуска. Он сразу встаёт в список советов на место старого, план перезапрашивается: экран
+ * видит, что модели работают. Совета нет — список советов: экран совета уведёт на Сводку.
+ */
+export function useRetryTasks(): Mutation<[id: string], CouncilSummary> {
+  return useMutation(
+    async (id: string) => {
+      try {
+        return await source.retryTasks(id);
+      } catch (error) {
+        if (error instanceof ApiError && error.code === 'not_found') markStale('councils');
+        throw error;
+      }
+    },
+    (council) => {
+      markStale('councils', (list) => replaceIn(list, council));
+      markStale('tasks');
+    },
   );
 }

@@ -6,7 +6,7 @@ import { cleanFields, MAX_PROJECT_REPOS, type Project, type ProjectFields } from
 import { canAddQuestion, type Question } from '../../domain/questions';
 import { fitsKind, isFigmaLink, isPending, isSettled, researchStatus, type Research } from '../../domain/research';
 import { isLabel, type Slicing } from '../../domain/slicing';
-import { stepOf, type ProjectDecisions } from '../../domain/stream';
+import { stepOf, streamState, type ProjectDecisions } from '../../domain/stream';
 import { withoutIdea, type Structure } from '../../domain/structure';
 import type { TasksPlan } from '../../domain/tasks';
 import { ApiError } from '../errors';
@@ -23,7 +23,7 @@ import {
   structureConfirmed,
   structureRetried,
   structureStarted,
-  tasksReopened,
+  tasksRetried,
   tasksWritten,
 } from './councils';
 import { DECISIONS, type MockDecision } from './decisions';
@@ -61,7 +61,7 @@ import {
   startedStructure,
   STRUCTURES,
 } from './structures';
-import { TASKS, tasksCatalog } from './tasks';
+import { plannedProgress, startedProgress, TASKS, tasksCatalog } from './tasks';
 
 /** Копия, чтобы экран не мог поменять моки у себя в руках. */
 const copy = <T>(value: T): T => structuredClone(value);
@@ -448,21 +448,39 @@ function notesWritten(id: string, streamId: string, written: MockNotes) {
 }
 
 /**
- * План задач совета, как его отдаёт сервер: задачи потоков, у которых «Итоги» готовы (утверждённые итоги уходят в
- * задачи), остальные потоки — ещё не дошли до итогов. Новых задач моки не собирают: модели в моках не заканчивают шаг,
- * и задачи есть только у советов из данных макета.
+ * Почему план задач остановился. Сам план в моках не останавливается (модели в моках не работают); остановился — значит,
+ * плана к готовым потокам нет, как у совета прежней версии; текст пишет сервер.
+ */
+const TASKS_FAILED = 'План задач не построен — запустите его.';
+
+/**
+ * План задач совета, как его отдаёт сервер: план — на весь совет, когда готовы все потоки (решение q-009 бекенда); до
+ * этого задач нет, а потоки, которые ещё не готовы (не записаны в каталог заметок), — в pendingStreams. План построен —
+ * когда «Задачи» ждут вас или готовы; пока модели строят план — его ход, задач ещё нет. Новых планов моки не строят:
+ * модели в моках не заканчивают работу, и план есть только у советов из данных макета. Каталог — папка задач проекта
+ * совета, какой она сейчас; задачи пишутся не на языке совета — судья их перевёл.
  */
 function tasksPlanOf(id: string): TasksPlan {
-  const council = councils[councilAt(id)];
+  const { project, participants, judge, stages } = councils[councilAt(id)];
   const list = streams.get(id) ?? [];
-  const ready = list.filter((stream) => stepOf(stream, 'outcomes').state === 'done').map((stream) => stream.id);
-  const plan = TASKS[id] ?? { tasks: [], vanished: [] };
+  const pending = list.filter((stream) => streamState(stream) !== 'done').map((stream) => stream.id);
+  const catalog = tasksCatalog(projects.find((p) => p.id === project?.id));
+  const plan = TASKS[id];
+  const built =
+    plan !== undefined && list.length > 0 && !pending.length && (stages.tasks === 'waiting' || stages.tasks === 'done');
+  const translated = catalog !== null && catalog.language !== COUNCIL_LANGUAGE;
   return {
-    catalog: tasksCatalog(council.project),
-    tasks: plan.tasks.filter((task) => ready.includes(task.stream)),
-    vanished: plan.vanished,
-    readyStreams: ready,
-    pendingStreams: list.filter((stream) => !ready.includes(stream.id)).map((stream) => stream.id),
+    catalog,
+    progress: built
+      ? plannedProgress(participants, judge, plan.judge, translated)
+      : stages.tasks === 'running'
+        ? startedProgress(participants, judge)
+        : [],
+    tasks: built ? plan.tasks : [],
+    vanished: built && catalog ? plan.vanished : [],
+    readyStreams: built ? list.map((stream) => stream.id) : [],
+    pendingStreams: pending,
+    error: stages.tasks === 'failed' ? TASKS_FAILED : null,
   };
 }
 
@@ -509,7 +527,7 @@ const withCount = (project: MockProject): Project => ({
 });
 
 /**
- * Поля проекта, как их сохраняет сервер: название и папка без пробелов по краям, репозитории без повторов. Нет
+ * Поля проекта, как их сохраняет сервер: название и папки без пробелов по краям, репозитории без повторов. Нет
  * названия, больше 10 репозиториев или репозиторий не из COUNCIL_REPOS — ошибка. Репозитории, которые уже были
  * в проекте (kept), можно оставить, даже если их там больше нет.
  */
@@ -1034,8 +1052,8 @@ export const mockSource: DataSource = {
       const { catalog } = notesOf(id, streamId);
       const translating = catalog !== null && catalog.language !== COUNCIL_LANGUAGE;
       list[at] = outcomesStepApproved(list[at], approved, all.length, participants, judge, now, translating);
-      // Поток дошёл до итогов: его задачи встают в план незаписанными — записанные «Задачи» снова не готовы.
-      councils[index] = streamsChanged(tasksReopened(councils[index]), list, streamId, now);
+      // Поток ещё не записан в каталог заметок — он не готов, и «Задачи» не начаты (решение q-009 бекенда).
+      councils[index] = streamsChanged(councils[index], list, streamId, now);
     }
     return copy(list[at]);
   },
@@ -1072,10 +1090,21 @@ export const mockSource: DataSource = {
   },
   async approveTasks(id) {
     const index = councilAt(id);
+    // Записывают, когда «Задачи» ждут вас: все потоки готовы, план построен, судья перевёл задачи.
+    const { tasks: state } = councils[index].stages;
+    if (state !== 'waiting' && state !== 'done') {
+      throw new ApiError('tasks_not_ready', `«Задачи» совета ${id} не ждут записи (${state})`, 409);
+    }
+    // Задачи уже записаны — ничего не меняем, отвечаем советом как есть. Каталога нет — записывать некуда, «Задачи» так
+    // же готовы (решение q-010 бекенда). План после записи остаётся таким же.
     const { tasks } = tasksPlanOf(id);
-    if (!tasks.length) throw new ApiError('tasks_not_ready', `В плане совета ${id} нет задач`, 409);
-    // Задачи уже записаны — ничего не меняем, отвечаем советом как есть. План после записи остаётся таким же.
     councils[index] = tasksWritten(councils[index], tasks.length, new Date().toISOString());
+    return copy(councils[index]);
+  },
+  async retryTasks(id) {
+    const index = councilAt(id);
+    // План не останавливался — не перезапускаем, отвечаем советом как есть. В моках план не кончается.
+    councils[index] = tasksRetried(councils[index], new Date().toISOString());
     return copy(councils[index]);
   },
   async listModels() {

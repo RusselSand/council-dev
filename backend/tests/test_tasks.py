@@ -1,29 +1,14 @@
-"""Этап «Задачи»: план на весь совет по утверждённым и выгруженным итогам, сброс кнопкой,
-выгрузка плана в папку задач."""
+"""План задач на весь совет — то, что под ручками «Задач» (tests/test_council_tasks.py): что видят
+модели плана (tasks.py), как номера потока становятся номерами заметок и задач и как план ложится
+файлами задач в папку задач проекта (tasks_export.py)."""
 
-import json
-import os
-import shutil
 from dataclasses import replace
 
 import pytest
-from fastapi import HTTPException
 
-from spec_council.api import tasks as tasks_api
-from spec_council.app import app
-from spec_council.deps import (
-    get_agents,
-    get_issues_of,
-    get_launcher,
-    get_notes_of,
-    get_projects,
-    get_repositories,
-)
+from spec_council.council_tasks import PlanRefused, research_snapshot
 from spec_council.export import Shelf, words_for
-from spec_council.groups import marked
-from spec_council.issue_files import rendered as issue_rendered
 from spec_council.models import (
-    CouncilStatus,
     ExportedNote,
     Issue,
     NotePlan,
@@ -32,27 +17,20 @@ from spec_council.models import (
     Outcome,
     OutcomeDiscovery,
     ProjectDecision,
-    ProjectDraft,
     RepositoryFinding,
     RepositoryMap,
     RepositoryScan,
     RepositoryStep,
     Research,
-    Slicing,
     Stream,
-    Structure,
-    StructureProposal,
     TaskPlan,
     TasksExport,
 )
 from spec_council.models import LabeledFragment as Fragment
-from spec_council.notes import Catalog, Note, NotesError, path_of, rendered
-from spec_council.pipeline import start_tasks
-from spec_council.repository import STALE_MAP
+from spec_council.notes import Catalog, Note, NotesError
 from spec_council.tasks import (
     Names,
     adr_entry,
-    basis_of,
     ideas_text,
     names_of,
     outcome_entry,
@@ -62,296 +40,15 @@ from spec_council.tasks import (
     research_texts,
 )
 from spec_council.tasks_export import aligned, drafted_tasks, issue_text
-from tests.test_streams import (
-    ALL_DECIDED,
-    LABELS,
-    RESULT,
-    TASK,
-    TEXTS,
-    Agents,
-    approves,
-    choose,
-    chose,
-    client,
-    confirm,
-    decide,
-    free_c,
-    get_store,
-    grouped,
-    grp,
-    passes,
-    reopened,
-    repos,  # noqa: F401 — фикстура
-    scans,
-    section,
-    streams_of,
+from tests.test_council_tasks import (  # noqa: F401 — фикстуры agents и base
+    council,
+    models,
+    ready,
+    repositories,
 )
 
 
-@pytest.fixture(name="agents")
-def models():
-    fake = Agents()
-    app.dependency_overrides[get_agents] = lambda: fake
-    app.dependency_overrides[get_launcher] = lambda: lambda job: job()
-    yield fake
-    app.dependency_overrides.pop(get_agents)
-    app.dependency_overrides.pop(get_launcher)
-
-
-@pytest.fixture
-def folders(tmp_path):
-    """Папка документации и папка задач проекта совета. Старые ручки «Задач» берут их по совету
-    (get_notes_of), «Записать в каталог» — по проекту совета, от каталога репозиториев
-    (written_notes)."""
-    notes, issues = tmp_path / "notes", tmp_path / "issues"
-    app.dependency_overrides[get_notes_of] = lambda: lambda council: notes
-    app.dependency_overrides[get_issues_of] = lambda: lambda council: issues
-    app.dependency_overrides[get_repositories] = lambda: tmp_path
-    yield notes, issues
-    app.dependency_overrides.pop(get_notes_of)
-    app.dependency_overrides.pop(get_issues_of)
-    app.dependency_overrides.pop(get_repositories, None)
-
-
-def single():
-    """Совет из одной группы C: план задач — на весь совет, и в нём один поток."""
-    council_id = client.post("/api/councils").json()["council"]["id"]
-    slicing = Slicing(state="done", run="s1", steps=[], fragments=[
-        Fragment(id=i, text=TEXTS[i], label=label, reason="", council_label=label)
-        for i, label in LABELS.items()])
-    groups = marked([grp("C", [1, 2, 3, 4, 5])])
-    structure = Structure(state="done", run="g1", slicing_run="s1", labels=LABELS, steps=[],
-                          groups=groups, proposal=StructureProposal(groups=groups, relations=[]))
-    get_store().update_council(council_id, {"slicing": slicing, "structure": structure,
-                                            "status": CouncilStatus.structure})
-    confirm(council_id)
-    return council_id
-
-
-def exported(council_id, group="C"):
-    """Итоги потока утверждены и выгружены в заметки."""
-    assert approves(council_id, group).status_code == 200
-    written_notes(council_id, group)
-
-
-def written_notes(council_id, group="C"):
-    """Поток, где шаг «Итоги» утверждён, записан в каталог — «Записать в каталог» новой ручкой
-    (web/notes.py), в папку документации проекта совета: та же, что у старых ручек «Задач»
-    (folders, get_notes_of), от каталога репозиториев."""
-    folder = app.dependency_overrides[get_notes_of]()(council(council_id))
-    base = app.dependency_overrides[get_repositories]()
-    projects = app.dependency_overrides.get(get_projects, get_projects)()
-    project = projects.get_project(council(council_id).project) or projects.create_project(
-        ProjectDraft(name="Проект"))
-    projects.update_project(project.id, {"notes": folder.relative_to(base).as_posix()})
-    get_store().update_council(council_id, {"project": project.id})
-    assert client.post(f"/api/councils/{council_id}/streams/{group}/notes/approve",
-                       json={}).status_code == 200
-
-
-def all_decided(council_id):
-    """Поток C уже начат: оба вопроса отобраны и решены."""
-    choose(council_id, "C", ["Q1", "Q2"])
-    chose(council_id, "C", [("Q1", "P1"), ("Q2", "P2")])
-    assert decide(council_id, "C", ALL_DECIDED).status_code == 200
-
-
-def ready(council_id=None):
-    council_id = council_id or single()
-    free_c(council_id)
-    exported(council_id)
-    return council_id
-
-
-def council(council_id):
-    return get_store().get_council(council_id)
-
-
-def plans(council_id, revision=0):
-    return client.post(f"/api/councils/{council_id}/tasks", json={"run": "g1",
-                                                                  "revision": revision})
-
-
-def resets(council_id):
-    return client.post(f"/api/councils/{council_id}/tasks/reset", json={"run": "g1",
-                                                                        "revision": 0})
-
-
-def drafts(council_id):
-    return client.post(f"/api/councils/{council_id}/tasks/draft", json={"run": "g1",
-                                                                        "revision": 0})
-
-
-def writes(council_id, draft=None, edits=None):
-    run = draft or council(council_id).tasks_draft.run
-    return client.post(f"/api/councils/{council_id}/tasks/write",
-                       json={"run": "g1", "revision": 0, "draft": run, "edits": edits or {}})
-
-
-def test_the_council_plans_tasks_by_note_numbers_and_writes_them_as_issue_files(agents, folders):
-    notes, issues = folders
-    council_id = ready()
-    res = plans(council_id)
-    assert res.status_code == 202 and res.json()["tasks"]["state"] == "running"
-    plan = council(council_id).tasks
-    assert plan.state == "done", plan.error
-    [issue] = plan.issues
-    assert (issue.id, issue.title, issue.outcome_id) == ("I1", f"{TASK} OUT-0001", "OUT-0001")
-    assert issue.adr_ids == ["ADR-0001", "ADR-0002"]
-    assert issue.open_questions == ["Где хранить долю?"]
-    assert (plan.uncovered, plan.skipped, plan.code) == ([], [], False)
-    stream = streams_of(council_id)["C"]
-    assert plan.basis == {"C": f"{stream.outcomes.run}:{stream.notes.run}",
-                          "research": "skipped:|skipped:"}
-    # Модели видят итоги и решения номерами заметок, а решения — с их текстом.
-    prompt = agents.prompts["task_plan"]
-    [outcome] = json.loads(section(prompt, "OUTCOMES"))
-    assert (outcome["id"], outcome["group"], outcome["title"]) == ("OUT-0001", "C", RESULT)
-    decisions = json.loads(section(prompt, "ACCEPTED DECISIONS").split("\n\n")[-1])
-    assert [d["id"] for d in decisions] == ["ADR-0001", "ADR-0002"]
-    assert all(d["decision"] for d in decisions)
-    assert "C. Группа C:" in section(prompt, "IDEAS")
-    assert plans(council_id).status_code == 409                       # план уже есть
-
-    assert drafts(council_id).status_code == 202
-    draft = council(council_id).tasks_draft
-    assert draft.state == "done"
-    [file] = draft.notes
-    assert (file.id, file.type, file.action) == ("ISS-0001", "issue", "create")
-    assert file.links == ["OUT-0001", "ADR-0001", "ADR-0002"]
-    assert "Где хранить долю?" in file.text and "ISS-0001" in file.text
-    assert not issues.exists()                                        # черновик файлов не пишет
-
-    assert writes(council_id).status_code == 200
-    record = council(council_id).tasks_export
-    assert [n.id for n in record.notes] == ["ISS-0001"] and record.plan == plan.run
-    [written] = [p for p in issues.rglob("*.md")]
-    assert "ISS-0001" in written.read_text(encoding="utf-8")
-    # Заметки итогов задач не перечисляют: связь односторонняя.
-    assert "ISS-" not in Catalog.load(notes).notes["OUT-0001"].body
-
-
-def test_the_plan_waits_for_every_stream_to_be_approved_and_exported(agents, folders):
-    council_id = grouped()
-    confirm(council_id)
-    ready(council_id)
-    res = plans(council_id)
-    assert res.status_code == 409
-    assert "Поток A: итоги не утверждены" in res.json()["detail"]
-    assert "Поток C" not in res.json()["detail"]
-    assert council(council_id).tasks is None
-
-
-def test_a_stream_exported_before_note_numbers_were_kept_is_exported_again_first(agents,
-                                                                                 folders):
-    council_id = ready()
-    store = get_store()
-    # Не помнил номеров вовсе — или помнил только у решений и итогов: тексты задач назвали бы
-    # вопросы и варианты не номерами заметок.
-    for refs in ({}, {"O1": "OUT-0001", "ADR-1": "ADR-0001"}):
-        store.update_council(council_id, {"streams": [
-            s.model_copy(update={"notes": s.notes.model_copy(update={"refs": refs})})
-            for s in council(council_id).streams]})
-        res = plans(council_id)
-        assert res.status_code == 409 and "выгрузите его заново" in res.json()["detail"]
-
-
-def test_approved_outcomes_not_yet_exported_are_not_planned(agents, folders):
-    council_id = single()
-    free_c(council_id)
-    approves(council_id, "C")
-    res = plans(council_id)
-    assert res.status_code == 409 and "не выгружен" in res.json()["detail"]
-
-
-def test_only_approved_outcomes_go_into_the_plan(agents, folders):
-    """«Утвердить итоги» оставляет неутверждённый итог таким — в заметки он ложится, а в задачи
-    уходят утверждённые. Утвердили его уже после плана — план к прежним итогам."""
-    council_id = single()
-    free_c(council_id)
-    path = f"/api/councils/{council_id}/streams/C/outcomes"
-    run = client.get(path).json()["run"]
-    assert client.post(f"{path}/approve", json={"run": run}).status_code == 200
-    written_notes(council_id)
-    assert "O1" in streams_of(council_id)["C"].notes.refs
-    assert plans(council_id).status_code == 202
-    plan = council(council_id).tasks
-    assert plan.state == "done", plan.error
-    assert (plan.issues, plan.uncovered, plan.skipped) == ([], [], [])
-    prompt = agents.prompts["task_plan"]
-    assert json.loads(section(prompt, "OUTCOMES")) == []
-    assert json.loads(section(prompt, "ACCEPTED DECISIONS").split("\n\n")[-1]) == []
-
-    assert client.post(f"{path}/O1/approve", json={"run": run}).status_code == 200
-    res = drafts(council_id)
-    assert res.status_code == 409 and "План устарел" in res.json()["detail"]
-    # Утверждены все итоги — основа плана та же, что у планов прежней версии.
-    stream = streams_of(council_id)["C"]
-    assert basis_of(council(council_id))["C"] == f"{stream.outcomes.run}:{stream.notes.run}"
-    assert plan.basis["C"] == f"{stream.outcomes.run}:{stream.notes.run}:"
-
-
-def test_a_changed_stream_leaves_the_plan_to_the_human_who_resets_it(agents, folders):
-    council_id = ready()
-    plans(council_id)
-    first = council(council_id).tasks
-    reopened(council_id)                     # поток прежней версии: решения снова ждут вас
-    decide(council_id, "C", [ALL_DECIDED[0], ("Q2", "P2", "Иначе.")])
-    stream = streams_of(council_id)["C"]
-    assert not stream.outcomes.approved
-    # План не трогается: видно, что он к другим итогам, — сбрасывает человек.
-    assert council(council_id).tasks == first
-    assert first.basis["C"] != f"{stream.outcomes.run}:{stream.notes.run}"
-    assert resets(council_id).status_code == 200
-    assert (council(council_id).tasks, council(council_id).tasks_draft) == (None, None)
-    assert plans(council_id).status_code == 409                       # итоги не утверждены
-    exported(council_id)
-    assert plans(council_id).status_code == 202
-
-
-def test_research_passed_again_after_the_plan_makes_it_stale(agents, folders):
-    """План читал карту кода и описание макета исследования: прошли его заново — план к прежнему,
-    и его не выгрузить, пока не сбросят."""
-    council_id = ready()
-    plans(council_id)
-    assert client.post(f"/api/councils/{council_id}/research/code/reset",
-                       json={}).status_code == 200
-    res = drafts(council_id)
-    assert res.status_code == 409 and "План устарел" in res.json()["detail"]
-    assert council(council_id).tasks is not None                       # сам план не сброшен
-
-
-def test_a_decision_on_a_finding_after_the_plan_makes_it_stale(agents, folders, repos):  # noqa: F811
-    """План читал карту кода с решениями человека по её находкам: решение поменяли — план к
-    прежнему, и его не выгрузить, пока не сбросят."""
-    council_id = single()
-    scans(council_id, "C")
-    passes(council_id, "C")
-    # Вывод ИИ, решения по которому ещё нет: появился в карте уже после «К потокам →».
-    research = council(council_id).research
-    inferred = RepositoryFinding(id="R2", statement="Очередь можно хранить в SQLite.",
-                                 status="inferred")
-    result = research.scan.result.model_copy(
-        update={"findings": [*research.scan.result.findings, inferred]})
-    get_store().update_council(council_id, {"research": research.model_copy(
-        update={"scan": research.scan.model_copy(update={"result": result})})})
-    all_decided(council_id)
-    exported(council_id)
-    assert plans(council_id).status_code == 202
-    assert council(council_id).tasks.state == "done"
-    res = client.patch(f"/api/councils/{council_id}/research/findings/R2",
-                       json={"decision": "accept"})
-    assert res.status_code == 200
-    res = drafts(council_id)
-    assert res.status_code == 409 and "План устарел" in res.json()["detail"]
-    # Без решений основание — как у планов прежней версии: они не устаревают от этого.
-    assert council(council_id).tasks.basis["research"] == \
-        f"scan:{research.scan.run}|skipped:"
-    assert basis_of(council(council_id))["research"] == \
-        f"scan:{research.scan.run}:R2=accept|skipped:"
-
-
-def test_the_plan_names_a_stream_by_its_title_not_by_its_edited_group(agents, folders):
+def test_the_plan_names_a_stream_by_its_title_not_by_its_edited_group(agents, base):
     """Название потока — с которым группа стала потоком: правки групп его не меняют (решение
     q-002). У потока прежней версии названия нет — оно у его группы."""
     council_id = ready()
@@ -366,236 +63,6 @@ def test_the_plan_names_a_stream_by_its_title_not_by_its_edited_group(agents, fo
     assert "C. Группа C:" in ideas_text(titled)
     gone = titled.model_copy(update={"structure": structure.model_copy(update={"groups": []})})
     assert "C. Группа C:" in ideas_text(gone)
-
-
-def test_a_running_plan_is_not_reset_or_started_twice(agents, folders):
-    council_id = ready()
-    get_store().update_council(council_id, {"tasks": start_tasks(["sol"], "sol", {})})
-    assert resets(council_id).status_code == 423
-    res = plans(council_id)
-    assert res.status_code == 409 and "строится" in res.json()["detail"]
-
-
-def test_without_models_the_plan_is_recorded_failed_and_can_be_run_again(agents, folders):
-    council_id = ready()
-    agents.online = set()
-    assert plans(council_id).status_code == 202
-    plan = council(council_id).tasks
-    assert plan.state == "failed" and plan.error.startswith("Нет подключения")
-    agents.online = {"sol", "fable"}
-    assert plans(council_id).status_code == 202
-    assert council(council_id).tasks.state == "done"
-
-
-def test_a_plan_is_exported_only_into_an_issues_folder(agents, folders):
-    council_id = ready()
-    assert drafts(council_id).status_code == 409                      # плана ещё нет
-    plans(council_id)
-    app.dependency_overrides[get_issues_of] = lambda: lambda council: None
-    res = drafts(council_id)
-    assert res.status_code == 422 and "папки задач" in res.json()["detail"]
-
-
-def test_a_draft_of_another_plan_is_not_written(agents, folders):
-    council_id = ready()
-    plans(council_id)
-    drafts(council_id)
-    stale = council(council_id).tasks_draft.run
-    resets(council_id)
-    plans(council_id)
-    res = writes(council_id, draft=stale)
-    assert res.status_code == 409
-    assert not folders[1].exists()
-
-
-def test_writing_again_keeps_the_numbers_and_human_edits(agents, folders):
-    council_id = ready()
-    plans(council_id)
-    drafts(council_id)
-    [file] = council(council_id).tasks_draft.notes
-    own = "# Своя задача" + file.text[file.text.index("\n"):]       # номера — на месте
-    res = writes(council_id, edits={file.key: own})
-    assert res.status_code == 200, res.text
-    resets(council_id)
-    plans(council_id)
-    drafts(council_id)
-    [again] = council(council_id).tasks_draft.notes
-    assert again.id == "ISS-0001" and again.text.startswith("# Своя задача")
-
-
-def test_a_number_mentioned_in_a_note_stays_with_its_task(agents, folders):
-    """Заметка проекта ссылается на выгруженную задачу: номер всё ещё этой задачи."""
-    notes, _ = folders
-    council_id = ready()
-    plans(council_id)
-    drafts(council_id)
-    writes(council_id)
-    mention = Note("IDEA-0099", "idea", "Сделано в ISS-0001.", ())
-    path = path_of(notes, mention)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(rendered(mention), encoding="utf-8")
-    resets(council_id)
-    plans(council_id)
-    drafts(council_id)
-    assert [n.id for n in council(council_id).tasks_draft.notes] == ["ISS-0001"]
-
-
-def test_a_note_the_plan_stands_on_deleted_since_is_not_drafted(agents, folders):
-    notes, _ = folders
-    council_id = ready()
-    plans(council_id)
-    (notes / "outcomes" / "OUT-0001.md").unlink()
-    res = drafts(council_id)
-    assert res.status_code == 422 and "OUT-0001" in res.json()["detail"]
-
-
-def test_a_vanished_task_another_file_still_waits_for_is_not_deleted(agents, folders):
-    _, issues = folders
-    council_id = ready()
-    plans(council_id)
-    drafts(council_id)
-    writes(council_id)
-    # Свою задачу человек положил руками: она ждёт ISS-0001.
-    own = Note("ISS-0005", "issue", "# Своя", ("ISS-0001",))
-    (issues / "ISS-0005.md").write_text(issue_rendered(own), encoding="utf-8")
-    resets(council_id)
-    renamed = Agents.task_plan
-
-    def other(prompt):
-        found = renamed(prompt)
-        for issue in found["issues"]:
-            issue["title"], issue["user_story"] = "Другая задача", "As a team, I want other."
-        return found
-
-    agents.task_plan = other
-    plans(council_id)
-    drafts(council_id)
-    [gone] = council(council_id).tasks_draft.vanished
-    assert (gone.id, gone.linked_from) == ("ISS-0001", ["ISS-0005"])
-    res = client.post(
-        f"/api/councils/{council_id}/tasks/write",
-        json={"run": "g1", "revision": 0, "draft": council(council_id).tasks_draft.run,
-              "edits": {}, "delete": ["ISS-0001"]})
-    assert res.status_code == 422 and "ISS-0005" in res.json()["detail"]
-    assert (issues / "ISS-0001.md").exists()
-
-
-def test_a_plan_whose_notes_folder_changed_is_not_exported(agents, folders, tmp_path):
-    """Папку документации сменили после плана: номера OUT/ADR в плане — из прежнего каталога, и
-    файлы задач ссылались бы мимо."""
-    council_id = ready()
-    plans(council_id)
-    app.dependency_overrides[get_notes_of] = lambda: lambda council: tmp_path / "other"
-    res = drafts(council_id)
-    assert res.status_code == 409 and "План устарел" in res.json()["detail"]
-    assert council(council_id).tasks_draft is None
-
-
-def test_a_plan_whose_stream_was_exported_again_is_not_exported(agents, folders):
-    council_id = ready()
-    plans(council_id)
-    drafts(council_id)
-    run = council(council_id).tasks_draft.run
-    # Поток выгрузили заново после плана: прежняя выгрузка устарела (у прежней версии — когда
-    # поменяли, какие варианты правят свои), и «Документация» снова ждала вас.
-    get_store().update_council(council_id, {"streams": [
-        s.model_copy(update={"notes": s.notes.model_copy(update={"outcomes": ""})})
-        for s in council(council_id).streams]})
-    exported(council_id)
-    assert drafts(council_id).status_code == 409
-    res = writes(council_id, draft=run)
-    assert res.status_code == 409 and "План устарел" in res.json()["detail"]
-    assert not folders[1].exists()
-
-
-def test_research_changed_while_the_code_was_read_refuses_the_plan(agents, folders, repos,  # noqa: F811
-                                                                    monkeypatch):
-    council_id = single()
-    scans(council_id, "C")
-    passes(council_id, "C")
-    all_decided(council_id)
-    exported(council_id)
-    reading = tasks_api.code_of
-
-    def meanwhile(*args):
-        found = reading(*args)
-        assert client.post(f"/api/councils/{council_id}/research/code/reset",
-                           json={}).status_code == 200
-        return found
-
-    monkeypatch.setattr(tasks_api, "code_of", meanwhile)
-    res = plans(council_id)
-    assert res.status_code == 409 and "Исследование поменялось" in res.json()["detail"]
-    assert council(council_id).tasks is None
-
-
-def test_with_an_approved_scan_the_plan_reads_the_code_anew(agents, folders, repos):  # noqa: F811
-    council_id = single()
-    scans(council_id, "C")
-    passes(council_id, "C")
-    (repos / "later.py").write_text("x = 1\n", encoding="utf-8")       # код после скана
-    all_decided(council_id)
-    exported(council_id)
-    assert plans(council_id).status_code == 202
-    plan = council(council_id).tasks
-    assert plan.state == "done" and plan.code
-    assert [(s.name, s.path, s.dirty) for s in plan.sources] == [("", "project", True)]
-    assert agents.seen == ["app.py", "later.py"]                      # снимок — нынешний
-    place = agents.workspaces["task_plan"]
-    assert place is not None and not place.exists()
-    assert "Ответы ищут в app.py" in section(agents.prompts["task_plan"], "REPOSITORY CONTEXT")
-
-
-def test_the_plan_does_not_read_the_council_folders_in_the_repository(agents, folders,  # noqa: F811
-                                                                      repos):  # noqa: F811
-    # Папки документации и задач — в репозитории проекта: заметки выгружены туда, а план в коде
-    # их не читает — решения приходят к нему входом плана.
-    notes, issues = repos / "docs" / "council", repos / "docs" / "issues"
-    app.dependency_overrides[get_notes_of] = lambda: lambda council: notes
-    app.dependency_overrides[get_issues_of] = lambda: lambda council: issues
-    council_id = single()
-    scans(council_id, "C")
-    passes(council_id, "C")
-    all_decided(council_id)
-    exported(council_id)
-    assert any(notes.rglob("*.md"))
-    assert plans(council_id).status_code == 202
-    assert council(council_id).tasks.state == "done"
-    assert agents.seen == ["app.py"]
-
-
-def test_a_map_made_while_the_scan_read_the_council_folders_refuses_the_plan(  # noqa: F811
-        agents, folders, repos):  # noqa: F811
-    # Скан сделан до пропуска папок совета: его карта читала заметки — план под ней читал бы
-    # другое, и его не строят, пока не просканируют заново.
-    notes, issues = repos / "docs" / "council", repos / "docs" / "issues"
-    app.dependency_overrides[get_notes_of] = lambda: lambda council: notes
-    app.dependency_overrides[get_issues_of] = lambda: lambda council: issues
-    council_id = single()
-    scans(council_id, "C")
-    passes(council_id, "C")
-    all_decided(council_id)
-    exported(council_id)
-    research = council(council_id).research
-    scan = research.scan.model_copy(update={"repositories": [
-        source.model_copy(update={"skipped": []}) for source in research.scan.repositories]})
-    get_store().update_council(council_id,
-                               {"research": research.model_copy(update={"scan": scan})})
-    res = plans(council_id)
-    assert res.status_code == 422 and res.json()["detail"] == STALE_MAP
-    assert council(council_id).tasks is None
-
-
-def test_a_working_copy_gone_since_the_scan_refuses_the_plan(agents, folders, repos):  # noqa: F811
-    council_id = single()
-    scans(council_id, "C")
-    passes(council_id, "C")
-    all_decided(council_id)
-    exported(council_id)
-    shutil.rmtree(repos, onexc=lambda f, p, e: (os.chmod(p, 0o700), f(p)))
-    res = plans(council_id)
-    assert res.status_code == 422 and "не прочитать" in res.json()["detail"]
-    assert council(council_id).tasks is None
 
 
 def test_an_issue_file_names_other_issues_by_their_project_numbers():
@@ -640,57 +107,7 @@ def test_stream_numbers_in_issue_files_and_plan_inputs_become_note_numbers():
         "Хранить в Cloudflare R2 по «Файлы лежат в бакете», как в OQ-0001")
 
 
-class Translating(Agents):
-    """Судья переводит файлы задач, каждый своим ходом, — и название задачи всякий раз
-    по-своему: «Индекс» — «Index 1», «Index 2»…"""
-
-    def __init__(self):
-        super().__init__()
-        self.turn = 0
-
-    def ask(self, model, prompt, key, workspace=None, stop=None):
-        if "-notes_translation-" in key:
-            self.turn += 1
-            notes = json.loads(prompt.split("## NOTES\n")[1])
-            return json.dumps({"notes": [
-                {"key": n["key"], "text": n["text"].replace("Индекс", f"Index {self.turn}")}
-                for n in notes]})
-        return super().ask(model, prompt, key, workspace)
-
-
-def two_tasks(prompt):
-    """План: на итог две задачи, вторая — после первой."""
-    [issue] = Agents.task_plan(prompt)["issues"]
-    return {"issues": [issue | {"id": "I1", "title": "Индекс"},
-                       issue | {"id": "I2", "title": "Выдача", "depends_on": ["I1"]}]}
-
-
-def test_a_task_is_named_alike_in_every_file_after_translation_and_edits(agents, folders,
-                                                                        monkeypatch):
-    _, issues = folders
-    fake = Translating()
-    fake.task_plan = two_tasks
-    app.dependency_overrides[get_agents] = lambda: fake
-    council_id = ready()
-    plans(council_id)
-    monkeypatch.setattr(tasks_api, "notes_language", lambda: "English")
-    drafts(council_id)
-    draft = council(council_id).tasks_draft
-    assert draft.state == "done", draft.error
-    first, second = draft.notes
-    # Второй файл переводили своим ходом («Index 2»), а задачу в нём зовут, как в её файле.
-    assert first.text.startswith("# Index 1\n")
-    assert "- ISS-0001: Index 1" in second.text and "Index 2" not in second.text
-
-    # Человек переименовал задачу в её файле — так её зовут и в файле, что её ждёт.
-    renamed = "# Index, renamed" + first.text[first.text.index("\n"):]
-    assert writes(council_id, edits={first.key: renamed}).status_code == 200
-    assert "- ISS-0001: Index, renamed" in (issues / "ISS-0002.md").read_text(encoding="utf-8")
-    drafts(council_id)                                       # переводить нечего — всё на месте
-    assert {n.action for n in council(council_id).tasks_draft.notes} == {"same"}
-
-
-def test_task_names_come_from_the_streams_own_group_and_the_approved_research(agents, folders):
+def test_task_names_come_from_the_streams_own_group_and_the_approved_research(agents, base):
     council_id = ready()
     fragments = {f.id: f for f in council(council_id).slicing.fragments}
     # «P1» — термин в тексте другой группы: в потоке C P1 — его вариант.
@@ -709,7 +126,7 @@ def test_task_names_come_from_the_streams_own_group_and_the_approved_research(ag
         "R1": "Ответы ищут полнотекстом."}
 
 
-def test_a_note_number_another_stream_exported_stays_a_reference(agents, folders):
+def test_a_note_number_another_stream_exported_stays_a_reference(agents, base):
     # «ADR-0042 validation» в заметке потока C — ссылка на решение, что выгрузил поток D: его
     # сочетание словом не становится, и проверка удалённых заметок его видит.
     found = council(ready())
@@ -897,14 +314,14 @@ def test_a_legacy_note_body_gives_no_phrases_with_stream_numbers():
     assert names.settled("ADR-0001", note.written) == "Сверить по OQ-0001 validation"
 
 
-def test_planning_with_an_unreadable_catalog_is_refused(agents, folders, tmp_path):
+def test_planning_with_an_unreadable_catalog_is_refused(agents, base, tmp_path):
     # Каталог не прочитать — номера каталога, что называет исследование, не запомнить: план не
-    # строят, а не запоминают пустое.
+    # строят (он останавливается с причиной), а не запоминают пустое.
     broken = tmp_path / "broken"
     (broken / "adrs").mkdir(parents=True)
     (broken / "adrs" / "ADR-0001.md").write_text("---\nid: [\n---\nТело", encoding="utf-8")
-    with pytest.raises(HTTPException):
-        tasks_api.research_snapshot(council(ready()), broken)
+    with pytest.raises(PlanRefused):
+        research_snapshot(council(ready()), broken)
 
 
 def test_a_note_number_a_fallback_text_brings_is_checked_too(tmp_path):

@@ -1,16 +1,20 @@
 import type { Catalog } from '../../domain/notes';
 import type { AdrRef, OutcomeRef } from '../../domain/outcomes';
-import type { ProjectRef } from '../../domain/project';
-import type { Task, VanishedTask } from '../../domain/tasks';
-import { PROJECTS } from './projects';
+import type { RunState } from '../../domain/run';
+import type { Task, TaskStep, VanishedTask } from '../../domain/tasks';
+import { COUNCIL_LANGUAGE } from './notes';
+import { PROJECTS, type MockProject } from './projects';
 
 /**
- * Задачи и «Уйдут из каталога» совета в моках — все задачи всех его потоков: сервер отдаёт только задачи потоков, которые
- * дошли до итогов (моки смотрят на шаг «Итоги» потока).
+ * План задач совета в моках — каким его построили модели, когда были готовы все потоки (решение q-009 бекенда): задачи,
+ * «Уйдут из каталога» и как сработал судья задач. Сервер отдаёт их, только когда план построен. Новых планов моки не
+ * строят: модели в моках не заканчивают работу, и план есть только у советов из данных макета.
  */
 export interface MockTasks {
   tasks: Task[];
   vanished: VanishedTask[];
+  /** Судья задач: свёл разошедшиеся планы моделей — done; планы совпали, судья не понадобился — skipped. */
+  judge: RunState;
 }
 
 /** Задача без открытых вопросов и зависимостей; остальное — extra. */
@@ -45,9 +49,11 @@ const g1Adr = (n: number): AdrRef => ({ adr: `ADR-${n}`, catalogId: `ADR-${Strin
  * Задачи g1 — из data-1.json (tasks.issues): title, user_story — story, main_entry_points — entries, current_state —
  * current, scope, open_questions, depends_on; outcome_id и adr_ids там — номера в каталоге, номера в потоке — по
  * streams[0].notes.refs. Номера задач в каталоге — tasks_draft.numbers (I1 → ISS-0023). «Уйдут из каталога» —
- * tasks_draft.vanished: заголовок — первая строка text без «# », как его берёт макет.
+ * tasks_draft.vanished: заголовок — первая строка text без «# », как его берёт макет. Судья задач — tasks.steps
+ * (task_plan_judge — done).
  */
 const G1: MockTasks = {
+  judge: 'done',
   tasks: [
     task(
       'I1',
@@ -282,9 +288,11 @@ const protoAdr = (adr: string): AdrRef => ({ adr, catalogId: null });
 /**
  * Задачи советов-примеров — ISSUES из prototype.js, все — потока A: why — story, where — entries, scope — scope, after —
  * dependsOn. Итога и решений у задач в макете нет — они из итогов потока (OUTCOMES): очередь и отправка — OUT-1
- * (ADR-0007, ADR-0008), сжатие фото — OUT-2 (ADR-0009). «Уйдут из каталога» в макете у них пусто.
+ * (ADR-0007, ADR-0008), сжатие фото — OUT-2 (ADR-0009). «Уйдут из каталога» в макете у них пусто. Работы моделей над
+ * задачами в макете нет: судья задач не понадобился, как у c7 в контракте.
  */
 const PROTO: MockTasks = {
+  judge: 'skipped',
   tasks: [
     task(
       'I1',
@@ -327,20 +335,49 @@ const PROTO: MockTasks = {
   vanished: [],
 };
 
-/** Задачи по id совета: g1 — из data-1.json; c1, c4, c7 — задачи макета (у советов-примеров они одни). */
+/**
+ * Планы по id совета: g1 — из data-1.json; c1, c4, c7 — задачи макета (у советов-примеров они одни). У c1 потоки ещё
+ * не готовы — план покажется, когда готовы все.
+ */
 export const TASKS: Record<string, MockTasks> = { g1: G1, c1: PROTO, c4: PROTO, c7: PROTO };
 
 /**
- * Каталог задач — его выбирает сервер. g1 — tasks_draft в data-1.json (root, language): общая папка задач, а не папка
- * документации проекта. Кромка — TASKS_ROOT макета; Сайт — каталог из строки c7 на Сводке макета («Каталог
- * site/docs/adr»); язык — как у заметок советов-примеров. У остальных советов — та же общая папка, что у g1.
+ * Язык каталога задач по проекту: у gen_sdk_tooling — tasks_draft.language в data-1.json (English); у остальных — как
+ * у заметок советов-примеров, на языке совета.
  */
-const CATALOGS: Record<string, Catalog> = {
-  [PROJECTS.gen.id]: { path: '/repos/tasks', language: 'English' },
-  [PROJECTS.kromka.id]: { path: 'kromka-api/docs/reasoning', language: 'русский' },
-  [PROJECTS.site.id]: { path: 'site/docs/adr', language: 'русский' },
-};
-const SHARED_CATALOG: Catalog = { path: '/repos/tasks', language: 'русский' };
+const LANGUAGES: Record<string, string> = { [PROJECTS.gen.id]: 'English' };
 
-export const tasksCatalog = (project: ProjectRef | null): Catalog =>
-  (project && CATALOGS[project.id]) ?? SHARED_CATALOG;
+/**
+ * Каталог задач, как его отдаёт сервер: папка задач проекта совета, какой её вписали, и её язык. Нет проекта, у
+ * проекта нет папки задач или папки документации, или папка задач — внутри папки документации (там задачи прочли бы
+ * заметками), — null: «Без папки» (решение q-010 бекенда).
+ */
+export function tasksCatalog(project: MockProject | undefined): Catalog | null {
+  if (!project?.tasks || !project.docs) return null;
+  if (project.tasks === project.docs || project.tasks.startsWith(`${project.docs}/`)) return null;
+  return { path: project.tasks, language: LANGUAGES[project.id] ?? COUNCIL_LANGUAGE };
+}
+
+/**
+ * Ход построенного плана: модели совета построили планы, судья задач — как в плане (judge); задачи пишутся не на
+ * языке совета (translated) — судья перевёл их.
+ */
+export function plannedProgress(
+  participants: string[],
+  judge: string,
+  judgeState: RunState,
+  translated: boolean,
+): TaskStep[] {
+  const steps: TaskStep[] = [
+    { phase: 'task_plan', runs: participants.map((model) => ({ model, state: 'done' })) },
+    { phase: 'task_plan_judge', runs: [{ model: judge, state: judgeState }] },
+  ];
+  if (translated) steps.push({ phase: 'task_translation', runs: [{ model: judge, state: 'done' }] });
+  return steps;
+}
+
+/** Модели строят план: модели совета работают, судья задач ждёт своей очереди. */
+export const startedProgress = (participants: string[], judge: string): TaskStep[] => [
+  { phase: 'task_plan', runs: participants.map((model) => ({ model, state: 'running' })) },
+  { phase: 'task_plan_judge', runs: [{ model: judge, state: 'waiting' }] },
+];

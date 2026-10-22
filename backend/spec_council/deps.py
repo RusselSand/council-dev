@@ -140,8 +140,9 @@ NotesOfDep = Annotated[NotesOf, Depends(get_notes_of)]
 
 def council_issues(council: Council, projects: Projects,
                    repositories: Path | None) -> Path | None:
-    """Папка задач совета — папка задач его проекта. None — у проекта её нет: задачи только
-    строками в итогах. Папка больше не годится — 422 с причиной, как и у папки документации."""
+    """Папка задач совета — папка задач его проекта. None — у проекта её нет: задачи не
+    записываются (решение q-010 бекенда). Папка больше не годится — 422 с причиной, как и у папки
+    документации."""
     project = projects.get_project(council.project) if council.project else None
     if project is None or not project.issues or not project.notes:
         return None

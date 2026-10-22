@@ -13,6 +13,7 @@ import { isPending, researchStatus, type Research, type ResearchStatus } from '.
 import { currentStep, type Stream } from '../../domain/stream';
 import { PROJECTS } from './projects';
 import { modelsText, workText } from './streams';
+import { TASKS } from './tasks';
 
 /** Состояния этапов по порядку: Ввод, Нарезка, Группы, Исследование, Потоки, Задачи. */
 const stages = (...s: [State, State, State, State, State, State]): Record<Stage, State> => ({
@@ -472,11 +473,18 @@ function streamsState(streams: Stream[]): State {
 /** Строка «Задач» на Сводке, пока они ждут записи; текст пишет сервер (в макете у c7 — «Запишите 6 задач в каталог»). */
 const TASKS_WAITING = atStage('tasks', 'waiting', 'Запишите задачи в каталог');
 
+/** Строка «Задач» на Сводке, пока модели строят план задач: «sol и fable режут итоги на задачи»; текст пишет сервер. */
+const tasksRunning = (participants: string[]) =>
+  atStage('tasks', 'running', `${modelsText(participants)} режут итоги на задачи`);
+
 /**
  * Совет после действия с потоком (changed): у потоков — текущие шаги, этап «Потоки» — по шагам потоков, совет встаёт
- * на первый неготовый этап. Все потоки готовы, а задачи не записаны — «Задачи» ждут вас и у них строка на Сводке, как
- * у c7 в макете. Строки потока на Сводке — по его шагам с ошибкой, ждущим вас и где работает ИИ: строка того же шага в
- * том же состоянии остаётся, новая — что нужно от человека или что делают модели.
+ * на первый неготовый этап. «Задачи» — по правилам «Задач» (решение q-009 бекенда): все потоки стали готовы — модели
+ * строят план задач на весь совет, «Задачи» — ИИ работает, и у них строка на Сводке; в моках модели работу не
+ * заканчивают. План совета из данных макета (TASKS) уже построен: его «Задачи» сразу ждут вас, как у c7 в макете. Поток
+ * снова не готов — «Задачи» не начаты, их строки на Сводке нет. Строки потока на Сводке — по его шагам с ошибкой, ждущим
+ * вас и где работает ИИ: строка того же шага в том же состоянии остаётся, новая — что нужно от человека или что делают
+ * модели.
  */
 export const streamsChanged = (
   council: CouncilSummary,
@@ -486,11 +494,12 @@ export const streamsChanged = (
 ): CouncilSummary => {
   const stream = streams.find((s) => s.id === changed);
   const streamsDone = streamsState(streams) === 'done';
-  const tasksWaiting = streamsDone && council.stages.tasks === 'idle';
+  const tasksStarting = streamsDone && council.stages.tasks === 'idle';
+  const planned = TASKS[council.id] !== undefined;
   const stages: Record<Stage, State> = {
     ...council.stages,
     streams: streamsState(streams),
-    tasks: tasksWaiting ? 'waiting' : council.stages.tasks,
+    tasks: !streamsDone ? 'idle' : tasksStarting ? (planned ? 'waiting' : 'running') : council.stages.tasks,
   };
   const stage = firstOpen(stages, 'brief');
   const own = (stream?.steps ?? []).flatMap((step): Activity[] => {
@@ -510,9 +519,11 @@ export const streamsChanged = (
   });
   // Внутри состояния — сначала то, что изменилось позже: строки этого потока и «Задач».
   const activity = [
-    ...(tasksWaiting ? [TASKS_WAITING] : []),
+    ...(tasksStarting ? [planned ? TASKS_WAITING : tasksRunning(council.participants)] : []),
     ...own,
-    ...council.activity.filter((a) => a.stage !== 'streams' || a.stream !== changed),
+    ...council.activity.filter(
+      (a) => (a.stage !== 'streams' || a.stream !== changed) && (streamsDone || a.stage !== 'tasks'),
+    ),
   ];
   return {
     ...council,
@@ -525,22 +536,15 @@ export const streamsChanged = (
   };
 };
 
-/**
- * Совет, когда поток дошёл до итогов: его задачи встают в план незаписанными, и записанные «Задачи» снова не готовы.
- * Ждут ли они вас, решает streamsChanged по правилам «Задач»: все потоки готовы — ждут, иначе не начаты.
- */
-export const tasksReopened = (council: CouncilSummary): CouncilSummary =>
-  council.stages.tasks === 'done' ? { ...council, stages: { ...council.stages, tasks: 'idle' } } : council;
-
 /** «7 задач записаны в каталог» — итог совета, когда всё готово; текст пишет сервер. */
 const TASK_FORMS: Record<string, string> = { one: 'задача записана', few: 'задачи записаны', many: 'задач записаны' };
 const writtenText = (count: number) =>
   `${count} ${TASK_FORMS[new Intl.PluralRules('ru').select(count)] ?? 'задачи записаны'} в каталог`;
 
 /**
- * Совет после «Записать в каталог» на «Задачах» — как в макете (prototype.js, writeTasks): «Задачи» готовы, даже если не
- * все потоки готовы. Совет встаёт на первый неготовый этап; всё готово — итог совета: сколько задач записано. Строка
- * «Задач» на Сводке уходит. Задачи уже записаны — совет как есть.
+ * Совет после «Записать в каталог» на «Задачах» — как в макете (prototype.js, writeTasks): «Задачи» готовы; каталога
+ * нет — так же, без записи (решение q-010 бекенда). Совет встаёт на первый неготовый этап; всё готово — итог совета:
+ * сколько задач записано. Строка «Задач» на Сводке уходит. Задачи уже записаны — совет как есть.
  */
 export const tasksWritten = (council: CouncilSummary, count: number, updatedAt: string): CouncilSummary => {
   if (council.stages.tasks === 'done') return council;
@@ -554,6 +558,27 @@ export const tasksWritten = (council: CouncilSummary, count: number, updatedAt: 
     stages,
     activity: council.activity.filter((a) => a.stage !== 'tasks'),
     summary: done ? writtenText(count) : council.summary,
+    updatedAt,
+  };
+};
+
+/**
+ * Совет после «Запустить снова» на «Задачах»: план задач, который остановился, строится снова — «Задачи» — ИИ работает,
+ * строка «Задач» на Сводке — что делают модели, как когда потоки стали готовы (решение q-009 бекенда). В моках модели
+ * работу не заканчивают. План не останавливался — совет как есть.
+ */
+export const tasksRetried = (council: CouncilSummary, updatedAt: string): CouncilSummary => {
+  if (council.stages.tasks !== 'failed') return council;
+  const stages: Record<Stage, State> = { ...council.stages, tasks: 'running' };
+  const stage = firstOpen(stages, 'brief');
+  const activity = [...council.activity.filter((a) => a.stage !== 'tasks'), tasksRunning(council.participants)];
+  return {
+    ...council,
+    stage,
+    state: stages[stage],
+    stages,
+    activity: ACTIVITY_ORDER.flatMap((state) => activity.filter((a) => a.state === state)),
+    summary: stage === 'tasks' ? 'Задачи — модели режут итоги на задачи' : council.summary,
     updatedAt,
   };
 };

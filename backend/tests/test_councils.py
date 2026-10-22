@@ -504,18 +504,28 @@ def test_a_council_is_done_when_its_tasks_are_written(store, projects, repos):
                                    project=project.id)
     store.update_council(council.id, {**BEFORE_STREAMS, "streams": [stream]})
 
-    # Все потоки готовы, задачи не записаны — «Задачи» ждут вас.
-    waiting = listed()[0]
-    assert waiting["stages"] == stages("done", "done", "done", "done", "done", "waiting")
-    assert waiting["streams"] == [{"id": "A", "step": "notes"}]
-    assert waiting["activity"] == [at_stage("tasks", "waiting", "Запишите задачи в каталог")]
-    assert waiting["summary"] == "Задачи ждут записи"
+    # Все потоки готовы, а плана задач нет (совет прежней версии): его запускают снова на
+    # «Задачах» (решение q-009 бекенда).
+    unplanned = listed()[0]
+    assert unplanned["stages"] == stages("done", "done", "done", "done", "done", "failed")
+    assert unplanned["streams"] == [{"id": "A", "step": "notes"}]
+    assert unplanned["activity"] == [at_stage("tasks", "failed", "План задач остановился")]
+    assert unplanned["summary"] == "План задач остановился"
 
-    plan = TaskPlan(state="done", run="t1", basis=basis_of(store.get_council(council.id)),
-                    steps=[], issues=[Issue(id="I1", title="Очередь", user_story="",
-                                            outcome_id="OUT-1")])
+    plan = TaskPlan(state="running", run="t1", basis=basis_of(store.get_council(council.id)),
+                    steps=[Step(name=StepName.task_plan, runs=[ModelRun(model="sol",
+                                                                        state="running")])])
+    store.update_council(council.id, {"tasks": plan})
+    planning = listed()[0]
+    assert planning["stages"]["tasks"] == "running"
+    assert planning["activity"] == [at_stage("tasks", "running", "sol режет итоги на задачи")]
+    assert planning["summary"] == "Задачи — модели режут итоги на задачи"
+
+    plan = plan.model_copy(update={"state": "done", "issues": [
+        Issue(id="I1", title="Очередь", user_story="", outcome_id="OUT-1")]})
     store.update_council(council.id, {"tasks": plan})
     planned = listed()[0]
+    assert planned["stages"]["tasks"] == "waiting"
     assert planned["activity"] == [at_stage("tasks", "waiting", "Запишите 1 задачу в каталог")]
     assert planned["summary"] == "1 задача ждёт записи"
 
@@ -527,11 +537,11 @@ def test_a_council_is_done_when_its_tasks_are_written(store, projects, repos):
     assert done["activity"] == []
     assert done["summary"] == "1 задача и 3 заметки записаны"
 
-    # Папку документации сменили: выгрузка потока — в прежнюю, «Документация» снова ждёт. Задачи
-    # записаны к тому же плану — они готовы.
+    # Папку документации сменили: выгрузка потока — в прежнюю, «Документация» снова ждёт, и
+    # «Задачи» не начаты, пока потоки снова не готовы.
     projects.update_project(project.id, {"notes": "other"})
     moved = listed()[0]
-    assert moved["stages"] == stages("done", "done", "done", "done", "waiting", "done")
+    assert moved["stages"] == stages("done", "done", "done", "done", "waiting", "idle")
     assert (moved["stage"], moved["state"]) == ("streams", "waiting")
     assert moved["activity"] == [at_step("A", "notes", "waiting", "Черновик заметок ждёт вас")]
 

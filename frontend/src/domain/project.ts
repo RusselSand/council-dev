@@ -4,12 +4,17 @@ export interface ProjectRef {
   name: string;
 }
 
-/** Проект: репозитории и папка документации, которые совет берёт по проекту. */
+/** Проект: репозитории, папка документации и папка задач, которые совет берёт по проекту. */
 export interface Project extends ProjectRef {
   /** Репозитории проекта — имена рабочих копий git, по порядку. */
   repos: string[];
-  /** Папка документации: сюда «Задачи» выгружают заметки. Пустая строка — папки нет. */
+  /** Папка документации: сюда «Документация» потоков выгружает заметки. Пустая строка — папки нет. */
   docs: string;
+  /**
+   * Папка задач: сюда «Записать в каталог» на «Задачах» пишет задачи (решение q-010 бекенда). Пустая строка — папки
+   * нет.
+   */
+  tasks: string;
   /** В скольких советах выбран проект; 0 — не используется, только такой проект можно удалить. */
   councilCount: number;
 }
@@ -19,6 +24,7 @@ export interface ProjectFields {
   name: string;
   repos: string[];
   docs: string;
+  tasks: string;
 }
 
 /** Сколько репозиториев можно отметить в проекте — «Не больше 10» в окне проекта макета. */
@@ -26,7 +32,9 @@ export const MAX_PROJECT_REPOS = 10;
 
 /** Поля окна проекта: у нового проекта пустые, у правки — как у проекта. */
 export const fieldsOf = (project?: Project): ProjectFields =>
-  project ? { name: project.name, repos: [...project.repos], docs: project.docs } : { name: '', repos: [], docs: '' };
+  project
+    ? { name: project.name, repos: [...project.repos], docs: project.docs, tasks: project.tasks }
+    : { name: '', repos: [], docs: '', tasks: '' };
 
 /** Отмечено столько репозиториев, сколько можно: остальные не отметить. */
 export const reposFull = (repos: string[]) => repos.length >= MAX_PROJECT_REPOS;
@@ -48,11 +56,12 @@ export const repoChoices = (available: string[], ...own: string[][]): string[] =
   ...new Set([...available, ...own.flat()]),
 ];
 
-/** Поля, как их сохраняет сервер: название и папка — без пробелов по краям. */
-export const cleanFields = ({ name, repos, docs }: ProjectFields): ProjectFields => ({
+/** Поля, как их сохраняет сервер: название и папки — без пробелов по краям. */
+export const cleanFields = ({ name, repos, docs, tasks }: ProjectFields): ProjectFields => ({
   name: name.trim(),
   repos,
   docs: docs.trim(),
+  tasks: tasks.trim(),
 });
 
 /** Проект можно сохранить: есть название — как в макете (saveProject) — и репозиториев не больше 10. */

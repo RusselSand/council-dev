@@ -1,15 +1,15 @@
+import type { TasksPlan } from '../../domain/tasks';
 import { source } from '../config';
-import type { CouncilTasks } from './stale';
-import { useQuery, type Query } from './useQuery';
+import type { Query } from './useQuery';
+import { useStageQuery } from './useStageQuery';
 
 /**
- * План задач совета — GET /api/councils/<id>/tasks: задачи готовых потоков, каталог задач, что уйдёт из каталога и
- * какие потоки ещё не дошли до итогов. Перезапрашивается после «Записать в каталог». Другой совет — до ответа плана нет
- * (data — undefined, loading).
+ * План задач совета — GET /api/councils/<id>/tasks: ход работы моделей, задачи, каталог задач, что уйдёт из каталога,
+ * каких потоков ещё ждут и почему план остановился. Перезапрашивается после «Записать в каталог» и «Запустить снова».
+ * Пока модели строят план или судья переводит задачи (running), план и список советов перезапрашиваются через 5 с после
+ * ответа на план; модели начали или кончили работу — до ответа на новый запрос плана нет (data — undefined). См.
+ * useStageQuery().
  */
-export function useCouncilTasks(id: string): Query<CouncilTasks> {
-  const query = useQuery(async () => ({ council: id, ...(await source.getTasks(id)) }), [id], 'tasks');
-  const { data, loading, error } = query;
-  const fresh = data?.council === id;
-  return { ...query, data: fresh ? data : undefined, loading: loading || (!fresh && error === undefined) };
+export function useCouncilTasks(id: string, running: boolean): Query<TasksPlan> {
+  return useStageQuery('tasks', () => source.getTasks(id), id, running);
 }

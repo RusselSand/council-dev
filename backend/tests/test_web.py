@@ -116,9 +116,11 @@ def test_a_crash_is_internal_and_tells_no_details(things):
     assert "секрет" not in res.text
 
 
-def test_old_handles_keep_their_errors_until_they_move():
-    assert client.post("/api/councils/missing/tasks/reset",
-                       json={"run": "g1", "revision": 0}).json() == {"detail": "Совет не найден"}
+def test_old_handles_are_gone():
+    """Старые ручки «Задач» ушли последними: такой ручки нет — not_found по контракту."""
+    for path in ("tasks", "tasks/reset", "tasks/draft", "tasks/write"):
+        res = client.post(f"/api/councils/missing/{path}", json={"run": "g1", "revision": 0})
+        assert error_of(res) == (404, "not_found")
 
 
 def test_the_api_describes_itself(things):

@@ -171,12 +171,14 @@ export interface DataSource {
   /** POST /api/councils/<id>/streams/<streamId>/notes/approve — «Записать в каталог»; ответ — поток. */
   approveNotes(id: string, streamId: string): Promise<Stream>;
   /**
-   * GET /api/councils/<id>/tasks — план задач совета: задачи готовых потоков, каталог задач, что уйдёт из каталога и
-   * какие потоки ещё не дошли до итогов.
+   * GET /api/councils/<id>/tasks — план задач совета: ход работы моделей, задачи, каталог задач, что уйдёт из каталога,
+   * какие потоки ещё не готовы и почему план остановился.
    */
   getTasks(id: string): Promise<TasksPlan>;
   /** POST /api/councils/<id>/tasks/approve — «Записать в каталог» задачи плана; ответ — совет. */
   approveTasks(id: string): Promise<CouncilSummary>;
+  /** POST /api/councils/<id>/tasks/retry — «Запустить снова» остановившийся план задач; ответ — совет. */
+  retryTasks(id: string): Promise<CouncilSummary>;
   /** GET /api/models */
   listModels(): Promise<Model[]>;
   /** GET /api/projects */

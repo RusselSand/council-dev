@@ -17,13 +17,15 @@ interface ProjectDialogProps {
 
 /**
  * Окно проекта — как в макете: «Новый проект» или «Проект» (правка). Название, репозитории галочками (не больше 10),
- * папка документации; «Отмена» и «Создать проект» / «Сохранить». Не вышло сохранить — ошибка над кнопками.
+ * папка документации и под ней — папка задач (в макете её нет, решение q-010 бекенда); «Отмена» и «Создать проект» /
+ * «Сохранить». Не вышло сохранить — ошибка над кнопками.
  */
 export function ProjectDialog({ project, onClose }: ProjectDialogProps) {
   const { t } = useI18n();
   const form = useProjectForm(project, onClose);
   const nameId = useId();
   const docsId = useId();
+  const tasksId = useId();
 
   const actions = (
     <>
@@ -69,6 +71,15 @@ export function ProjectDialog({ project, onClose }: ProjectDialogProps) {
           value={form.docs}
           onChange={form.setDocs}
           placeholder={t('project.dialog.docsPlaceholder')}
+        />
+      </Field>
+      <Field label={t('project.tasks')} htmlFor={tasksId} hint={t('project.dialog.tasksHint')}>
+        <TextInput
+          id={tasksId}
+          variant="mono"
+          value={form.tasks}
+          onChange={form.setTasks}
+          placeholder={t('project.dialog.tasksPlaceholder')}
         />
       </Field>
       <LoadState loading={false} error={form.error} />

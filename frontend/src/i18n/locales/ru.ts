@@ -68,7 +68,6 @@ export const ru = {
   'structure.failed.title': 'Раскладка остановилась',
   'structure.failed.text': '{reason} Повтор не платит второй раз за готовые ответы.',
   'structure.failed.retryNote': 'Повтор не платит второй раз за готовые ответы.',
-  'structure.failed.retry': 'Запустить снова',
   'structure.title': {
     one: 'ИИ предлагает {count} группу',
     few: 'ИИ предлагает {count} группы',
@@ -427,6 +426,13 @@ export const ru = {
   'notes.change.superseded': 'superseded → {id}',
   'notes.approve': 'Записать в каталог',
 
+  'tasks.running.title': 'Совет режет итоги на задачи',
+  'tasks.running.intro':
+    'Модели собирают задачи для coding agents из утверждённых итогов всех потоков. Если задачи пишутся не на том языке, на котором работает совет, судья их переводит.',
+  'tasks.phase.task_plan': 'Нарезка задач',
+  'tasks.phase.task_plan_judge': 'Судья задач',
+  'tasks.phase.task_translation': 'Перевод задач',
+  'tasks.failed.title': 'План задач остановился',
   'tasks.pending': 'Не все потоки готовы',
   'tasks.pending.ready': {
     one: 'Задачи готовы по потоку {streams}.',
@@ -464,10 +470,18 @@ export const ru = {
     many: '{count} задач · каталог {path} · язык: {language}',
     other: '{count} задачи · каталог {path} · язык: {language}',
   },
+  'tasks.write.noFolder': {
+    one: '{count} задача · Без папки',
+    few: '{count} задачи · Без папки',
+    many: '{count} задач · Без папки',
+    other: '{count} задачи · Без папки',
+  },
   'tasks.write.button': 'Записать в каталог',
 
   'progress.title': 'Ход работы',
   'progress.note': 'Участники работают по отдельности, судья решает там, где они разошлись.',
+
+  'failed.retry': 'Запустить снова',
 
   'label.idea': 'идея',
   'label.question': 'вопрос',
@@ -485,6 +499,7 @@ export const ru = {
   'project.newButton': '+ Новый проект',
   'project.repos': 'Репозитории',
   'project.docs': 'Папка документации',
+  'project.tasks': 'Папка задач',
 
   'project.dialog.titleNew': 'Новый проект',
   'project.dialog.titleEdit': 'Проект',
@@ -494,6 +509,9 @@ export const ru = {
   'project.dialog.docsPlaceholder': 'путь от COUNCIL_REPOS, например project/docs/reasoning',
   'project.dialog.docsHint':
     'Сюда этап «Задачи» выгружает заметки, отсюда «Решения проекта» берут прошлые решения. Пусто — без папки.',
+  'project.dialog.tasksPlaceholder': 'путь от COUNCIL_REPOS, например project/docs/tasks',
+  'project.dialog.tasksHint':
+    'Сюда «Записать в каталог» на «Задачах» пишет задачи — файлом на задачу. Не внутри папки документации. Пусто — без папки.',
   'project.dialog.create': 'Создать проект',
   'project.dialog.save': 'Сохранить',
 
@@ -582,7 +600,8 @@ export const ru = {
   'error.outcome_blocked': 'Итог заблокирован — ему не хватает решения, утверждать нечего. Итоги обновлены.',
   'error.notes_not_ready':
     'Поток сейчас не записать: шаг «Документация» ещё не начат или ИИ ещё не перевёл заметки. Поток обновлён.',
-  'error.tasks_not_ready': 'Записывать пока нечего: ни один поток ещё не дошёл до итогов. Задачи обновлены.',
+  'error.tasks_not_ready':
+    'Задачи сейчас не записать: не все потоки готовы, ИИ ещё строит или переводит план, или план остановился. Задачи обновлены.',
   'error.network': 'Нет связи с сервером. Проверьте сеть и попробуйте ещё раз.',
   'error.unknown': 'Что-то пошло не так. Попробуйте ещё раз.',
   'error.not_saved': 'Не всё сохранилось — шаг не утверждён. Проверьте правки и попробуйте ещё раз.',

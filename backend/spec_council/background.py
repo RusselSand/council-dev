@@ -1,5 +1,5 @@
 """Ходы совета в фоне: где ход лежит в совете, его отчёт, отдача в пул и остановка. Общее для
-старых ручек (api/) и нового API (web/): новый слой от старого не зависит."""
+ручек API (web/) и цепочек шагов (chain.py, stream_notes.py, council_tasks.py)."""
 
 from collections.abc import Callable
 from dataclasses import dataclass

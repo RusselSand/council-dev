@@ -65,7 +65,6 @@ export const en = translation({
   'structure.failed.title': 'Grouping stopped',
   'structure.failed.text': '{reason} A retry doesn’t pay twice for answers that are ready.',
   'structure.failed.retryNote': 'A retry doesn’t pay twice for answers that are ready.',
-  'structure.failed.retry': 'Run again',
   'structure.title': { one: 'AI proposes {count} group', other: 'AI proposes {count} groups' },
   'structure.intro': 'Only your fragments — nothing added. Once confirmed, each group becomes a stream.',
   'structure.titleInput': 'Name of group {id}',
@@ -400,6 +399,13 @@ export const en = translation({
   'notes.change.superseded': 'superseded → {id}',
   'notes.approve': 'Write to catalog',
 
+  'tasks.running.title': 'The council is slicing the outcomes into tasks',
+  'tasks.running.intro':
+    'The models build tasks for coding agents from the approved outcomes of all streams. If the tasks are written in a language other than the council’s, the judge translates them.',
+  'tasks.phase.task_plan': 'Task slicing',
+  'tasks.phase.task_plan_judge': 'Tasks judge',
+  'tasks.phase.task_translation': 'Tasks translation',
+  'tasks.failed.title': 'Task plan stopped',
   'tasks.pending': 'Not all streams are ready',
   'tasks.pending.ready': {
     one: 'Tasks are ready for stream {streams}.',
@@ -431,10 +437,13 @@ export const en = translation({
     one: '{count} task · catalog {path} · language: {language}',
     other: '{count} tasks · catalog {path} · language: {language}',
   },
+  'tasks.write.noFolder': { one: '{count} task · No folder', other: '{count} tasks · No folder' },
   'tasks.write.button': 'Write to catalog',
 
   'progress.title': 'Progress',
   'progress.note': 'Members work separately; the judge decides where they disagree.',
+
+  'failed.retry': 'Run again',
 
   'label.idea': 'idea',
   'label.question': 'question',
@@ -452,6 +461,7 @@ export const en = translation({
   'project.newButton': '+ New project',
   'project.repos': 'Repositories',
   'project.docs': 'Documentation folder',
+  'project.tasks': 'Tasks folder',
 
   'project.dialog.titleNew': 'New project',
   'project.dialog.titleEdit': 'Project',
@@ -461,6 +471,9 @@ export const en = translation({
   'project.dialog.docsPlaceholder': 'path from COUNCIL_REPOS, e.g. project/docs/reasoning',
   'project.dialog.docsHint':
     'The “Tasks” stage exports notes here, and “Project decisions” takes past decisions from here. Empty — no folder.',
+  'project.dialog.tasksPlaceholder': 'path from COUNCIL_REPOS, e.g. project/docs/tasks',
+  'project.dialog.tasksHint':
+    '“Write to catalog” on “Tasks” writes the tasks here, one file per task. Not inside the documentation folder. Empty — no folder.',
   'project.dialog.create': 'Create project',
   'project.dialog.save': 'Save',
 
@@ -544,7 +557,8 @@ export const en = translation({
   'error.outcome_blocked': 'The outcome is blocked — it lacks a decision, so there’s nothing to approve. Outcomes are updated.',
   'error.notes_not_ready':
     'The stream can’t be written now: the Documentation step hasn’t started or the AI hasn’t translated the notes yet. The stream is updated.',
-  'error.tasks_not_ready': 'Nothing to write yet: no stream has reached its outcomes. Tasks are updated.',
+  'error.tasks_not_ready':
+    'The tasks can’t be written now: not all streams are ready, the AI is still building or translating the plan, or the plan stopped. Tasks are updated.',
   'error.network': 'No connection to the server. Check your network and try again.',
   'error.unknown': 'Something went wrong. Please try again.',
   'error.not_saved': 'Not everything was saved, so the step wasn’t approved. Check your edits and try again.',
