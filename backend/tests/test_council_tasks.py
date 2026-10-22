@@ -25,6 +25,7 @@ from spec_council.pipeline import ModelFailed
 from spec_council.repository import STALE_MAP
 from spec_council.web import notes as web_notes
 from spec_council.web import tasks as web_tasks
+from spec_council.web.councils import context_of
 from tests.test_streams import (
     ALL_DECIDED,
     LABELS,
@@ -471,6 +472,32 @@ def test_only_approved_outcomes_go_into_the_plan_and_one_approved_later_plans_ag
     plan = council(council_id).tasks
     assert plan.run != first.run and [issue.outcome_id for issue in plan.issues] == ["OUT-0001"]
     assert plan_of(council_id)["tasks"] == [TASK_I1]
+
+
+def test_an_outcome_approved_while_the_plan_runs_plans_again(agents, base, monkeypatch):
+    """Итог утвердили, пока модели ещё строят план без него: тот ход останавливают, и модели
+    строят план заново, с итогом, — а не ждут, пока прежний план кончится устаревшим."""
+    council_id = single()
+    free_c(council_id)
+    path = f"/api/councils/{council_id}/streams/C/outcomes"
+    run = client.get(path).json()["run"]
+    assert client.post(f"{path}/approve", json={"run": run}).status_code == 200
+    written_notes(council_id)
+    first = council(council_id).tasks
+    get_store().update_council(council_id, {"tasks": first.model_copy(update={"state": "running"})})
+    halted = []
+    monkeypatch.setattr(council_tasks, "halt", halted.append)
+
+    assert client.post(f"{path}/O1/approve", json={"run": run}).status_code == 200
+    assert halted == [first.run]
+    plan = council(council_id).tasks
+    assert plan.run != first.run and plan.state == "done", plan.error
+    assert [issue.outcome_id for issue in plan.issues] == ["OUT-0001"]
+    assert tasks_of(council_id)["stages"]["tasks"] == "waiting"
+    # Отчёт прежнего хода, который остановили, на место нового не ложится.
+    context = context_of(get_store(), agents, lambda job: job(), get_projects(), base)
+    council_tasks.plan_report(council_id, context)(first)
+    assert council(council_id).tasks.run == plan.run
 
 
 def test_a_stream_written_before_note_numbers_were_kept_stops_the_plan(agents, base):

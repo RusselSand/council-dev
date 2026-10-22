@@ -26,7 +26,7 @@ from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
-from .background import Slot, launched, reporter
+from .background import Slot, halt, launched, reporter, running
 from .chain import resumed
 from .deps import Launcher
 from .export import (
@@ -132,23 +132,29 @@ DRAFTING = council_slot("tasks_draft")
 def begun(council: Council, context: Context) -> TasksLaunch | None:
     """План начинают, когда пора (standing.streams_ready) и у проекта есть папка документации —
     без неё потоки не в заметках, и план строить не из чего, — а плана к нынешним потокам и
-    исследованию нет и его не строят. Иначе — None."""
+    исследованию нет: ни готового, ни того, что строят. План к прежним ещё строят — новый встаёт
+    на его место (plan_begun). Иначе — None."""
     folders = context.folders(council)
     if folders.notes is None or not streams_ready(council, folders.notes):
         return None
     plan = council.tasks
-    if plan is not None and (plan.state == "running" or plan.basis == basis_of(council)):
+    if plan is not None and plan.basis == basis_of(council):
         return None
     return planning(council, folders, context)
 
 
 def plan_begun(council: Council, context: Context) -> tuple[Council, TasksLaunch | None]:
-    """Совет после действия, которое могло сделать готовыми все потоки, — «Записать в каталог» на
-    «Документации», «К потокам →»: пора — с ходом плана (begun), его отдают в пул после замка (go).
-    Только под замком советов. Начинать нечего — совет как есть."""
+    """Совет после действия, которое могло сделать готовыми все потоки или поменять то, что план
+    читал, — «Записать в каталог» на «Документации», «К потокам →», «Утвердить → дальше» итога:
+    пора — с ходом плана (begun), его отдают в пул после замка (go). Модели ещё строят план к
+    прежнему или судья переводит его задачи — тот ход останавливают: его отчёт уже не ляжет, а
+    модели зря работали бы дальше. Только под замком советов. Начинать нечего — совет как есть."""
     start = begun(council, context)
     if start is None:
         return council, None
+    for state in (council.tasks, council.tasks_draft):
+        if running(state):
+            halt(state.run)
     return context.store.update_council(council.id, start.changes) or council, start
 
 
