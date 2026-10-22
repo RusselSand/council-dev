@@ -238,15 +238,6 @@ def known_decisions(stream: Stream) -> list[Decision]:
     return known
 
 
-def saved_outcomes_of(stream: Stream) -> list[Outcome]:
-    """Прежние итоги, которые останутся, если решения не поменяются: те, что закрепятся при новой
-    сборке. Пока поток до неё не дошёл (итогов нет) — их видно на шаге «Итоги»; дошёл — шаг
-    показывает свою сборку, а в ней они с самого начала."""
-    if stream.outcomes is not None or stream.scope is None:
-        return []
-    return kept_outcomes(stream, stream.scope, known_decisions(stream))
-
-
 def with_kept(stream: Stream) -> Stream:
     """Поток, сохранённый, пока сборка начиналась пустой (только номера закреплённых):
     незаконченная получает закреплённые итоги, как теперь начинается любая, — иначе их не видно,

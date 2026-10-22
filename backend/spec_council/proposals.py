@@ -152,9 +152,3 @@ def found_by_question(search: ProposalDiscovery | None,
             found.setdefault(choice.question_id, []).append(
                 Proposal(id=choice.proposal, text=choice.text, reason="", source="added"))
     return found
-
-
-def last_number(search: ProposalDiscovery | None) -> int:
-    """Последний номер варианта, найденного советом: свои варианты человека — дальше."""
-    return max((int(proposal.id[1:]) for options in (search.options if search else [])
-                for proposal in options.proposals if proposal.id[1:].isdigit()), default=0)

@@ -4,7 +4,7 @@ from datetime import datetime
 from enum import StrEnum
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, computed_field, model_validator
+from pydantic import BaseModel, ConfigDict, model_validator
 
 
 class CouncilStatus(StrEnum):
@@ -219,13 +219,6 @@ class Structure(BaseModel):
     # Группы потоков по их буквам, какими они были до первого объединения или разделения групп:
     # правки групп потоки не меняют (решение q-002). Буквы нет — группа потока в groups.
     stream_groups: dict[str, Group] = {}
-
-    @computed_field
-    @property
-    def edited(self) -> bool:
-        """Человек менял группы: они не такие, как предложил совет."""
-        return self.proposal is not None and (
-            self.groups != self.proposal.groups or self.relations != self.proposal.relations)
 
 
 class StreamIdea(BaseModel):
@@ -1214,15 +1207,6 @@ class Stream(BaseModel):
     # документации: «Записать в каталог», а выгружать некуда. Пусто — так её не проходили.
     notes_nowhere: str = ""
 
-    # Сохранённое видно, пока поток до него не дошёл. Считается при отдаче, в файл не пишется
-    # (store: exclude_computed_fields). Импорт — здесь: work сам импортирует модели.
-    @computed_field
-    @property
-    def saved_outcomes(self) -> list[Outcome]:
-        """Прежние итоги, которые закрепятся, если решения не поменяются."""
-        from .work import saved_outcomes_of
-        return saved_outcomes_of(self)
-
 
 # Ходы потока по его цепочке: поиск идеи, копия исследования (её поля — не ходы, но так
 # правка идеи видит всё ниже), отбор решений проекта, поиск вопросов, вариантов, проверка
@@ -1326,34 +1310,6 @@ class Council(BaseModel):
     # состоянии — сначала тот, что менялся позже. Ставит хранилище (store.stamped). Потока здесь
     # нет — он не менялся с тех пор, как совет стал это помнить.
     streams_changed: dict[str, datetime] = {}
-
-
-class GroupsEdit(BaseModel):
-    """Правка готовых групп человеком: к какой раскладке (Structure.run) и какой версии её
-    групп (Structure.revision) она сделана."""
-
-    model_config = ConfigDict(extra="forbid")
-
-    run: str
-    revision: int
-
-
-class MergeGroups(GroupsEdit):
-    # Где нажали «Объединить с…»: её буква и название остаются.
-    group: str
-    other: str
-
-
-class SplitGroup(GroupsEdit):
-    group: str
-    # Что уходит в новую группу; остальное остаётся.
-    fragment_ids: list[int]
-    title: str
-
-
-class RenameGroup(GroupsEdit):
-    group: str
-    title: str
 
 
 # Сколько рабочих копий можно сканировать разом: у каждой свои вызовы git. Столько же их и у

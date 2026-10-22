@@ -1,7 +1,8 @@
 """Раздача собранного фронта (`npm run build`).
 
-Нужна только в сборке «один контейнер»: в разработке фронт отдаёт vite,
-сборки нет — и приложение поднимается без неё.
+Нужна только в «одном процессе» — локально или в одном контейнере: в разработке фронт отдаёт
+vite, сборки нет — и приложение поднимается без неё. Собранный фронт ходит в /api этого же
+сервера.
 """
 
 from pathlib import Path
@@ -22,17 +23,17 @@ _CANDIDATES = (
 STATIC = next((p for p in _CANDIDATES if (p / "index.html").exists()), _CANDIDATES[-1])
 
 
-def mount_spa(app: FastAPI, *, api_prefix: str) -> None:
+def mount_spa(app: FastAPI, *, api_prefix: str, static: Path = STATIC) -> None:
     """Любой не-API путь отдаёт index.html, чтобы работали прямые ссылки на страницы SPA.
 
     Вызывать последним: catch-all перехватит всё, что зарегистрировано после него.
     """
-    index = STATIC / "index.html"
+    index = static / "index.html"
     if not index.exists():  # фронт не собран
         return
 
-    if (STATIC / "assets").is_dir():  # нет после прерванной сборки — не падаем на старте
-        app.mount("/assets", StaticFiles(directory=STATIC / "assets"), name="assets")
+    if (static / "assets").is_dir():  # нет после прерванной сборки — не падаем на старте
+        app.mount("/assets", StaticFiles(directory=static / "assets"), name="assets")
 
     api_root = api_prefix.strip("/")
 

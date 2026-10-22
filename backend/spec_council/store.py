@@ -171,10 +171,7 @@ class FileStore(InMemoryStore):
         super().__init__(sorted(councils, key=lambda council: council.updated_at))
 
     def _keep(self, council: Council) -> None:
-        # Вычисляемое (сохранённые итоги потока, правлены ли группы) считается при отдаче заново:
-        # в файл — только то, из чего его считают.
-        kept(self._folder, council.id,
-             council.model_dump_json(indent=2, exclude_computed_fields=True))
+        kept(self._folder, council.id, council.model_dump_json(indent=2))
 
 
 def stamped(council: Council, changes: dict[str, Any], now: datetime) -> dict[str, Any]:
