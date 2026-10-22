@@ -113,7 +113,7 @@ def approved(stream: Stream) -> Stream:
     return stream.model_copy(update={
         **stored(stream, own_of(stream), dropped_of(stream)), "scope": scope,
         "asked": max([stream.asked, *(number(question.id) for question in scope)]),
-        "choices": None, "analysis": None, "decisions": None, "outcomes": None,
+        "choices": None, "analysis": None, "rulings": None, "decisions": None, "outcomes": None,
         "earlier": kept_work(stream), **remembered(stream)})
 
 

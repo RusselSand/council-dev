@@ -15,6 +15,7 @@ from spec_council.groups import marked
 from spec_council.models import (
     Choice,
     Decision,
+    DecisionAnalysis,
     DesignStep,
     Group,
     LabeledFragment,
@@ -25,6 +26,7 @@ from spec_council.models import (
     ProjectDecision,
     Proposal,
     ProposalDiscovery,
+    QuestionAnalysis,
     QuestionDiscovery,
     QuestionOptions,
     RepositoryStep,
@@ -517,6 +519,9 @@ def test_done_steps_tell_what_was_taken_and_the_notes_wait_for_the_human(store):
             question_id="Q1", verdict="recommended",
             proposals=[Proposal(id="P1", text="Считать долю отвеченных", reason="")])]),
         choices=[Choice(question_id="Q1", proposal="P1"), Choice(question_id="Q2")],
+        analysis=DecisionAnalysis(state="done", steps=[], analyses=[
+            QuestionAnalysis(question_id="Q1", verdict="validated", proposal="P1"),
+            QuestionAnalysis(question_id="Q2", verdict="none")]),
         decisions=[Decision(question_id="Q1", proposal="P1", rationale="Так проще."),
                    Decision(question_id="Q2")],
         outcomes=OutcomeDiscovery(state="done", steps=[], outcomes=[outcome], approved=True))

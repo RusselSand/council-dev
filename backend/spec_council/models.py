@@ -828,6 +828,19 @@ class Decision(BaseModel):
     rationale_by: Literal["ai", "human"] | None = None
 
 
+class Ruling(BaseModel):
+    """Решение по вопросу на шаге «Решения», как оно на экране: какой вариант берёт (option —
+    Fn или Pn; None — вопрос передан как unresolved, и варианта нет), «почему» как его прислали,
+    кто его написал (ai — совет, human — человек его поправил) и где решение: draft — черновик,
+    fixed — зафиксировано, open — вопрос оставлен открытым."""
+
+    question_id: str
+    option: str | None = None
+    rationale: str = ""
+    rationale_by: Literal["ai", "human"] = "ai"
+    status: Literal["draft", "fixed", "open"] = "draft"
+
+
 class QuestionWork(BaseModel):
     """Что сделано по вопросу отбора: выбор человека, проверка этого выбора советом и решение по
     нему. Отбор или выбор поправили — всё по тому же вопросу (тот же номер и формулировка, key)
@@ -1126,6 +1139,12 @@ class Stream(BaseModel):
     # на готовом шаге его не меняет (picks).
     choices: list[Choice] | None = None
     analysis: DecisionAnalysis | None = None
+    # Шаг «Решения» (stream_decisions.py): решение по каждому вопросу, как оно на экране, — и до
+    # «Зафиксировать решения», и после. None — их ещё не записывали; поток прежней версии помнит
+    # их только зафиксированными (decisions).
+    rulings: list[Ruling] | None = None
+    # Решения, зафиксированные «Зафиксировать решения»: из них модели собирают итоги. Правка
+    # решений на готовом шаге их не меняет (rulings).
     decisions: list[Decision] | None = None
     # Работа по вопросам до последней правки отбора или выбора: по тем же вопросам и тому же
     # выбору она переносится, а не делается заново.
@@ -1280,25 +1299,6 @@ class RenameGroup(GroupsEdit):
 # Сколько рабочих копий можно сканировать разом: у каждой свои вызовы git. Столько же их и у
 # проекта.
 REPOSITORIES_MAX = 10
-
-
-class DecisionDraft(BaseModel):
-    """Решение по вопросу, как его фиксирует человек: вариант и обоснование, или None —
-    вопрос остаётся открытым, и обоснование тогда не нужно."""
-
-    model_config = ConfigDict(extra="forbid")
-
-    question_id: str
-    proposal: str | None = None
-    rationale: str | None = None
-
-
-class ApproveDecisions(GroupsEdit):
-    """Человек фиксирует решения: по каждому отобранному вопросу — вариант с обоснованием или
-    открытый вопрос. analysis_run — к какой проверке выбора (DecisionAnalysis.run)."""
-
-    analysis_run: str
-    decisions: list[DecisionDraft]
 
 
 class ApproveOutcomes(GroupsEdit):

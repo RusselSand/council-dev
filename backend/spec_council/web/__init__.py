@@ -10,6 +10,7 @@ from fastapi import APIRouter, FastAPI
 from . import (
     brief,
     councils,
+    decisions,
     errors,
     models,
     options,
@@ -26,7 +27,7 @@ from . import (
 API_PREFIX = "/api"
 
 MODULES = (councils, brief, slicing, structure, research, streams, project_decisions, questions,
-           options, models, projects, repos)
+           options, decisions, models, projects, repos)
 
 router = APIRouter(prefix=API_PREFIX)
 for module in MODULES:
