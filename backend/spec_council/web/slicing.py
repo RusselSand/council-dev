@@ -7,7 +7,8 @@
 правка совета (поля labels и slicing_run). По контракту текст может быть пустым, модели —
 любыми; модель без входа не справляется с нарезкой в её ходе. Проверяется одно (решение q-001):
 новая нарезка стирает группы и потоки, поэтому, пока модели работают на группах, исследовании,
-потоках или задачах, она не запускается — их работа пропала бы.
+потоках или задачах, она не запускается — их работа пропала бы. Утверждение исследования она
+снимает (решение q-003 бекенда): без него новые группы потоками не стали бы.
 """
 
 from typing import Literal
@@ -34,6 +35,16 @@ JUDGES = (StepName.slice_judge, StepName.label_judge)
 # Что новая нарезка стирает: группы, их подтверждение и потоки были про прежние фрагменты
 # (docs/old/arch.md, «Группы»), а у новых фрагментов те же номера. Решение q-001.
 RESLICED = {"structure": None, "groups_confirmed": False, "streams": None}
+
+
+def unapproved(council: Council) -> dict:
+    """Исследование после новой нарезки: находки и решения по ним остаются, а утверждение
+    снимается — «К потокам →» нажимают снова, и новые группы становятся потоками (решение
+    q-003 бекенда)."""
+    research = council.research
+    if research is None or not research.approved:
+        return {}
+    return {"research": research.model_copy(update={"approved": False})}
 
 
 class SlicingStep(Schema):
@@ -101,7 +112,7 @@ def start_slicing(council_id: str, store: StoreDep, agents: AgentsDep, launch: L
                                   council.judge, agents, report)
             council = store.update_council(council_id, {
                 "slicing": pipeline.state.model_copy(deep=True),
-                "status": CouncilStatus.slices, **RESLICED}) or council
+                "status": CouncilStatus.slices, **RESLICED, **unapproved(council)}) or council
     if pipeline is not None and not launched(launch, pipeline, report):
         raise ApiError(500, "internal", "Сервер останавливается — нарезка не запущена")
     return CouncilAnswer(council=shown(council, projects, repositories))

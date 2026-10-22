@@ -16,7 +16,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Literal
 
-from .groups import confirmed
+from .groups import confirmed, without_idea
 from .models import (
     Council,
     DecisionAnalysis,
@@ -364,6 +364,9 @@ def research_waiting(council: Council) -> str:
                     " вашего решения — выводы и противоречия.")
         if not confirmed(council):
             return "Подтвердите группы — потом они станут потоками."
+        missing = without_idea(council)
+        if missing:
+            return idea_wanted(missing)
         return "Утвердите исследование — потом группы станут потоками."
     halted = [what for what, scan, block in (("кода", research.scan, blocks[0]),
                                              ("макета", research.design_scan, blocks[1]))
@@ -373,6 +376,16 @@ def research_waiting(council: Council) -> str:
     if halted:
         return f"Исследование {halted[0]} остановилось — начните его снова или пропустите."
     return "Начните или пропустите оба исследования — потом группы станут потоками."
+
+
+def idea_wanted(groups: list[str]) -> str:
+    """«У группы B нет идеи — …»: пока у группы нет идеи, исследование не утвердить (решение
+    q-002 бекенда)."""
+    if len(groups) == 1:
+        return (f"У группы {groups[0]} нет идеи — дождитесь, пока ИИ её найдёт, или впишите её "
+                "на «Группах».")
+    return (f"У групп {named(groups)} нет идеи — дождитесь, пока ИИ их найдёт, или впишите их "
+            "на «Группах».")
 
 
 def tasks_waiting(council: Council) -> str:

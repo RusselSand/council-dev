@@ -38,7 +38,7 @@ from spec_council.models import (
     StepName,
     Structure,
 )
-from spec_council.pipeline import ModelFailed
+from spec_council.pipeline import ModelFailed, start_idea
 from spec_council.projects import Projects
 from spec_council.repository import inventory
 from spec_council.research import QUESTION, decided
@@ -793,6 +793,78 @@ def test_approved_research_makes_every_group_a_stream(store, projects, pool):
     # Уже утверждено — ничего не меняется.
     again = approves(council_id)
     assert again.status_code == 200 and again.json()["council"] == council
+
+
+NO_IDEA = {"idea": None, "idea_by": None, "idea_fragment_ids": [], "missing_idea": True}
+
+
+def without_ideas(**groups) -> Structure:
+    """Раскладка GROUPED, где у названных групп нет идеи: ни в тексте, ни от человека; что с
+    поиском идеи — значение."""
+    return GROUPED.model_copy(update={"groups": [
+        group.model_copy(update={**NO_IDEA, "discovery": groups[group.id]})
+        if group.id in groups else group for group in GROUPED.groups]})
+
+
+def test_research_is_not_approved_while_a_group_has_no_idea(store, projects, pool):
+    """Решение q-002 бекенда: у группы нет идеи — ИИ её ещё ищет, не нашёл или не искал, — поток
+    пошёл бы без неё. Идею вписали на «Группах» — утверждается, и поток идёт с ней."""
+    council_id = confirmed(store, projects, structure=without_ideas(
+        A=start_idea(["sol", "fable"], "fable"),
+        B=start_idea(["sol", "fable"], "fable").model_copy(update={"state": "failed"})))
+    acts(council_id, "code", "skip")
+    acts(council_id, "design", "skip")
+    assert listed(council_id)["activity"] == [at_stage(
+        "research", "waiting", "У групп A и B нет идеи — дождитесь, пока ИИ их найдёт, или "
+        "впишите их на «Группах».")]
+    assert error_of(approves(council_id)) == (409, "research_not_ready")
+
+    def writes(group, idea):
+        assert client.patch(f"/api/councils/{council_id}/groups/{group}",
+                            json={"idea": idea}).status_code == 200
+
+    writes("A", "Заявка уходит сама.")
+    writes("B", "  ")                                     # одни пробелы — не идея
+    assert listed(council_id)["activity"] == [at_stage(
+        "research", "waiting", "У группы B нет идеи — дождитесь, пока ИИ её найдёт, или впишите "
+        "её на «Группах».")]
+    assert error_of(approves(council_id)) == (409, "research_not_ready")
+    assert store.get_council(council_id).streams is None
+    writes("B", IDEA_B)
+    assert approves(council_id).status_code == 200
+    a, b = store.get_council(council_id).streams
+    assert (a.idea.text, a.idea.by, b.idea.text, b.idea.by) == (
+        "Заявка уходит сама.", "human", IDEA_B, "human")
+
+
+def test_slicing_again_takes_the_approval_back_and_it_makes_the_new_groups_streams(
+        store, projects, pool):
+    """Решение q-003 бекенда: новая нарезка снимает утверждение, находки и решения по ним
+    остаются; новые группы подтвердили — «К потокам →» снова, и они становятся потоками."""
+    council_id = confirmed(store, projects)
+    researched_code(council_id, pool)
+    acts(council_id, "design", "skip")
+    decides(council_id, "R2", "accept")
+    decides(council_id, "C1", "text")
+    assert approves(council_id).status_code == 200
+    def decisions():
+        return [(one["id"], one["decision"]) for one in research_of(council_id)["findings"]]
+
+    kept = decisions()
+    assert client.post(f"/api/councils/{council_id}/slicing", json={}).status_code == 200
+    council = listed(council_id)
+    assert (council["stages"]["research"], council["streams"]) == ("waiting", [])
+    assert decisions() == kept
+    assert error_of(approves(council_id)) == (409, "research_not_ready")   # групп нет
+
+    # Модели нарезали и разложили заново, человек подтвердил группы.
+    store.update_council(council_id, {"slicing": SLICED, "structure": GROUPED,
+                                      "groups_confirmed": True})
+    council = approves(council_id).json()["council"]
+    assert council["stages"]["research"] == "done"
+    assert council["streams"] == [{"id": "A", "step": "project"}, {"id": "B", "step": "project"}]
+    assert store.get_council(council_id).streams[1].scan.decisions == {"R2": "accept",
+                                                                       "C1": "text"}
 
 
 def test_an_action_takes_the_approval_back_but_leaves_the_streams(store, projects, pool):

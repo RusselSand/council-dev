@@ -340,16 +340,22 @@ def test_slicing_again_drops_the_groups_and_streams_of_the_old_fragments(store, 
     assert stored.brief == TEXT
 
 
-def test_slicing_again_keeps_the_research(store, pool):
-    # Исследование — не про фрагменты: утверждённое остаётся готовым.
+def test_slicing_again_keeps_the_research_but_not_its_approval(store, pool):
+    # Исследование — не про фрагменты: оно остаётся, а утверждение снимается — новые группы
+    # станут потоками, когда его утвердят снова (решение q-003 бекенда).
     council_id = sliced(store, pool)
     research = Research(repository=RepositoryStep(by="skipped"), design=DesignStep(by="skipped"))
+    assert research.approved
     grouped(store, council_id, research=research)
     council = slices(council_id).json()["council"]
-    assert council["stages"] == dict(zip(STAGES, ("done", "running", "idle", "done", "idle",
+    assert council["stages"] == dict(zip(STAGES, ("done", "running", "idle", "waiting", "idle",
                                                   "idle"), strict=True))
-    assert council["activity"] == [SLICES_RUNNING]
-    assert store.get_council(council_id).research == research
+    assert council["activity"] == [
+        {"stage": "research", "stream": None, "step": None, "state": "waiting",
+         "text": "Подтвердите группы — потом они станут потоками."},
+        SLICES_RUNNING]
+    assert store.get_council(council_id).research == research.model_copy(
+        update={"approved": False})
 
 
 def test_slicing_again_leaves_a_started_research_waiting(store, pool):

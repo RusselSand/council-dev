@@ -59,5 +59,12 @@ export interface GroupFields {
   idea?: string;
 }
 
+/**
+ * id групп без идеи, по порядку: идея пустая или из одних пробелов — ИИ её ещё ищет или не нашёл, а человек не вписал.
+ * Пока такие есть, исследование не утвердить (решение q-002 бекенда).
+ */
+export const withoutIdea = (groups: readonly Group[]): string[] =>
+  groups.filter((group) => group.idea.trim() === '').map((group) => group.id);
+
 /** В новую группу можно вынести часть фрагментов группы: хотя бы один, но не все. */
 export const canSplit = (selected: number, total: number): boolean => selected > 0 && selected < total;

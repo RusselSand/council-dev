@@ -27,6 +27,7 @@ import {
   type ResearchState,
 } from '../../domain/research';
 import type { RunState } from '../../domain/run';
+import { withoutIdea } from '../../domain/structure';
 import { useI18n, type Translate } from '../../i18n';
 import { councilRoute, navigate, routePath } from '../../router';
 import type { DotTone } from '../../ui/Dot';
@@ -244,18 +245,28 @@ function choiceLabel(finding: Finding, decision: Decision, t: Translate): string
  * «Пропустить», «Начать исследование»), идёт («Остановить»), готово («Изменить и перезапустить»), пропущено («Вернуть
  * исследование»). Отметки репозиториев и ссылку человек меняет на экране; на сервер они уходят с «Начать исследование».
  * Находки — по группам, с фильтром; решение по находке сохраняется сразу. «К потокам →» доступна, когда оба
- * исследования кончились, находок, которые ждут решения, нет и группы подтверждены (решение q-002); сначала
- * дожидается решений, которые ещё идут, потом
+ * исследования кончились, находок, которые ждут решения, нет, группы подтверждены (решение q-002) и у каждой есть
+ * идея (решение q-002 бекенда: пока её нет, раскладка опрашивается); сначала дожидается решений, которые ещё идут, потом
  * утверждает исследование и открывает «Потоки». Ушли с экрана, пока исследование утверждалось, — «Потоки»
  * не открываются. Уже утверждено — кнопка просто открывает «Потоки».
  */
 export function useResearch(council: CouncilSummary): ResearchScreen {
-  const { t, formatNumber } = useI18n();
+  const { t, formatNumber, formatList } = useI18n();
   const query = useCouncilResearch(council.id, council.stages.research === 'running');
-  const structure = useCouncilStructure(council.id, council.stages.structure === 'running');
   const research = query.data ?? EMPTY;
   const { code, design, findings } = research;
   const decisions = useFindingDecisions(council.id, findings.map((f) => f.id).join(' '));
+  const decisionOf = (finding: Finding) => decisions.pending[finding.id] ?? finding.decision;
+  const pendingCount = findings.filter((f) => isPending(f.kind, decisionOf(f))).length;
+  const groupsConfirmed = council.stages.structure === 'done';
+  const approved = council.stages.research === 'done';
+  // Утвердить мешают только идеи групп, если их нет: пока у группы нет идеи, раскладка опрашивается — ИИ найдёт идею,
+  // и «К потокам →» станет доступна.
+  const awaitsIdeas =
+    !approved && researchStatus(code.state, design.state, pendingCount, groupsConfirmed, true) === 'ideas';
+  const structure = useCouncilStructure(council.id, council.stages.structure === 'running', awaitsIdeas);
+  const noIdea = awaitsIdeas ? withoutIdea(structure.data?.groups ?? []) : [];
+  const status = researchStatus(code.state, design.state, pendingCount, groupsConfirmed, noIdea.length > 0);
   const codeAction = useResearchAction();
   const designAction = useResearchAction();
   const approveAction = useApproveResearch();
@@ -288,10 +299,6 @@ export function useResearch(council: CouncilSummary): ResearchScreen {
     };
   }, []);
 
-  const decisionOf = (finding: Finding) => decisions.pending[finding.id] ?? finding.decision;
-  const pendingCount = findings.filter((f) => isPending(f.kind, decisionOf(f))).length;
-  const status = researchStatus(code.state, design.state, pendingCount, council.stages.structure === 'done');
-  const approved = council.stages.research === 'done';
   const busy = codeAction.pending || designAction.pending;
 
   const run = (kind: ResearchKind, action: ResearchAction) => {
@@ -389,7 +396,9 @@ export function useResearch(council: CouncilSummary): ResearchScreen {
       ? t(`research.note.ready.${settledLabel(code.state)}.${settledLabel(design.state)}`)
       : status === 'pending'
         ? t('research.note.pending', { count: pendingCount })
-        : t(`research.note.${status}`);
+        : status === 'ideas'
+          ? t('research.note.ideas', { count: noIdea.length, groups: formatList(noIdea) })
+          : t(`research.note.${status}`);
   const coverageCount = (s: CoverageStatus) => research.coverage.filter((c) => c.status === s).length;
 
   return {

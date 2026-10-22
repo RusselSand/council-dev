@@ -38,7 +38,7 @@ from ..deps import (
     StoreDep,
 )
 from ..figma import FigmaError, Tokenless, links_of
-from ..groups import IdeaBy, fragments_in, idea_of
+from ..groups import IdeaBy, fragments_in, idea_of, without_idea
 from ..models import (
     Council,
     DesignScan,
@@ -341,10 +341,10 @@ def decide(council_id: str, finding_id: str, fields: FindingFields,
 @router.post("/councils/{council_id}/research/approve")
 def approve(council_id: str, store: StoreDep, projects: ProjectsDep,
             repositories: RepositoriesDep, body: Empty | None = None) -> CouncilAnswer:
-    """Утверждает исследование: оба готовы или пропущены, находок, что ждут решения, нет, и
-    группы подтверждены (решение q-002). Исследование становится взятым, и, если «Потоки» не
-    начаты, каждая группа — потоком со своей копией исследования. Уже утверждено — в ответ
-    совет как есть."""
+    """Утверждает исследование: оба готовы или пропущены, находок, что ждут решения, нет,
+    группы подтверждены (решение q-002) и у каждой есть идея (решение q-002 бекенда).
+    Исследование становится взятым, и, если «Потоки» не начаты, каждая группа — потоком со своей
+    копией исследования. Уже утверждено — в ответ совет как есть."""
     with council_lock:
         council = council_of(store, council_id)
         research = stored_of(council)
@@ -354,6 +354,10 @@ def approve(council_id: str, store: StoreDep, projects: ProjectsDep,
                 raise ApiError(409, "research_not_ready",
                                f"Исследование совета {council_id} не готово или группы не "
                                "подтверждены")
+            missing = without_idea(council)
+            if missing:
+                raise ApiError(409, "research_not_ready",
+                               f"У групп совета {council_id} нет идеи: {', '.join(missing)}")
             research = taken(research)
             changes: dict = {"research": research}
             if not shown_streams(council):

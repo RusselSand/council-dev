@@ -7,7 +7,7 @@ import { canAddQuestion, type Question } from '../../domain/questions';
 import { fitsKind, isFigmaLink, isPending, isSettled, researchStatus, type Research } from '../../domain/research';
 import { isLabel, type Slicing } from '../../domain/slicing';
 import { stepOf, type ProjectDecisions } from '../../domain/stream';
-import type { Structure } from '../../domain/structure';
+import { withoutIdea, type Structure } from '../../domain/structure';
 import type { TasksPlan } from '../../domain/tasks';
 import { ApiError } from '../errors';
 import type { DataSource } from '../source';
@@ -82,8 +82,8 @@ const structures = new Map(Object.entries(STRUCTURES).map(([id, structure]) => [
 /** Исследования по id совета: действия и решения по находкам меняют их здесь; у каждого совета — своя копия. */
 const researches = new Map(Object.entries(RESEARCHES).map(([id, research]) => [id, copy(research)]));
 /**
- * Советы, к исследованию которых приступали — начинали или пропускали хоть одно: новая нарезка оставляет его, каким
- * было. У остальных исследование ждало только подтверждённых групп.
+ * Советы, к исследованию которых приступали — начинали или пропускали хоть одно: новая нарезка оставляет его, но снимает
+ * утверждение (решение q-003 бекенда). У остальных исследование ждало только подтверждённых групп.
  */
 const researched = new Set(
   Object.entries(RESEARCHES)
@@ -194,8 +194,20 @@ function researchOf(id: string): Research {
 
 /** С исследованием что-то сделали: этап «Исследование» и совет — по исследованию, утверждение снимается. */
 function researchDone(index: number, research: Research) {
-  researched.add(councils[index].id);
-  councils[index] = researchChanged(councils[index], research, new Date().toISOString());
+  const { id } = councils[index];
+  researched.add(id);
+  const noIdea = withoutIdea(structureOf(id).groups);
+  councils[index] = researchChanged(councils[index], research, noIdea, new Date().toISOString());
+}
+
+/**
+ * Группы поправили: пока исследование ждёт человека, его строка на Сводке пишется заново — у группы могла появиться или
+ * пропасть идея (решение q-002 бекенда). Иначе — только время изменения.
+ */
+function groupsEdited(index: number) {
+  const { id, stages } = councils[index];
+  if (stages.research === 'waiting' && researched.has(id)) researchDone(index, researchOf(id));
+  else touch(index);
 }
 
 /** Номер потока в потоках совета; потока нет — not_found, как у сервера. */
@@ -604,21 +616,21 @@ export const mockSource: DataSource = {
       group.ideaBy = 'user';
     }
     structure.groups[at] = group;
-    touch(index);
+    groupsEdited(index);
     return copy(group);
   },
   async mergeGroup(id, groupId, into) {
     const index = councilAt(id);
     checkNotStructuring(councils[index]);
     structures.set(id, mergeGroups(structureOf(id), groupId, into));
-    touch(index);
+    groupsEdited(index);
     return copy(structureOf(id));
   },
   async splitGroup(id, groupId, fragmentIds, title) {
     const index = councilAt(id);
     checkNotStructuring(councils[index]);
     structures.set(id, splitGroup(structureOf(id), groupId, fragmentIds, title));
-    touch(index);
+    groupsEdited(index);
     return copy(structureOf(id));
   },
   async confirmStructure(id) {
@@ -717,11 +729,17 @@ export const mockSource: DataSource = {
     const { code, design, findings } = researchOf(id);
     const pending = findings.filter((f) => isPending(f.kind, f.decision)).length;
     const { stages } = councils[index];
-    const status = researchStatus(code.state, design.state, pending, stages.structure === 'done');
-    if (stages.research !== 'done' && status !== 'ready') {
-      throw new ApiError('research_not_ready', `Исследование совета ${id} не готово или группы не подтверждены`, 409);
-    }
     const { groups } = structureOf(id);
+    // Поток без идеи не начать: у каждой группы должна быть идея (решение q-002 бекенда).
+    const noIdea = withoutIdea(groups);
+    const status = researchStatus(code.state, design.state, pending, stages.structure === 'done', noIdea.length > 0);
+    if (stages.research !== 'done' && status !== 'ready') {
+      throw new ApiError(
+        'research_not_ready',
+        `Исследование совета ${id} не готово, группы не подтверждены или у групп нет идеи: ${noIdea.join(', ')}`,
+        409,
+      );
+    }
     const starting = stages.streams === 'idle';
     councils[index] = researchApproved(councils[index], groups.map((g) => g.id), new Date().toISOString());
     // «Потоки» не начаты — каждая группа становится потоком; прошлые решения — из папки документации проекта.

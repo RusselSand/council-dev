@@ -140,8 +140,9 @@ export function useConfirmStructure(): Mutation<[id: string], CouncilSummary> {
 
 /**
  * «К потокам →» — POST /api/councils/<id>/research/approve: утвердить исследование; ответ — совет после утверждения.
- * Он сразу встаёт в список советов на место старого: вкладки этапов, меню и Сводка видят потоки. Исследование успели
- * поменять в другой вкладке и оно не готово — исследование и список советов перезапрашиваются.
+ * Он сразу встаёт в список советов на место старого: вкладки этапов, меню и Сводка видят потоки. Исследование или
+ * группы успели поменять в другой вкладке и исследование не готово — исследование, раскладка и список советов
+ * перезапрашиваются.
  */
 export function useApproveResearch(): Mutation<[id: string], CouncilSummary> {
   return useMutation(
@@ -151,6 +152,7 @@ export function useApproveResearch(): Mutation<[id: string], CouncilSummary> {
       } catch (error) {
         if (error instanceof ApiError && error.code === 'research_not_ready') {
           markStale('research');
+          markStale('structure');
           markStale('councils');
         }
         throw error;
