@@ -12,7 +12,7 @@ x-paths: &paths
   COUNCIL_JUDGE: ${COUNCIL_JUDGE:-}
   COUNCIL_DATA: /data/councils
   COUNCIL_REPOS: /repos
-  # Токен Figma для скана макета (шаг «Дизайн»): только file_content:read, см. README.
+  # Токен Figma для «Исследования макета»: только file_content:read, см. README.
   FIGMA_TOKEN: ${FIGMA_TOKEN:-}
   # Язык работы совета и язык заметок проекта (пусто — русский и он же), см. README.
   COUNCIL_LANGUAGE: ${COUNCIL_LANGUAGE:-}
@@ -73,23 +73,25 @@ services:
       # Bind-mount с Windows не шлёт события файловой системы, без опроса --reload молчит.
       WATCHFILES_FORCE_POLLING: "true"
     healthcheck:
-      # Не /api/settings: он спрашивает CLI моделей о входе, а проверка здоровья идёт каждые 5 с.
+      # Не /api/models: он спрашивает CLI моделей о входе, а проверка здоровья идёт каждые 5 с.
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8420/api/councils')"]
       interval: 5s
       timeout: 3s
       retries: 12
       start_period: 5s
 
+  # Фронт на vite (frontend/Dockerfile): запросы /api он передаёт бекенду.
   frontend:
     build: ./frontend
     ports:
-      - "5420:5420"
+      - "5173:5173"
     volumes:
       - ./frontend:/app
       # node_modules берём из образа: с хоста приедут бинарники под Windows.
       - /app/node_modules
     environment:
       VITE_API_PROXY: http://backend:8420
+      # Bind-mount с Windows не шлёт события файловой системы, без опроса hot reload молчит.
       VITE_USE_POLLING: "1"
     depends_on:
       backend:
