@@ -227,14 +227,18 @@ export const httpSource: DataSource = {
     return stream;
   },
   async getTasks(id) {
-    const { catalog, tasks, vanished, readyStreams, pendingStreams } = await request<TasksPlan>(
+    const { catalog, progress, tasks, vanished, readyStreams, pendingStreams, error } = await request<TasksPlan>(
       'GET',
       `${councilPath(id)}/tasks`,
     );
-    return { catalog, tasks, vanished, readyStreams, pendingStreams };
+    return { catalog, progress, tasks, vanished, readyStreams, pendingStreams, error };
   },
   async approveTasks(id) {
     const { council } = await request<{ council: CouncilSummary }>('POST', `${councilPath(id)}/tasks/approve`, {});
+    return council;
+  },
+  async retryTasks(id) {
+    const { council } = await request<{ council: CouncilSummary }>('POST', `${councilPath(id)}/tasks/retry`, {});
     return council;
   },
   async listModels() {

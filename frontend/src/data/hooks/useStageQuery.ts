@@ -2,8 +2,8 @@ import { useEffect } from 'react';
 import { poll, type Topic, type Topics } from './stale';
 import { useQuery, type Query } from './useQuery';
 
-/** Данные этапов, на которых работают модели: нарезка, раскладка по группам. */
-export type StageTopic = 'slicing' | 'structure';
+/** Данные этапов, на которых работают модели: нарезка, раскладка по группам, план задач. */
+export type StageTopic = 'slicing' | 'structure' | 'tasks';
 
 /** Через сколько после ответа, пока модели работают, снова спрашивать этап и список советов, мс. */
 const STAGE_POLL = 5000;

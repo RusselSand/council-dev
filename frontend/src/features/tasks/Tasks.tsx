@@ -1,4 +1,8 @@
+import { FailedBanner } from '../../components/FailedBanner';
 import { LoadState } from '../../components/LoadState';
+import { RunningStage } from '../../components/RunningStage';
+import { RunProgress } from '../../components/RunProgress';
+import type { CouncilSummary } from '../../domain/council';
 import { useI18n } from '../../i18n';
 import { Button } from '../../ui/Button';
 import { NextStep } from '../../ui/NextStep';
@@ -9,16 +13,35 @@ import { VanishedTasks } from './parts/VanishedTasks';
 import { useTasks } from './useTasks';
 
 /**
- * Этап «Задачи»: не все потоки дошли до итогов — «Не все потоки готовы»; «Задачи для coding agents» — задачи по одной,
- * свёрнутые и открытые; «Уйдут из каталога»; внизу — «Записать задачи» и «Записать в каталог». Пока план грузится —
- * «Загружаем…» или ошибка. Другой совет — другой экран: ставьте с key по совету.
+ * Этап «Задачи»: пока модели строят план или судья переводит задачи — «ИИ работает» и ход работы; иначе — план
+ * остановился — «План задач остановился» и «Запустить снова»; не все потоки готовы — «Не все потоки готовы»; «Задачи для
+ * coding agents» — задачи по одной, свёрнутые и открытые; «Уйдут из каталога»; внизу — «Записать задачи» и «Записать в
+ * каталог». Пока план грузится — «Загружаем…» или ошибка. Другой совет — другой экран: ставьте с key={council.id}.
  */
-export function Tasks({ councilId }: { councilId: string }) {
+export function Tasks({ council }: { council: CouncilSummary }) {
   const { t } = useI18n();
-  const screen = useTasks(councilId);
+  const screen = useTasks(council);
   if (!screen.loaded) return <LoadState loading={screen.loading} error={screen.error} onRetry={screen.reload} />;
+  if (screen.running) {
+    return (
+      <RunningStage
+        title={t('tasks.running.title')}
+        intro={t('tasks.running.intro')}
+        progress={<RunProgress rows={screen.progress} phaseLabel={(phase) => t(`tasks.phase.${phase}`)} />}
+      />
+    );
+  }
   return (
     <>
+      {screen.failed && (
+        <FailedBanner
+          title={t('tasks.failed.title')}
+          text={screen.failure}
+          disabled={screen.retryDisabled}
+          error={screen.retryError}
+          onRetry={screen.retry}
+        />
+      )}
       {screen.pending && <PendingStreams text={screen.pending} />}
       <TitledCard caption={t('tasks.caption')} title={t('tasks.title')} intro={t('tasks.intro')}>
         {screen.tasks.map((task) => (

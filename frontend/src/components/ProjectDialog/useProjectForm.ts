@@ -26,6 +26,9 @@ export interface ProjectForm {
   setName: (name: string) => void;
   docs: string;
   setDocs: (docs: string) => void;
+  /** Папка задач. */
+  tasks: string;
+  setTasks: (tasks: string) => void;
   /** Рабочие копии из COUNCIL_REPOS с отметками; нет — список грузится или не загрузился. */
   repos: RepoChoice[] | undefined;
   reposLoading: boolean;
@@ -71,6 +74,8 @@ export function useProjectForm(project: Project | undefined, onClose: () => void
     setName: (name) => setFields((f) => ({ ...f, name })),
     docs: fields.docs,
     setDocs: (docs) => setFields((f) => ({ ...f, docs })),
+    tasks: fields.tasks,
+    setTasks: (tasks) => setFields((f) => ({ ...f, tasks })),
     repos:
       repos.data &&
       repoChoices(repos.data, project?.repos ?? [], fields.repos).map((name) => {

@@ -1,7 +1,10 @@
 import { useState } from 'react';
-import { useApproveTasks, useCouncilTasks, type ApiError } from '../../data';
+import { useApproveTasks, useCouncilTasks, useRetryTasks, useRound, type ApiError } from '../../data';
+import type { CouncilSummary } from '../../domain/council';
+import type { Catalog } from '../../domain/notes';
 import { adrLabel, outcomeLabel } from '../../domain/outcomes';
-import { dependencyLabels, taskLabel, type Task, type VanishedTask } from '../../domain/tasks';
+import { progressRows, type ProgressRow } from '../../domain/run';
+import { dependencyLabels, taskLabel, type Task, type TaskPhase, type VanishedTask } from '../../domain/tasks';
 import { useI18n, type FormatList, type Translate } from '../../i18n';
 import type { TagTone } from '../../ui/Tag';
 
@@ -31,11 +34,25 @@ export interface TaskView {
 }
 
 export interface TasksScreen {
+  /** Модели строят план или судья переводит задачи: «ИИ работает» и ход работы; иначе — план. */
+  running: boolean;
   /** План пришёл; нет — грузится или не загрузился. */
   loaded: boolean;
   loading: boolean;
   error: ApiError | undefined;
   reload: () => void;
+  /** Строки «Хода работы»: «Нарезка задач · sol, fable · работает…». */
+  progress: ProgressRow<TaskPhase>[];
+
+  /** План или перевод задач остановился: красная плашка и «Запустить снова». */
+  failed: boolean;
+  /** Почему остановился — текст пишет сервер. */
+  failure: string;
+  /** «Запустить снова». */
+  retry: () => void;
+  /** «Запустить снова» недоступна: план уже запускается снова. */
+  retryDisabled: boolean;
+  retryError: ApiError | undefined;
 
   /** «Задачи готовы по потоку A. Потоки B и C ещё не дошли до итогов…»; все потоки готовы — null, плашки нет. */
   pending: string | null;
@@ -46,7 +63,7 @@ export interface TasksScreen {
   vanishedTitle: string;
   vanished: VanishedTask[];
 
-  /** «7 задач · каталог /repos/tasks · язык: English». */
+  /** «7 задач · каталог /repos/tasks · язык: English»; каталога нет — «7 задач · Без папки». */
   summary: string;
   /** «Записать в каталог». */
   approve: () => void;
@@ -79,27 +96,48 @@ function metaOf(task: Task, t: Translate): string {
   return t('tasks.meta', { outcome, decisions: task.decisions.map(adrLabel).join(', ') });
 }
 
+/** Строка тёмной плашки: сколько задач и куда они пишутся; каталога нет — «Без папки» (решение q-010 бекенда). */
+function summaryText(count: number, catalog: Catalog | null, t: Translate): string {
+  if (!catalog) return t('tasks.write.noFolder', { count });
+  return t('tasks.write.text', { count, path: catalog.path, language: catalog.language });
+}
+
 /**
- * «Задачи» совета, как в макете: не все потоки дошли до итогов — плашка «Не все потоки готовы»; задачи для coding
- * agents — все сначала свёрнуты, щелчок открывает или сворачивает задачу, пока экран открыт; «Уйдут из каталога»;
- * внизу — «Записать в каталог» всегда, как в макете. После записи экран остаётся на «Задачах». Другой совет — другой
- * экран: ставьте с key по совету.
+ * «Задачи» совета. Пока модели строят план или судья переводит задачи — ход работы, как у «Групп» (решение q-009
+ * бекенда). Иначе — как в макете: план остановился — красная плашка и «Запустить снова»; не все потоки готовы — плашка
+ * «Не все потоки готовы»; задачи для coding agents — все сначала свёрнуты, щелчок открывает или сворачивает задачу, пока
+ * экран открыт (модели построили план заново — открытое забывается: задачи другие); «Уйдут из каталога»; внизу —
+ * «Записать в каталог» всегда, как в макете. После записи экран остаётся на «Задачах». Другой совет — другой экран:
+ * ставьте с key по совету.
  */
-export function useTasks(councilId: string): TasksScreen {
+export function useTasks(council: CouncilSummary): TasksScreen {
   const { t, formatList } = useI18n();
-  const query = useCouncilTasks(councilId);
+  const running = council.stages.tasks === 'running';
+  const query = useCouncilTasks(council.id, running);
   const action = useApproveTasks();
+  const retryAction = useRetryTasks();
   /** Задачи, которые человек открыл. */
   const [opened, setOpened] = useState<ReadonlySet<string>>(new Set());
+  useRound(running, () => setOpened(new Set()));
 
   const plan = query.data;
   const tasks = plan?.tasks ?? [];
 
   return {
+    running,
     loaded: plan !== undefined,
     loading: query.loading,
     error: query.error,
     reload: query.reload,
+    progress: progressRows(plan?.progress ?? []),
+
+    failed: council.stages.tasks === 'failed',
+    failure: plan?.error ?? '',
+    retry: () => {
+      if (!retryAction.pending) void retryAction.run(council.id);
+    },
+    retryDisabled: retryAction.pending,
+    retryError: retryAction.error,
 
     pending: plan ? pendingText(plan.readyStreams, plan.pendingStreams, t, formatList) : null,
     tasks: tasks.map((task): TaskView => {
@@ -130,11 +168,9 @@ export function useTasks(councilId: string): TasksScreen {
     vanishedTitle: t('tasks.vanished', { count: plan?.vanished.length ?? 0 }),
     vanished: plan?.vanished ?? [],
 
-    summary: plan
-      ? t('tasks.write.text', { count: tasks.length, path: plan.catalog.path, language: plan.catalog.language })
-      : '',
+    summary: plan ? summaryText(tasks.length, plan.catalog, t) : '',
     approve: () => {
-      if (!action.pending) void action.run(councilId);
+      if (!action.pending) void action.run(council.id);
     },
     approveDisabled: action.pending,
     approveError: action.error,

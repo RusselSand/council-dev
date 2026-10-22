@@ -104,9 +104,7 @@ export interface StreamNotes extends NotesExport {
 }
 
 /** План задач и совет, чей он: ответ на запрос одного совета не должен попасть на экран другого. */
-export interface CouncilTasks extends TasksPlan {
-  council: string;
-}
+export interface CouncilTasks extends TasksPlan, CouncilStage {}
 
 /** Данные, которые может изменить действие, и их вид: после действия их запросы перезапрашиваются. */
 export interface Topics {
