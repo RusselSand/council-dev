@@ -1,6 +1,7 @@
-"""Старые ручки шагов потока — пока шаги не переехали в новый API: отбор вопросов — поиск
-вариантов, выбор — его проверку, решения — сборку итогов; повторы ходов и утверждение итогов.
-Потоки заводят, как теперь: группы подтверждены, исследование пройдено, «К потокам →»."""
+"""Старые ручки шагов потока — пока шаги не переехали в новый API: выбор — его проверку,
+решения — сборку итогов; повторы ходов и утверждение итогов. Потоки заводят, как теперь: группы
+подтверждены, исследование пройдено, «К потокам →»; вопросы утверждают новые ручки
+(web/questions.py) — и совет сразу ищет к ним варианты."""
 
 import json
 import re
@@ -81,6 +82,8 @@ class Agents:
         self.touching = False
         # Сборка итогов при закреплённых нового не собирает: новые решения задевают закреплённые.
         self.nothing_new = False
+        # Открытый вопрос держит итог; нет — итог готов и без решения по нему.
+        self.blocking = True
         self.asked = []
         self.prompts = {}
         self.workspaces = {}
@@ -167,9 +170,9 @@ class Agents:
                     "rationale": {"text": WHY, "source": "ai"}}
         return {"status": "unresolved", "recommendation": {"proposal_id": options[0]}}
 
-    @staticmethod
-    def outcomes(prompt):
-        """Один итог: на всех принятых решениях, заблокирован всеми открытыми вопросами."""
+    def outcomes(self, prompt):
+        """Один итог: на всех принятых решениях, заблокирован всеми открытыми вопросами — или
+        ничем, если открытые вопросы его не держат (blocking)."""
         adrs = json.loads(section(prompt, "ACCEPTED ADRS"))
         questions = json.loads(section(prompt, "OPEN QUESTIONS AND PROPOSALS"))
         return {"outcomes": [{
@@ -177,7 +180,8 @@ class Agents:
             "adr_ids": [adr["id"] for adr in adrs], "constraint_ids": ["F4"],
             "adr_notes": {adr["id"]: f"Мерило по {adr['id']}." for adr in adrs},
             "acceptance_criteria": ["Доля считается по #help."],
-            "blocked_by": [q["id"] for q in questions if q["status"] == "open"]}]}
+            "blocked_by": [q["id"] for q in questions
+                           if q["status"] == "open" and self.blocking]}]}
 
     @staticmethod
     def task_plan(prompt):
@@ -241,8 +245,9 @@ def streams_of(council_id):
 
 # --- вопросы
 
-def asks(council_id, group):
-    return client.post(f"/api/councils/{council_id}/streams/{group}/questions/discovery")
+def retries(council_id, group):
+    """«Запустить снова» шаг потока, который остановился."""
+    return client.post(f"/api/councils/{council_id}/streams/{group}/retry", json={})
 
 
 def research_of(council_id):
@@ -293,11 +298,17 @@ def questioned(council_id, group, text=None):
     return passes(council_id, group)
 
 
-def choose(council_id, group, keep, added=(), revision=0, questions_run=None):
-    run = questions_run or streams_of(council_id)[group].questions.run
-    return client.post(f"/api/councils/{council_id}/streams/{group}/questions",
-                       json={"run": "g1", "revision": revision, "questions_run": run,
-                             "keep": list(keep), "added": list(added)})
+def choose(council_id, group, keep, added=()):
+    """«Вопросы» новыми ручками: найденные, которых нет в keep, — убрать, свои (added) —
+    добавить, и «Утвердить вопросы» — совет сразу ищет варианты."""
+    path = f"/api/councils/{council_id}/streams/{group}/questions"
+    for question in client.get(path).json()["questions"]:
+        if question["id"] not in keep:
+            assert client.patch(f"{path}/{question['id']}",
+                                json={"removed": True}).status_code == 200
+    for text in added:
+        assert client.post(path, json={"text": text}).status_code == 201
+    return client.post(f"{path}/approve", json={})
 
 
 def test_a_stream_takes_the_idea_and_the_research_and_goes_to_questions(agents):
@@ -305,7 +316,8 @@ def test_a_stream_takes_the_idea_and_the_research_and_goes_to_questions(agents):
     confirm(council_id)
     approve(council_id, "C", IDEA_C)
     skip(council_id, "C")
-    assert asks(council_id, "C").status_code == 409              # потоков ещё нет
+    questions = client.get(f"/api/councils/{council_id}/streams/C/questions")
+    assert questions.status_code == 404                         # потоков ещё нет
     res = passes(council_id, "C")
     assert res.status_code == 200
     assert res.json()["stream"]["steps"][1]["state"] == "running"
@@ -347,63 +359,8 @@ def test_without_models_the_questions_fail_and_their_search_can_be_retried(agent
     assert "нет подключения" in stream.questions.error
 
     agents.online = {"sol", "fable"}
-    assert asks(council_id, "A").status_code == 202
+    assert retries(council_id, "A").status_code == 200
     assert streams_of(council_id)["A"].questions.state == "done"
-
-
-def test_the_scope_keeps_chosen_questions_and_adds_own_ones(agents):
-    council_id = grouped()
-    confirm(council_id)
-    questioned(council_id, "C", IDEA_C)
-    res = choose(council_id, "C", ["Q2"], ["  Кто платит за хостинг ", "кто платит за хостинг?",
-                                           TEXTS[5]])
-    assert res.status_code == 200
-    scope = streams_of(council_id)["C"].scope
-    assert [(q.id, q.text, q.source) for q in scope] == [
-        ("Q2", TEXTS[5], "user"), ("Q3", "Кто платит за хостинг", "added")]
-    assert asks(council_id, "C").status_code == 409     # отобранные заново не ищут
-
-
-@pytest.mark.parametrize(("keep", "added", "problem"), [
-    (["Q9"], [], "Нет вопросов: Q9"),
-    ([], [], "хотя бы один"),
-    ([], ["   "], "пуст"),
-    ([], ["x" * 501], "длиннее"),
-])
-def test_a_senseless_scope_is_refused(agents, keep, added, problem):
-    council_id = grouped()
-    confirm(council_id)
-    questioned(council_id, "C", IDEA_C)
-    res = choose(council_id, "C", keep, added)
-    assert res.status_code == 422
-    assert problem in res.json()["detail"]
-    assert streams_of(council_id)["C"].scope is None
-
-
-def test_own_questions_differing_by_case_folding_stay_as_the_screen_shows_them(agents):
-    council_id = grouped()
-    confirm(council_id)
-    questioned(council_id, "C", IDEA_C)
-    assert choose(council_id, "C", [], ["Straße?", "STRASSE"]).status_code == 200
-    assert [q.text for q in streams_of(council_id)["C"].scope] == ["Straße?", "STRASSE"]
-
-
-def test_a_choice_made_for_an_earlier_search_is_refused(agents):
-    # Другая вкладка нашла вопросы заново: их номера снова с Q1, и «Q1» — уже другой вопрос.
-    council_id = grouped()
-    confirm(council_id)
-    questioned(council_id, "C", IDEA_C)
-    res = choose(council_id, "C", ["Q1"], questions_run="прежний")
-    assert res.status_code == 409
-    assert "заново" in res.json()["detail"]
-    assert streams_of(council_id)["C"].scope is None
-
-
-def test_no_scope_before_the_streams(agents):
-    council_id = grouped()
-    confirm(council_id)
-    assert choose(council_id, "C", [], ["Свой"], questions_run="нет").status_code == 409
-    assert asks(council_id, "C").status_code == 409
 
 
 # --- варианты и выбор
@@ -437,7 +394,7 @@ def test_an_approved_scope_starts_the_search_for_proposals(agents):
     confirm(council_id)
     res = scoped_c(council_id)
     assert res.status_code == 200
-    assert res.json()["streams"][2]["proposals"]["state"] == "running"
+    assert res.json()["stream"]["steps"][2]["state"] == "running"
     proposals = streams_of(council_id)["C"].proposals
     assert proposals.state == "done"
     assert [(o.question_id, o.verdict, [(p.id, p.text, p.recommended, p.constraint_ids)
@@ -446,24 +403,7 @@ def test_an_approved_scope_starts_the_search_for_proposals(agents):
         ("Q2", "recommended", [("P2", OPTION, True, [4])])]
 
 
-def test_the_same_scope_keeps_its_proposals_and_another_one_searches_again(agents):
-    council_id = grouped()
-    confirm(council_id)
-    scoped_c(council_id)
-    first = streams_of(council_id)["C"].proposals.run
-    assert chose(council_id, "C", [("Q1", "P1"), ("Q2", None)]).status_code == 200
-    choose(council_id, "C", ["Q1", "Q2"])
-    assert streams_of(council_id)["C"].proposals.run == first
-    assert streams_of(council_id)["C"].choices is not None
-
-    choose(council_id, "C", ["Q1"])
-    stream = streams_of(council_id)["C"]
-    assert stream.proposals.run != first and [o.question_id for o in stream.proposals.options] == [
-        "Q1"]
-    assert stream.choices is None
-
-
-def test_nothing_upstream_changes_while_proposals_are_sought(agents):
+def test_no_choice_while_proposals_are_sought(agents):
     council_id = grouped()
     confirm(council_id)
     scoped_c(council_id)
@@ -472,8 +412,6 @@ def test_nothing_upstream_changes_while_proposals_are_sought(agents):
     get_store().update_council(council_id, {"streams": [
         s.model_copy(update={"proposals": sought}) if s.group == "C" else s
         for s in get_store().get_council(council_id).streams]})
-    assert choose(council_id, "C", ["Q1"]).status_code == 423
-    assert choose(council_id, "C", ["Q1", "Q2"]).status_code == 200   # тот же отбор — повтор
     assert chose(council_id, "C", [("Q1", None), ("Q2", None)]).status_code == 409
 
 
@@ -580,7 +518,7 @@ def test_without_models_the_scope_is_approved_and_the_proposal_search_can_be_ret
     agents.online = set()
     assert choose(council_id, "C", ["Q1"]).status_code == 200
     proposals = streams_of(council_id)["C"].proposals
-    assert proposals.state == "failed" and proposals.error.startswith("Нет подключения")
+    assert proposals.state == "failed" and "нет подключения" in proposals.error
     agents.online = {"sol", "fable"}
     assert proposes(council_id, "C").status_code == 202
     assert streams_of(council_id)["C"].proposals.state == "done"
@@ -757,16 +695,6 @@ def test_marking_an_own_option_as_a_refinement_does_not_check_it_again(agents):
     assert (stream.choices[1].proposal, stream.choices[1].based_on) == ("P3", "P2")
 
 
-def test_another_scope_drops_the_check_and_the_decisions(agents):
-    council_id = grouped()
-    confirm(council_id)
-    chosen_c(council_id)
-    decide(council_id, "C", [("Q1", None, None), ("Q2", None, None)])
-    choose(council_id, "C", ["Q1"])
-    stream = streams_of(council_id)["C"]
-    assert (stream.choices, stream.analysis, stream.decisions) == (None, None, None)
-
-
 def test_nothing_upstream_changes_while_the_choice_is_checked(agents):
     council_id = grouped()
     confirm(council_id)
@@ -777,7 +705,6 @@ def test_nothing_upstream_changes_while_the_choice_is_checked(agents):
         s.model_copy(update={"analysis": checking}) if s.group == "C" else s
         for s in get_store().get_council(council_id).streams]})
     assert chose(council_id, "C", [("Q1", None), ("Q2", None)]).status_code == 423
-    assert choose(council_id, "C", ["Q1"]).status_code == 423
     assert chose(council_id, "C", [("Q1", "P1"), ("Q2", None)]).status_code == 200  # тот же
     assert decide(council_id, "C", [("Q1", None, None), ("Q2", None, None)]).status_code == 409
 
@@ -874,7 +801,7 @@ def assembles(council_id, group):
 DECIDED = [("Q1", "P1", WHY), ("Q2", None, None)]
 
 
-# --- вопросы, добавленные после решений: работа по прежним переносится
+# --- правка выбора после решений: работа по прежним вопросам переносится
 
 GAP = "Сколько хранить треды?"
 
@@ -890,39 +817,6 @@ def fixed_c(council_id):
     assert decide(council_id, "C", DECIDED).status_code == 200
 
 
-def test_a_question_added_after_the_decisions_is_the_only_one_worked_again(agents):
-    council_id = grouped()
-    confirm(council_id)
-    fixed_c(council_id)
-    before = streams_of(council_id)["C"]
-    proposals, analyses = asked(agents, "proposal_discovery"), asked(agents, "decision_analysis")
-
-    assert choose(council_id, "C", ["Q1", "Q2"], [GAP]).status_code == 200
-    stream = streams_of(council_id)["C"]
-    # Варианты — только к новому вопросу: по участнику на него, прежние перенесены как есть.
-    assert asked(agents, "proposal_discovery") - proposals == 2
-    assert GAP in agents.prompts["proposal_discovery"]
-    assert [(o.question_id, [p.id for p in o.proposals]) for o in stream.proposals.options] == [
-        ("Q1", ["P1"]), ("Q2", ["P2"]), ("Q3", ["P3"])]
-    assert stream.proposals.options[:2] == before.proposals.options
-    # Выбор и решения сняты, но помнятся — по вопросу, с проверкой и решением.
-    assert (stream.choices, stream.decisions, stream.outcomes) == (None, None, None)
-    assert {w.key: (w.choice.proposal, w.decision.proposal if w.decision else "—",
-                    w.analysis is not None) for w in stream.earlier} == {
-        f"Q1: {MEASURE}": ("P1", "P1", True), f"Q2: {before.scope[1].text}": (None, None, True)}
-
-    # Выбор по прежним — тот же: проверяется только новый.
-    assert chose(council_id, "C", [("Q1", "P1"), ("Q2", None), ("Q3", "P3")]).status_code == 200
-    stream = streams_of(council_id)["C"]
-    assert asked(agents, "decision_analysis") - analyses == 2
-    assert stream.analysis.state == "done"
-    assert {a.question_id for a in stream.analysis.analyses} == {"Q1", "Q2", "Q3"}
-    assert [a for a in stream.analysis.analyses if a.question_id != "Q3"] == (
-        before.analysis.analyses)
-    assert decide(council_id, "C", [*DECIDED, ("Q3", "P3", WHY)]).status_code == 200
-    assert streams_of(council_id)["C"].outcomes.decisions[-1] == f"Q3: P3: {WHY}"
-
-
 def test_a_changed_choice_is_the_only_one_checked_again(agents):
     council_id = grouped()
     confirm(council_id)
@@ -936,91 +830,29 @@ def test_a_changed_choice_is_the_only_one_checked_again(agents):
     assert (q1.decision.proposal, q1.decision.rationale) == ("P1", WHY)
 
 
-def test_a_removed_question_needs_no_model_at_all(agents):
-    council_id = grouped()
-    confirm(council_id)
-    fixed_c(council_id)
-    calls = len(agents.asked)
-    agents.online = set()                     # без моделей — и не нужны: всё перенесено
-    assert choose(council_id, "C", ["Q1"]).status_code == 200
-    stream = streams_of(council_id)["C"]
-    assert stream.proposals.state == "done" and stream.proposals.steps == []
-    assert chose(council_id, "C", [("Q1", "P1")]).status_code == 200
-    stream = streams_of(council_id)["C"]
-    assert (stream.analysis.state, stream.analysis.steps) == ("done", [])
-    assert len(agents.asked) == calls
-
-
-def test_an_own_option_keeps_its_number_and_new_ones_come_after_it(agents):
-    council_id = grouped()
-    confirm(council_id)
-    scoped_c(council_id)
-    assert chose(council_id, "C", [("Q1", "P1"), ("Q2", None, "Своё")]).status_code == 200
-    assert streams_of(council_id)["C"].choices[1].proposal == "P3"
-    choose(council_id, "C", ["Q1", "Q2"], [GAP])
-    stream = streams_of(council_id)["C"]
-    assert [p.id for p in stream.proposals.options[2].proposals] == ["P4"]   # не занять P3
-    assert chose(council_id, "C", [("Q1", "P1"), ("Q2", None, "Своё"),
-                                   ("Q3", None, "Ещё своё")]).status_code == 200
-    choices = streams_of(council_id)["C"].choices
-    assert [c.proposal for c in choices] == ["P1", "P3", "P5"]
-    # Проверка своего варианта по Q2 перенесена: тот же текст — тот же номер, тот же выбор.
-    assert {a.question_id for a in streams_of(council_id)["C"].analysis.analyses} == {
-        "Q1", "Q2", "Q3"}
-
-
 def test_a_failed_search_keeps_what_it_found_and_the_retry_asks_only_the_rest(agents):
     council_id = grouped()
     confirm(council_id)
-    fixed_c(council_id)
-    agents.online = set()
+    questioned(council_id, "C", IDEA_C)
+    answer = agents.ask
+
+    def ask(model, prompt, key, workspace=None, stop=None):
+        # К своему вопросу варианты не находятся: модели не справляются.
+        if "-proposal_" in key and json.loads(section(prompt, "OPEN QUESTION"))["text"] == GAP:
+            raise ModelFailed(f"{model}: превышено время молчания")
+        return answer(model, prompt, key, workspace, stop)
+
+    agents.ask = ask
     choose(council_id, "C", ["Q1", "Q2"], [GAP])
     stream = streams_of(council_id)["C"]
     assert stream.proposals.state == "failed"
     assert [o.question_id for o in stream.proposals.options] == ["Q1", "Q2"]
-    agents.online = {"sol", "fable"}
+    agents.ask = answer
     proposals = asked(agents, "proposal_discovery")
     assert proposes(council_id, "C").status_code == 202
     assert asked(agents, "proposal_discovery") - proposals == 2
     assert [o.question_id for o in streams_of(council_id)["C"].proposals.options] == [
         "Q1", "Q2", "Q3"]
-
-
-def test_an_own_question_keeps_its_number_when_another_is_removed(agents):
-    council_id = grouped()
-    confirm(council_id)
-    scoped_c(council_id)
-    choose(council_id, "C", ["Q1", "Q2"], ["Первый свой?", GAP])
-    assert [q.id for q in streams_of(council_id)["C"].scope] == ["Q1", "Q2", "Q3", "Q4"]
-    choose(council_id, "C", ["Q1", "Q2"], [GAP])
-    stream = streams_of(council_id)["C"]
-    assert [(q.id, q.text) for q in stream.scope][-1] == ("Q4", GAP)
-    assert [o.question_id for o in stream.proposals.options] == ["Q1", "Q2", "Q4"]
-    # Новый свой вопрос — дальше всех номеров, а не на место убранного.
-    choose(council_id, "C", ["Q1", "Q2"], [GAP, "Ещё один?"])
-    assert streams_of(council_id)["C"].scope[-1].id == "Q5"
-
-
-def test_a_number_given_to_an_option_of_a_removed_question_is_not_given_again(agents):
-    council_id = grouped()
-    confirm(council_id)
-    scoped_c(council_id)                       # P1 — у Q1, P2 — у Q2; выбор не утверждали
-    choose(council_id, "C", ["Q1"])            # Q2 убрали — с ним и P2
-    choose(council_id, "C", ["Q1"], [GAP])
-    options = streams_of(council_id)["C"].proposals.options
-    assert [(o.question_id, [p.id for p in o.proposals]) for o in options] == [
-        ("Q1", ["P1"]), ("Q3", ["P3"])]
-
-
-def test_a_number_given_to_a_removed_own_question_is_not_given_again(agents):
-    council_id = grouped()
-    confirm(council_id)
-    scoped_c(council_id)
-    choose(council_id, "C", ["Q1", "Q2"], [GAP])
-    assert streams_of(council_id)["C"].scope[-1].id == "Q3"
-    choose(council_id, "C", ["Q1", "Q2"])      # убрали до всякого выбора
-    choose(council_id, "C", ["Q1", "Q2"], ["Другой вопрос?"])
-    assert streams_of(council_id)["C"].scope[-1].id == "Q4"
 
 
 # --- готовые итоги закрепляются
@@ -1039,18 +871,31 @@ def ready_c(council_id):
     return stream
 
 
-def added_c(council_id):
-    """К отбору добавлен вопрос, выбор и решение по нему — прежние решения те же."""
-    choose(council_id, "C", ["Q1", "Q2"], [GAP])
-    chose(council_id, "C", [("Q1", "P1"), ("Q2", "P2"), ("Q3", "P3")])
-    return decide(council_id, "C", [*ALL_DECIDED, ("Q3", "P3", WHY)])
+def open_c(agents, council_id):
+    """Поток C: Q2 оставлен открытым, но итога не держит — итог на решении по Q1 готов и
+    утверждён."""
+    agents.blocking = False
+    chosen_c(council_id)
+    assert decide(council_id, "C", DECIDED).status_code == 200
+    assert approves(council_id, "C").status_code == 200
+    stream = streams_of(council_id)["C"]
+    assert [(o.id, o.adr_ids) for o in stream.outcomes.outcomes] == [("O1", ["ADR-1"])]
+    assert stream.outcomes.approved and not stream.outcomes.kept
+    return stream
+
+
+def resolved_c(council_id, rationale=WHY):
+    """По открытому Q2 выбран вариант и зафиксировано решение; решение по Q1 — с обоснованием
+    rationale: то же обоснование — то же решение."""
+    chose(council_id, "C", [("Q1", "P1"), ("Q2", "P2")])
+    return decide(council_id, "C", [("Q1", "P1", rationale), ("Q2", "P2", WHY)])
 
 
 def test_a_ready_outcome_with_the_same_decisions_is_kept_and_only_the_rest_is_assembled(agents):
     council_id = grouped()
     confirm(council_id)
-    before = ready_c(council_id)
-    assert added_c(council_id).status_code == 200
+    before = open_c(agents, council_id)
+    assert resolved_c(council_id).status_code == 200
     stream = streams_of(council_id)["C"]
     # O1 закреплён как был; модели видели его данностью, новое — дальше по номерам.
     assert stream.outcomes.kept == ["O1"]
@@ -1065,12 +910,9 @@ def test_a_ready_outcome_with_the_same_decisions_is_kept_and_only_the_rest_is_as
 def test_an_outcome_whose_decision_changed_is_not_kept(agents):
     council_id = grouped()
     confirm(council_id)
-    ready_c(council_id)
-    choose(council_id, "C", ["Q1", "Q2"], [GAP])
-    chose(council_id, "C", [("Q1", "P1"), ("Q2", "P2"), ("Q3", "P3")])
-    # Решение по Q2 — с другим обоснованием: итог на нём уже не тот.
-    assert decide(council_id, "C", [("Q1", "P1", WHY), ("Q2", "P2", "Иначе."),
-                                    ("Q3", "P3", WHY)]).status_code == 200
+    open_c(agents, council_id)
+    # Решение по Q1 — с другим обоснованием: итог на нём уже не тот.
+    assert resolved_c(council_id, "Иначе.").status_code == 200
     stream = streams_of(council_id)["C"]
     assert stream.outcomes.kept == [] and [o.id for o in stream.outcomes.outcomes] == ["O1"]
 
@@ -1078,11 +920,11 @@ def test_an_outcome_whose_decision_changed_is_not_kept(agents):
 def test_a_touched_outcome_waits_for_the_human_who_keeps_it(agents):
     council_id = grouped()
     confirm(council_id)
-    ready_c(council_id)
+    open_c(agents, council_id)
     agents.touching = True
-    added_c(council_id)
+    resolved_c(council_id)
     outcomes = streams_of(council_id)["C"].outcomes
-    assert [(t.outcome_id, t.adr_ids) for t in outcomes.touched] == [("O1", ["ADR-3"])]
+    assert [(t.outcome_id, t.adr_ids) for t in outcomes.touched] == [("O1", ["ADR-2"])]
     res = approves(council_id, "C")
     assert res.status_code == 409 and "задевают" in res.json()["detail"]
     assert settles(council_id, outcomes.run, "O1").status_code == 200
@@ -1094,9 +936,9 @@ def test_a_touched_outcome_waits_for_the_human_who_keeps_it(agents):
 def test_a_touched_outcome_the_human_rebuilds_is_assembled_again(agents):
     council_id = grouped()
     confirm(council_id)
-    ready_c(council_id)
+    open_c(agents, council_id)
     agents.touching = True
-    added_c(council_id)
+    resolved_c(council_id)
     outcomes = streams_of(council_id)["C"].outcomes
     agents.touching = False
     assert settles(council_id, outcomes.run, "O1", rebuild=True).status_code == 200
@@ -1121,34 +963,31 @@ def test_an_outcome_that_got_blocked_is_not_approved(agents):
     assert not streams_of(council_id)["C"].outcomes.approved
 
 
-def test_saved_outcomes_are_seen_while_new_questions_are_worked_out(agents):
+def test_saved_outcomes_are_seen_while_another_choice_is_worked_out(agents):
     council_id = grouped()
     confirm(council_id)
-    before = ready_c(council_id)
-    choose(council_id, "C", ["Q1", "Q2"], [GAP])
+    before = open_c(agents, council_id)
+    chose(council_id, "C", [("Q1", "P1"), ("Q2", "P2")])
     stream = streams_of(council_id)["C"]
-    # До итогов ещё далеко, а готовый итог виден: решения по нему прежние.
+    # До итогов ещё далеко, а готовый итог виден: решение по нему прежнее.
     assert stream.outcomes is None
     assert stream.saved_outcomes == before.outcomes.outcomes
     council = get_store().get_council(council_id).model_dump(mode="json")
     seen = next(s for s in council["streams"] if s["group"] == "C")
     assert [o["id"] for o in seen["saved_outcomes"]] == ["O1"]
-    chose(council_id, "C", [("Q1", "P1"), ("Q2", "P2"), ("Q3", "P3")])
-    assert [o.id for o in streams_of(council_id)["C"].saved_outcomes] == ["O1"]
-    # Другой выбор по прежнему вопросу — его решения уже нет: итог не сохранится.
-    chose(council_id, "C", [("Q1", "P1"), ("Q2", None), ("Q3", "P3")])
+    # Другой выбор по вопросу итога — его решения уже нет: итог не сохранится.
+    chose(council_id, "C", [("Q1", None), ("Q2", "P2")])
     assert streams_of(council_id)["C"].saved_outcomes == []
 
 
 def test_kept_outcomes_are_there_from_the_start_of_their_run(agents):
     council_id = grouped()
     confirm(council_id)
-    before = ready_c(council_id)
-    choose(council_id, "C", ["Q1", "Q2"], [GAP])
-    chose(council_id, "C", [("Q1", "P1"), ("Q2", "P2"), ("Q3", "P3")])
+    before = open_c(agents, council_id)
+    chose(council_id, "C", [("Q1", "P1"), ("Q2", "P2")])
     # Моделей нет — сборка не идёт, но закреплённый итог уже в ней.
     agents.online = set()
-    decide(council_id, "C", [*ALL_DECIDED, ("Q3", "P3", WHY)])
+    decide(council_id, "C", ALL_DECIDED)
     outcomes = streams_of(council_id)["C"].outcomes
     assert (outcomes.state, outcomes.kept) == ("failed", ["O1"])
     assert outcomes.outcomes == before.outcomes.outcomes
@@ -1161,11 +1000,10 @@ def test_kept_outcomes_are_there_from_the_start_of_their_run(agents):
 def test_runs_saved_before_kept_work_lay_in_them_get_it_on_reading(agents):
     council_id = grouped()
     confirm(council_id)
-    before = ready_c(council_id)
-    choose(council_id, "C", ["Q1", "Q2"], [GAP])
-    chose(council_id, "C", [("Q1", "P1"), ("Q2", "P2"), ("Q3", "P3")])
+    before = open_c(agents, council_id)
+    chose(council_id, "C", [("Q1", "P1"), ("Q2", "P2")])
     agents.online = set()
-    decide(council_id, "C", [*ALL_DECIDED, ("Q3", "P3", WHY)])
+    decide(council_id, "C", ALL_DECIDED)
 
     def legacy(field, emptied):
         """Совет, каким его сохраняли раньше: сборка — без закреплённого."""
@@ -1218,16 +1056,12 @@ def test_the_same_decisions_keep_the_outcomes_and_other_ones_assemble_again(agen
     assert streams_of(council_id)["C"].outcomes.outcomes[0].blocked_by == []
 
 
-def test_another_choice_or_scope_drops_the_outcomes(agents):
+def test_another_choice_drops_the_outcomes(agents):
     council_id = grouped()
     confirm(council_id)
     chosen_c(council_id)
     decide(council_id, "C", DECIDED)
     chose(council_id, "C", [("Q1", None), ("Q2", None)])
-    assert streams_of(council_id)["C"].outcomes is None
-
-    decide(council_id, "C", [("Q1", None, None), ("Q2", None, None)])
-    choose(council_id, "C", ["Q1"])
     assert streams_of(council_id)["C"].outcomes is None
 
 
@@ -1243,7 +1077,6 @@ def test_nothing_upstream_changes_while_the_outcomes_are_assembled(agents):
         for s in get_store().get_council(council_id).streams]})
     assert decide(council_id, "C", [("Q1", None, None), ("Q2", None, None)]).status_code == 423
     assert chose(council_id, "C", [("Q1", None), ("Q2", None)]).status_code == 423
-    assert choose(council_id, "C", ["Q1"]).status_code == 423
     assert decide(council_id, "C", DECIDED).status_code == 200                 # те же решения
     assert assembles(council_id, "C").status_code == 409                       # уже идёт
 

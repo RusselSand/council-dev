@@ -175,6 +175,7 @@ from .questions import (
     same_question,
     with_user_questions,
 )
+from .questions import merged as merged_questions
 from .repository import Context as RepositoryContext
 from .repository import (
     Inventory,
@@ -929,6 +930,12 @@ class QuestionRun(CouncilRun[QuestionDiscovery]):
                                 lambda data: question_list(data, self.fragments,
                                                            self.decision_ids))
         lists = list(answers.values())
+        # Не справится судья — останутся вопросы участников, которые ответили.
+        with self._lock:
+            self.state.answered = numbered(with_user_questions(
+                merged_questions(candidate for found in lists for candidate in found),
+                self.fragments))
+            self._publish()
         # Вопрос из текста, пропущенный всеми, вернётся сам, но без классификации: тогда
         # список сводит судья — он обязан вернуть все вопросы из текста и пометить каждый.
         if (len(lists) > 1 and same_lists(lists)
@@ -945,7 +952,7 @@ class QuestionRun(CouncilRun[QuestionDiscovery]):
             chosen = self._ask_judge(StepName.question_judge, prompt,
                                      lambda data: question_list(data, self.fragments,
                                                                 self.decision_ids))
-        return {"questions": numbered(with_user_questions(chosen, self.fragments))}
+        return {"questions": numbered(with_user_questions(chosen, self.fragments)), "answered": []}
 
 
 class ProposalRun(CouncilRun[ProposalDiscovery]):

@@ -388,40 +388,6 @@ def test_only_an_export_to_this_catalog_makes_its_decisions_the_streams_own(
     assert (search.catalog if search else None) == searched
 
 
-def test_a_retry_of_the_questions_after_the_catalog_changed_goes_back_to_the_selection(
-        agents, projects, repos):
-    council_id = at_project(projects)
-    agents.online = set()
-    assert picks(council_id, ["ADR-0001"]).status_code == 200         # вопросы — упали
-    agents.online = {"sol", "fable"}
-    path_of(repos / NOTES, REWRITTEN).write_text(rendered(REWRITTEN), encoding="utf-8")
-    retry = client.post(f"/api/councils/{council_id}/streams/C/questions/discovery")
-    assert retry.status_code == 409 and "ADR-0001" in retry.json()["detail"]
-    stream = streams_of(council_id)["C"]
-    assert (stream.decisions_search.state, stream.project_decisions, stream.questions) == (
-        "failed", None, None)                                        # отбирают заново
-    assert retries(council_id).status_code == 200                    # «Запустить снова»
-    assert picks(council_id, ["ADR-0001"]).status_code == 200
-    accepted = section(agents.prompts["question_discovery"], "ACCEPTED PROJECT DECISIONS")
-    assert "Ищем в чате" in accepted
-
-
-def test_a_retry_of_the_questions_offers_decisions_that_appeared_meanwhile(agents, projects,
-                                                                           repos):
-    council_id = at_project(projects, notes="later")   # решений в каталоге нет — шаг ждёт вас
-    assert streams_of(council_id)["C"].decisions_search is None
-    agents.online = set()
-    assert picks(council_id, []).status_code == 200                   # вопросы — упали
-    agents.online = {"sol", "fable"}
-    put(repos / "later")
-    retry = client.post(f"/api/councils/{council_id}/streams/C/questions/discovery")
-    assert retry.status_code == 409 and "появились" in retry.json()["detail"]
-    stream = streams_of(council_id)["C"]
-    assert (stream.decisions_search.state, stream.questions) == ("failed", None)
-    assert retries(council_id).status_code == 200
-    assert streams_of(council_id)["C"].decisions_search.state == "done"
-
-
 def test_a_selected_decision_rewritten_before_the_options_sends_back_to_the_selection(
         agents, projects, repos):
     root = repos / NOTES
@@ -442,40 +408,10 @@ def test_a_selected_decision_rewritten_before_the_options_sends_back_to_the_sele
             stream.scope, stream.proposals) == ("failed", None, None, None, None)
 
 
-def test_a_new_scope_with_a_rewritten_decision_is_refused_too(agents, projects, repos):
-    council_id = at_project(projects)
-    assert picks(council_id, ["ADR-0001"]).status_code == 200
-    path_of(repos / NOTES, REWRITTEN).write_text(rendered(REWRITTEN), encoding="utf-8")
-    assert choose(council_id, "C", ["Q1"]).status_code == 409
-    stream = streams_of(council_id)["C"]
-    assert (stream.project_decisions, stream.scope) == (None, None)
-
-
-def test_another_folder_with_past_decisions_sends_even_none_selected_back(agents, projects,
-                                                                          repos, tmp_path):
+def test_the_questions_remember_the_catalog_they_were_asked_with(agents, projects, repos):
     council_id = at_project(projects)
     assert picks(council_id, []).status_code == 200                   # ни одного решения
     assert streams_of(council_id)["C"].questions.notes == str((repos / NOTES).resolve())
-    # Проект совета сменили: в его папке свои прошлые решения, их никто не отбирал.
-    other = put(tmp_path / "other")
-    app.dependency_overrides[get_notes_of] = lambda: lambda council: other
-    res = choose(council_id, "C", ["Q1"])
-    assert res.status_code == 409 and "сменили" in res.json()["detail"]
-    stream = streams_of(council_id)["C"]
-    assert (stream.decisions_search.state, stream.project_decisions, stream.questions,
-            stream.scope) == ("failed", None, None, None)
-
-
-def test_another_folder_without_past_decisions_leaves_the_questions_alone(agents, projects,
-                                                                          repos, tmp_path):
-    (repos / "empty").mkdir()
-    council_id = at_project(projects, notes="empty")    # решений нет — шаг сразу ждёт вас
-    assert streams_of(council_id)["C"].decisions_search is None
-    assert picks(council_id, []).status_code == 200
-    # Совету выбрали проект с новой, ещё пустой папкой: отбирать нечего.
-    app.dependency_overrides[get_notes_of] = lambda: lambda council: tmp_path / "bare"
-    assert choose(council_id, "C", ["Q1"]).status_code == 200
-    assert streams_of(council_id)["C"].scope is not None
 
 
 def test_outcomes_are_not_approved_past_a_project_with_unselected_decisions(agents, tmp_path):
