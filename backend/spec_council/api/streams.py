@@ -8,7 +8,6 @@
 собирает из них итоги. Каждый шаг утверждают заново — то, что ниже по цепочке, ищется заново; но
 работа по тем же вопросам и тому же выбору переносится (work.py), а не делается снова."""
 
-import logging
 from collections.abc import Callable, Sequence
 from itertools import count
 from pathlib import Path
@@ -31,7 +30,7 @@ from ..deps import (
     Store,
     StoreDep,
 )
-from ..export import design_map, export_in, repository_map
+from ..export import design_map, repository_map
 from ..groups import stream_group
 from ..models import (
     SKIPPED,
@@ -68,7 +67,7 @@ from ..models import (
     TaskPlan,
     TasksDraft,
 )
-from ..notes import Catalog, NotesError
+from ..notes import Catalog
 from ..pipeline import (
     CouncilRun,
     DecisionRun,
@@ -86,7 +85,14 @@ from ..pipeline import (
     start_proposals,
     start_questions,
 )
-from ..project import catalog_print, fingerprint, records
+from ..project import (
+    catalog_at,
+    catalog_print,
+    fingerprint,
+    own_ids,
+    project_catalog,
+    records,
+)
 from ..proposals import PROPOSAL_MAX, found_by_question, last_number
 from ..questions import QUESTION_MAX, same_question
 from ..work import (
@@ -115,7 +121,6 @@ from .councils import (
 from .groups import NOT_THESE_GROUPS, current, outdated
 
 router = APIRouter(prefix="/councils", tags=["streams"])
-log = logging.getLogger(__name__)
 
 NO_STREAM = {409: {"description": "Групп уже других: потока нет, или группы не подтверждены"}}
 CHANGING = {503: {"description": "Состав совета меняется прямо сейчас"}}
@@ -144,25 +149,6 @@ def asks_anew(stream: Stream, repository: RepositoryStep, design: DesignStep,
             or questions.design != step_key(design)
             or questions.decisions != [d.adr_id for d in picked]
             or questions.decisions_seen != fingerprint(picked))
-
-
-def catalog_at(notes: Path | None) -> Catalog | None:
-    """Каталог заметок как есть. Нет его или не прочитать — None."""
-    if notes is None or not notes.exists():
-        return None
-    try:
-        return Catalog.load(notes)
-    except NotesError as exc:
-        log.warning("Каталог заметок %s не прочитан, решения проекта не отбираются: %s", notes,
-                    exc)
-        return None
-
-
-def own_ids(stream: Stream, notes: Path | None) -> list[str]:
-    """Заметки, которые выгрузил сам поток в этот каталог: его решения ему не «прошлые».
-    Выгрузка в другой каталог (проект или его папку сменили) здесь ничего не значит."""
-    record = export_in(stream.notes, notes)
-    return [note.id for note in record.notes] if record else []
 
 
 def changed_in(catalog: Catalog | None, own: list[str],
@@ -273,17 +259,6 @@ def expired_before(store: Store, council_id: str, group: str, slot: Slot,
         council = store.get_council(council_id)
         if council is not None and not running(slot.get(council)):
             expired(store, council, stream_in(council, group), why(council))
-
-
-def project_catalog(notes: Path | None, stream: Stream) -> Catalog | None:
-    """Каталог заметок, если в нём есть прошлые решения проекта (кроме решений самого потока).
-    Каталога нет или его не прочитать — блока решений нет: вопросы ищутся сразу."""
-    catalog = catalog_at(notes)
-    if catalog is None:
-        return None
-    own = set(own_ids(stream, notes))
-    adrs = [note for note in catalog.notes.values() if note.type == "adr" and note.id not in own]
-    return catalog if adrs else None
 
 
 @router.post("/{council_id}/streams/{group}/project-decisions",
