@@ -159,34 +159,40 @@ def launch_of(council: Council, stream: Stream, step: Step, runner: Runner, stor
     pipeline = WORKS[step].build(council, stream, runner, report, notes)
     state = pipeline.state
     state.launch = before.launch + 1 if before is not None else 1
-    state.reused = resumed(state, before if again else None, datetime.now(UTC))
+    state.reused = resumed(state, before if again else None, datetime.now(UTC), runner.identity)
     pipeline.replayed = {(part.name, run.model) for part in state.steps for run in part.runs
                          if run.state == "done"}
     return Launch(stream.model_copy(update={field: state.model_copy(deep=True)}), pipeline,
                   report)
 
 
-def resumed(state: Work, before: Work | None, now: datetime) -> list[str]:
+def resumed(state: Work, before: Work | None, now: datetime,
+            identity: Callable[[str], str]) -> list[str]:
     """Ход идёт с первой части, где в прежнем ходе (before) ответили не все: части, где ответили
     все, сразу готовы; в первой из остальных модели, что ответили, готовы, а другие работают с
     now; следующие части ждут своей очереди. Прежнего хода нет — с первой части. Ответ — чьи
-    ответы взяты даром."""
+    ответы взяты даром.
+
+    Ответила — значит, ответила та модель, что сейчас за alias (identity — Runner.identity): ответ
+    в лотке — под провайдером и моделью, и после смены модели в настройке повтор его не возьмёт, а
+    заплатит за новый. Ход прежней версии не помнит, кто отвечал, — даром его ответы не
+    обещаем: модель работает заново, а лоток, если ответ там, отдаст его сам."""
     earlier = {part.name: part for part in before.steps} if before is not None else {}
     reused: list[str] = []
     for part in state.steps:
         old = earlier.get(part.name)
-        done = {run.model for run in old.runs if run.state == "done"} if old else set()
+        done = {run.model for run in old.runs
+                if run.state == "done" and run.identity == identity(run.model)} if old else set()
         kept = [run.model for run in part.runs if run.model in done]
         reused += kept
+        for run in part.runs:
+            if run.model in done:
+                run.state, run.identity = "done", identity(run.model)
         if part.runs and len(kept) == len(part.runs):
-            for run in part.runs:
-                run.state = "done"
             part.state = "done"
             continue
         for run in part.runs:
-            if run.model in done:
-                run.state = "done"
-            else:
+            if run.model not in done:
                 run.state, run.started_at = "running", now
         part.state = "running"
         break

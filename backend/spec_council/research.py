@@ -31,6 +31,7 @@ from .models import (
     RepositoryScan,
     RepositoryStep,
     Research,
+    Stream,
 )
 
 Block = Literal["setup", "running", "done", "skipped"]
@@ -109,6 +110,30 @@ def taken_link(research: Research) -> str:
         return research.link
     scan = research.design_scan
     return scan.links[0] if scan is not None and scan.links else ""
+
+
+# Копия исследования в потоке.
+
+def stream_copy(research: Research) -> dict[str, Any]:
+    """Копия утверждённого исследования, которую берёт поток: как пройдены оба шага и скан
+    каждого, если шаг пройден им, — карта кода и описание макета."""
+    return {"scan": research.scan if research.repository.by == "scan" else None,
+            "repository": research.repository,
+            "design_scan": research.design_scan if research.design.by == "scan" else None,
+            "design": research.design}
+
+
+def backfilled(streams: list[Stream], research: Research | None) -> list[Stream]:
+    """Потоки прежней версии, которые не начинали, — с копией утверждённого исследования. Копию
+    там брало начало потока, по одному; начала больше нет, и копию, как у потоков «К потокам →»,
+    они берут сейчас. Исследование не утверждено — брать нечего: потоки как есть."""
+    if research is None or not research.approved or research.repository is None \
+            or research.design is None:
+        return streams
+    copy = stream_copy(research)
+    return [stream.model_copy(deep=True, update=copy)
+            if stream.repository is None and stream.design is None else stream
+            for stream in streams]
 
 
 # Находки.

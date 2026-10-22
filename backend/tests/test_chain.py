@@ -15,6 +15,7 @@ from spec_council.groups import marked
 from spec_council.models import (
     Choice,
     Decision,
+    DesignStep,
     Group,
     LabeledFragment,
     ModelRun,
@@ -24,10 +25,12 @@ from spec_council.models import (
     ProjectDecision,
     ProposalDiscovery,
     QuestionDiscovery,
+    RepositoryStep,
     Slicing,
     Step,
     StepName,
     Stream,
+    StreamIdea,
     Structure,
 )
 from spec_council.pipeline import ModelFailed, start_analysis, start_outcomes, start_proposals
@@ -185,6 +188,19 @@ def put(store, council_id, stream_id="A", **fields):
     store.update_council(council_id, {"streams": replaced(council, stream)})
 
 
+def answered(model, identity=None):
+    """Модель ответила; кто под alias ответил — по умолчанию то же, что у подделки сейчас."""
+    return ModelRun(model=model, state="done", identity=identity or model)
+
+
+def judge_stopped(*runs):
+    """«Вопросы» остановились на судье, модели совета (runs) ответили."""
+    return QuestionDiscovery(state="failed", run="q1", error="судья fable: пустой ответ", steps=[
+        Step(name=StepName.question_discovery, state="done", runs=list(runs)),
+        Step(name=StepName.question_judge, state="failed",
+             runs=[ModelRun(model="fable", state="failed", error="пустой ответ")])])
+
+
 # --- потоки совета
 
 def test_streams_appear_on_the_research_approval_in_the_order_of_groups(store):
@@ -214,6 +230,28 @@ def test_a_stream_of_the_prior_version_is_named_by_its_group(store):
     council_id = streaming(store)
     put(store, council_id, title=None)
     assert streams_of(council_id)["A"]["title"] == "Группа A"
+
+
+def test_unstarted_streams_of_the_prior_version_take_the_research_on_its_approval(store):
+    """Прежняя версия начинала потоки по одному: начатый A — со своей копией исследования, B не
+    начинали, а исследование потом вернули к настройке. Начала потока больше нет — копию B берёт
+    «К потокам →»; A остаётся со своей."""
+    council_id = confirmed(store)
+    own = {"repository": RepositoryStep(by="scan", scan_run="s0"),
+           "design": DesignStep(by="skipped")}
+    store.update_council(council_id, {"streams": [
+        Stream(group="A", idea=StreamIdea(text=TEXTS[1], by="text"), **own),
+        Stream(group="B", idea=StreamIdea(text=IDEA_B, by="human"))]})
+    assert [stream["id"] for stream in streams_of(council_id).values()] == ["A", "B"]
+    for kind in ("code", "design"):
+        assert client.post(f"/api/councils/{council_id}/research/{kind}/skip",
+                           json={}).status_code == 200
+    assert client.post(f"/api/councils/{council_id}/research/approve",
+                       json={}).status_code == 200
+    first, second = (stored(store, council_id, one) for one in ("A", "B"))
+    assert (first.repository, first.design) == (own["repository"], own["design"])
+    assert (second.repository.by, second.design.by) == ("skipped", "skipped")
+    assert steps_of(streams_of(council_id)["B"])["project"]["state"] == "waiting"
 
 
 # --- цепочка шагов
@@ -296,12 +334,7 @@ def test_a_failed_step_is_run_again_and_the_paid_answers_are_kept(store, pool, a
 
 def test_a_stopped_judge_is_run_again_alone(store, pool):
     council_id = streaming(store)
-    put(store, council_id, questions=QuestionDiscovery(
-        state="failed", run="q1", error="судья fable: пустой ответ", steps=[
-            Step(name=StepName.question_discovery, state="done",
-                 runs=[ModelRun(model="sol", state="done"), ModelRun(model="fable", state="done")]),
-            Step(name=StepName.question_judge, state="failed",
-                 runs=[ModelRun(model="fable", state="failed", error="пустой ответ")])]))
+    put(store, council_id, questions=judge_stopped(answered("sol"), answered("fable")))
     questions = steps_of(streams_of(council_id)["A"])["questions"]
     assert (questions["state"], questions["text"]) == ("failed",
                                                        "fable не справилась: пустой ответ.")
@@ -333,12 +366,7 @@ def watched(agents, council_id) -> dict[tuple[str, str], dict[str, list[str]]]:
 
 def test_a_retried_judge_does_not_show_the_saved_models_working_again(store, pool, agents):
     council_id = streaming(store)
-    put(store, council_id, questions=QuestionDiscovery(
-        state="failed", run="q1", error="судья fable: пустой ответ", steps=[
-            Step(name=StepName.question_discovery, state="done",
-                 runs=[ModelRun(model="sol", state="done"), ModelRun(model="fable", state="done")]),
-            Step(name=StepName.question_judge, state="failed",
-                 runs=[ModelRun(model="fable", state="failed", error="пустой ответ")])]))
+    put(store, council_id, questions=judge_stopped(answered("sol"), answered("fable")))
     assert retries(council_id, "A").status_code == 200
     seen = watched(agents, council_id)
     pool.run()
@@ -360,6 +388,41 @@ def test_a_retry_shows_a_saved_answer_done_while_taking_it(store, pool, agents):
     # fable уже ответила — её ответ берут из лотка, и она готова; sol работает заново.
     assert seen[("question_discovery", "fable")]["question_discovery"][1] == "done"
     assert seen[("question_discovery", "sol")]["question_discovery"][0] == "running"
+
+
+def test_an_answer_of_another_model_under_the_alias_is_not_promised_free(store, pool, agents):
+    """За alias fable в настройке теперь другая модель: ответ прежней в лотке — под прежней, и
+    за ответ новой повтор заплатит. Даром его не обещают: fable работает заново."""
+    council_id = streaming(store)
+    put(store, council_id,
+        questions=judge_stopped(answered("sol"), answered("fable", identity="claude/fable-1")))
+    questions = steps_of(retries(council_id, "A").json()["stream"])["questions"]
+    work, judge = questions["progress"]
+    assert [(run["model"], run["state"]) for run in work["runs"]] == [
+        ("sol", "done"), ("fable", "running")]
+    assert judge["runs"][0]["state"] == "waiting"
+    assert questions["text"] == ("fable собирает вопросы заново, ответ sol сохранён и не "
+                                 "оплачивается второй раз.")
+    assert stored(store, council_id).questions.reused == ["sol"]
+    pool.run()
+    assert any("-question_discovery-fable-" in key for key in agents.asked)
+    # Ответ новой модели — под ней: следующий повтор возьмёт его даром.
+    runs = stored(store, council_id).questions.steps[0].runs
+    assert [(run.model, run.identity) for run in runs] == [("sol", "sol"), ("fable", "fable")]
+
+
+def test_answers_of_a_run_of_the_prior_version_are_not_promised_free(store, pool):
+    """Ход прежней версии не помнит, кто отвечал под alias: даром его ответы не обещают —
+    модели совета работают заново, а ответ из лотка, если он там, ход возьмёт сам."""
+    council_id = streaming(store)
+    put(store, council_id, questions=judge_stopped(ModelRun(model="sol", state="done"),
+                                                   ModelRun(model="fable", state="done")))
+    questions = steps_of(retries(council_id, "A").json()["stream"])["questions"]
+    work, judge = questions["progress"]
+    assert [run["state"] for run in work["runs"]] == ["running", "running"]
+    assert judge["runs"][0]["state"] == "waiting"
+    assert questions["text"] == "sol и fable собирают вопросы заново."
+    assert stored(store, council_id).questions.reused == []
 
 
 def test_a_retry_while_the_server_stops_leaves_no_model_working(store, pool, agents):

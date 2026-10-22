@@ -344,7 +344,9 @@ def approve(council_id: str, store: StoreDep, projects: ProjectsDep,
     """Утверждает исследование: оба готовы или пропущены, находок, что ждут решения, нет,
     группы подтверждены (решение q-002) и у каждой есть идея (решение q-002 бекенда).
     Исследование становится взятым, и, если «Потоки» не начаты, каждая группа — потоком со своей
-    копией исследования. Уже утверждено — в ответ совет как есть."""
+    копией исследования. Потоки уже есть — копию берут только потоки прежней версии, которые не
+    начинали (domain.backfilled): иначе им её не взять. Уже утверждено — в ответ совет как
+    есть."""
     with council_lock:
         council = council_of(store, council_id)
         research = stored_of(council)
@@ -362,6 +364,8 @@ def approve(council_id: str, store: StoreDep, projects: ProjectsDep,
             changes: dict = {"research": research}
             if not shown_streams(council):
                 changes |= streams_made(council, research)
+            else:
+                changes["streams"] = domain.backfilled(council.streams or [], research)
             council = store.update_council(council_id, changes) or council
     return CouncilAnswer(council=shown(council, projects, repositories))
 
@@ -587,10 +591,7 @@ def streams_made(council: Council, research: Stored) -> dict:
     копией исследования. Поток прежней версии у группы уже есть — он остаётся, со своей идеей.
     Группы потоков, какими они были до правок (structure.stream_groups), — у потоков прежних:
     новым потокам они ни к чему."""
-    copy = {"scan": research.scan if research.repository.by == "scan" else None,
-            "repository": research.repository,
-            "design_scan": research.design_scan if research.design.by == "scan" else None,
-            "design": research.design}
+    copy = domain.stream_copy(research)
     kept = {stream.group: stream for stream in council.streams or []}
     streams = []
     for group in council.structure.groups if council.structure else []:

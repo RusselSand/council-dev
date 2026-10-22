@@ -565,8 +565,8 @@ class CouncilRun[S: (Slicing, Structure, IdeaDiscovery, RepositoryScan, DesignSc
                 parse: Callable[[dict], T]) -> T | None:
         # Повтор с тем же ключом берёт оплаченный ответ даром — только если отвечает та же
         # модель: провайдер и модель за alias тоже в ключе.
-        state = self.runner.identity(model) + self.fingerprint
-        key = f"{self.council_id}-{step}-{model}-{digest(state + prompt)}"
+        identity = self.runner.identity(model)
+        key = f"{self.council_id}-{step}-{model}-{digest(identity + self.fingerprint + prompt)}"
         if self._halt.is_set():
             self._set_run(step, model, "failed", "ход остановлен")
             return None
@@ -598,7 +598,7 @@ class CouncilRun[S: (Slicing, Structure, IdeaDiscovery, RepositoryScan, DesignSc
             return None
         with self._lock:
             self._keys.setdefault(step, []).append(key)
-        self._set_run(step, model, "done")
+        self._set_run(step, model, "done", identity=identity)
         return answer
 
     def _replaying(self, step: StepName, model: str) -> bool:
@@ -641,12 +641,16 @@ class CouncilRun[S: (Slicing, Structure, IdeaDiscovery, RepositoryScan, DesignSc
             step.runs = []
             self._publish()
 
-    def _set_run(self, name: StepName, model: str, state: str, error: str | None = None) -> None:
+    def _set_run(self, name: StepName, model: str, state: str, error: str | None = None, *,
+                 identity: str | None = None) -> None:
+        """identity — кто ответил под alias, когда ответ принят (done)."""
         with self._lock:
             run = next(run for run in self._step(name).runs if run.model == model)
             run.state, run.error = state, error
             if state == "running":
                 run.started_at = datetime.now(UTC)
+            if identity is not None:
+                run.identity = identity
             self._publish()
 
     def _finish(self, *, error: str | None = None, **result: Any) -> None:

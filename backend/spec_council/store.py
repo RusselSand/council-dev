@@ -37,6 +37,7 @@ from .models import (
     TaskPlan,
     TasksDraft,
 )
+from .research import backfilled
 from .work import with_kept
 
 log = logging.getLogger(__name__)
@@ -226,10 +227,12 @@ def writable(folder: Path) -> None:
 def migrated(council: Council) -> Council:
     """Совет, сохранённый до шагов «Репозиторий» или «Дизайн»: у потока, где вопросы уже
     искали, шаг считается пропущенным, и вопросы — найденными без карты или описания макета.
-    Иначе он вернулся бы на этот шаг, а «Пропустить» пересчитало бы всё, что ниже. Незаконченные
-    сборка и нарезка, сохранённые пустыми, — с закреплённым (work.with_kept). Менять нечего —
-    тот же совет."""
-    streams = [with_kept(passed(stream)) for stream in council.streams or []]
+    Иначе он вернулся бы на этот шаг, а «Пропустить» пересчитало бы всё, что ниже. Потоки,
+    которые прежняя версия не начинала, а исследование утвердила, — с его копией
+    (research.backfilled): начала потока больше нет. Незаконченные сборка и нарезка, сохранённые
+    пустыми, — с закреплённым (work.with_kept). Менять нечего — тот же совет."""
+    streams = [with_kept(stream) for stream in backfilled(
+        [passed(stream) for stream in council.streams or []], council.research)]
     if streams == (council.streams or []):
         return council
     return council.model_copy(update={"streams": streams})
