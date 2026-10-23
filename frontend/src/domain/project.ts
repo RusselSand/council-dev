@@ -64,6 +64,13 @@ export const cleanFields = ({ name, repos, docs, tasks }: ProjectFields): Projec
   tasks: tasks.trim(),
 });
 
+/**
+ * Название, как сервер сравнивает их на повтор: без пробелов по краям и без учёта регистра — «Кромка» и «кромка » одно
+ * название (решение владельца к задаче «Бекенд · Проекты: названия не повторяются»). toLowerCase — то же приведение,
+ * что lower() на сервере.
+ */
+export const nameKey = (name: string) => name.trim().toLowerCase();
+
 /** Проект можно сохранить: есть название — как в макете (saveProject) — и репозиториев не больше 10. */
 export const canSaveFields = ({ name, repos }: ProjectFields) =>
   name.trim() !== '' && repos.length <= MAX_PROJECT_REPOS;

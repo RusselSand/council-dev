@@ -18,7 +18,7 @@ interface ProjectDialogProps {
 /**
  * Окно проекта — как в макете: «Новый проект» или «Проект» (правка). Название, репозитории галочками (не больше 10),
  * папка документации и под ней — папка задач (в макете её нет, решение q-010 бекенда); «Отмена» и «Создать проект» /
- * «Сохранить». Не вышло сохранить — ошибка над кнопками.
+ * «Сохранить». Не вышло сохранить — ошибка над кнопками; название уже у другого проекта — под полем «Название».
  */
 export function ProjectDialog({ project, onClose }: ProjectDialogProps) {
   const { t } = useI18n();
@@ -51,7 +51,9 @@ export function ProjectDialog({ project, onClose }: ProjectDialogProps) {
           value={form.name}
           onChange={form.setName}
           placeholder={t('project.dialog.namePlaceholder')}
+          aria-invalid={form.nameError ? true : undefined}
         />
+        <LoadState loading={false} error={form.nameError} />
       </Field>
       <Field
         label={t('project.repos')}

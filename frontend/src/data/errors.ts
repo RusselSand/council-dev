@@ -10,6 +10,7 @@ export const ERROR_CODES = [
   'internal',
   'project_in_use',
   'name_required',
+  'name_taken',
   'too_many_repos',
   'unknown_repo',
   'unknown_project',

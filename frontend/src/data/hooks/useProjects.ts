@@ -18,9 +18,13 @@ export function useRepos(): Query<string[]> {
   return useQuery(() => source.listRepos(), [], 'repos');
 }
 
-/** Сервер не знает отмеченный репозиторий: список рабочих копий устарел. */
+/**
+ * Сервер не знает отмеченный репозиторий: список рабочих копий устарел. Название уже у другого проекта: его могли
+ * создать в другой вкладке — список проектов тоже мог устареть.
+ */
 function onSaveError(error: unknown): never {
   if (error instanceof ApiError && error.code === 'unknown_repo') markStale('repos');
+  if (error instanceof ApiError && error.code === 'name_taken') markStale('projects');
   throw error;
 }
 

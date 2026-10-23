@@ -529,6 +529,7 @@ export const en = translation({
   'error.internal': 'The server could not handle the request. Please try again.',
   'error.project_in_use': 'The project is already chosen in a council, so it can’t be deleted.',
   'error.name_required': 'Name the project.',
+  'error.name_taken': 'A project with this name already exists.',
   'error.too_many_repos': 'Check no more than 10 repositories.',
   'error.unknown_repo': 'One of the checked repositories is gone. The list has been refreshed — check your selection.',
   'error.unknown_project': 'This project no longer exists. The project list has been refreshed — choose another one.',

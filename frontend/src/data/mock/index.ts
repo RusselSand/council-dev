@@ -2,7 +2,7 @@ import { cleanName, type CouncilFields, type CouncilSummary } from '../../domain
 import { hasRationale, type StreamDecision } from '../../domain/decisions';
 import { canSaveOption, type Choice, type OptionSet } from '../../domain/options';
 import { canApproveOutcome, type StreamOutcome } from '../../domain/outcomes';
-import { cleanFields, MAX_PROJECT_REPOS, type Project, type ProjectFields } from '../../domain/project';
+import { cleanFields, MAX_PROJECT_REPOS, nameKey, type Project, type ProjectFields } from '../../domain/project';
 import { canAddQuestion, type Question } from '../../domain/questions';
 import { fitsKind, isFigmaLink, isPending, isSettled, researchStatus, type Research } from '../../domain/research';
 import { isLabel, type Slicing } from '../../domain/slicing';
@@ -529,18 +529,22 @@ const withCount = (project: MockProject): Project => ({
 
 /**
  * Поля проекта, как их сохраняет сервер: название и папки без пробелов по краям, репозитории без повторов. Нет
- * названия, больше 10 репозиториев или репозиторий не из COUNCIL_REPOS — ошибка. Репозитории, которые уже были
- * в проекте (kept), можно оставить, даже если их там больше нет.
+ * названия, больше 10 репозиториев, репозиторий не из COUNCIL_REPOS или название другого проекта (без учёта регистра)
+ * — ошибка. own — проект до правки: его репозитории можно оставить, даже если их там больше нет, а его название, хотя
+ * бы с другим регистром, — не повтор, даже если у другого проекта такое же.
  */
-function checkFields(fields: ProjectFields, kept: string[] = []): ProjectFields {
+function checkFields(fields: ProjectFields, own?: MockProject): ProjectFields {
   const clean = cleanFields(fields);
   const repos = [...new Set(clean.repos)];
   if (!clean.name) throw new ApiError('name_required', 'Нет названия проекта', 422);
   if (repos.length > MAX_PROJECT_REPOS) {
     throw new ApiError('too_many_repos', `Репозиториев ${repos.length}, можно ${MAX_PROJECT_REPOS}`, 422);
   }
-  const unknown = repos.find((repo) => !REPO_LIST.includes(repo) && !kept.includes(repo));
+  const unknown = repos.find((repo) => !REPO_LIST.includes(repo) && !own?.repos.includes(repo));
   if (unknown !== undefined) throw new ApiError('unknown_repo', `Репозитория ${unknown} нет в COUNCIL_REPOS`, 422);
+  const key = nameKey(clean.name);
+  const taken = own && nameKey(own.name) === key ? undefined : projects.find((p) => nameKey(p.name) === key);
+  if (taken) throw new ApiError('name_taken', `Проект «${taken.name}» уже есть: ${taken.id}`, 409);
   return { ...clean, repos };
 }
 
@@ -1158,7 +1162,7 @@ export const mockSource: DataSource = {
   async updateProject(id, fields) {
     const index = projects.findIndex((project) => project.id === id);
     if (index < 0) throw new ApiError('not_found', `Проект ${id} не найден`, 404);
-    const project: MockProject = { id, ...checkFields(fields, projects[index].repos) };
+    const project: MockProject = { id, ...checkFields(fields, projects[index]) };
     projects[index] = project;
     // Советы ссылаются на проект по id и названию: новое название видно в списке советов.
     for (const council of councils) {
