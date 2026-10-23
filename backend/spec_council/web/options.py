@@ -3,7 +3,9 @@
 правка своего варианта (PATCH …/options/{questionId}/{optionId}) и «Утвердить выбор» (POST
 …/options/approve).
 
-Вопросы шага, их варианты и выбор — options.py. Выбирать, писать свой вариант и править можно,
+Вопросы шага, их варианты и выбор — options.py. Вопросы идут в порядке зависимостей вариантов
+(options.order_of; решение владельца к задаче «…порядок вопросов по «зависит от»…»), у вопроса
+круга зависимостей — вопросы его круга (cycle). Выбирать, писать свой вариант и править можно,
 пока шаг ждёт вас, остановился или уже готов, — шаги потока это не меняет. Шаг не начат или на
 нём работают модели — options_not_ready; так же — когда запрос к вариантам другого запуска шага
 (run): шаг с тех пор запустили снова, и варианты уже другие, хоть номера у них те же.
@@ -23,9 +25,19 @@ from ..chain import begun, fragments_of, replaced
 from ..deps import AgentsDep, LauncherDep, ProjectsDep, RepositoriesDep, StoreDep
 from ..models import Council, OwnOption
 from ..models import Stream as Stored
-from ..options import Offered, approved, keyed, sets_of, with_own, with_pick, with_text
+from ..options import (
+    Offered,
+    approved,
+    keyed,
+    order_of,
+    sets_of,
+    with_own,
+    with_pick,
+    with_text,
+)
 from ..options import OptionSet as Offering
-from ..scope import Listed
+from ..order import looped, placed
+from ..scope import Listed, kept_of
 from ..standing import State, stream_standing
 from ..store import council_lock
 from .councils import folders_of
@@ -79,6 +91,7 @@ class OptionSet(Schema):
     dropped: list[DroppedOption]
     options: list[Option]
     choice: Choice | None
+    cycle: list[str]
 
 
 class OptionsRound(Schema):
@@ -125,16 +138,17 @@ class Run(Schema):
 @router.get("/councils/{council_id}/streams/{stream_id}/options")
 def list_options(council_id: str, stream_id: str, store: StoreDep, projects: ProjectsDep,
                  repositories: RepositoriesDep) -> OptionsRound:
-    """Варианты по неубранным вопросам потока, по порядку. Шаг не начат — run 0 и пусто;
-    остановился — варианты моделей, которые успели ответить."""
+    """Варианты по неубранным вопросам потока, в порядке зависимостей вариантов. Шаг не начат —
+    run 0 и пусто; остановился — варианты моделей, которые успели ответить."""
     council = council_of(store, council_id)
     stream = shown_of(council, stream_id)
     state = stream_standing(stream, folders_of(council, projects, repositories).notes) \
         .steps["options"]
     if state == "idle":
         return OptionsRound(run=0, option_sets=[])
-    return OptionsRound(run=run_of(stream), option_sets=option_sets_of(
-        council, stream, sets_of(stream, texts_of(council, stream))))
+    sets = placed(order_of(stream), sets_of(stream, texts_of(council, stream)),
+                  lambda item: item.question.id)
+    return OptionsRound(run=run_of(stream), option_sets=option_sets_of(council, stream, sets))
 
 
 # «Утвердить выбор» — раньше ручки с {question_id}: иначе «approve» был бы id вопроса.
@@ -276,11 +290,14 @@ def texts_of(council: Council, stream: Stored) -> dict[int, str]:
 
 def option_sets_of(council: Council, stream: Stored, items: list[Offering]) -> list[OptionSet]:
     """Вопрос — тот же, что на «Вопросах»; что судья думает о вариантах — как написали модели.
-    Что судья отбросил, совет не хранит: отброшенных нет."""
+    Что судья отбросил, совет не хранит: отброшенных нет. Зависимости вариантов замкнулись в
+    круг — у вопроса вопросы круга, что есть на шаге, и он сам."""
     questions = questions_of(council, stream, [Listed(item.question) for item in items])
+    order = order_of(stream)
+    kept = [question.id for question in kept_of(stream)]
     return [OptionSet(question=question, summary=summary_of(item), dropped=[],
                       options=[option_of(offered) for offered in item.offered],
-                      choice=choice_of(item))
+                      choice=choice_of(item), cycle=looped(order, question.id, kept))
             for question, item in zip(questions, items, strict=True)]
 
 

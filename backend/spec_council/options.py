@@ -3,10 +3,12 @@
 
 Вопросы шага — неубранные на «Вопросах» (scope.kept_of), по порядку: убранный сюда не идёт,
 вернули — он снова здесь, со своим выбором; добавленный после «Утвердить вопросы» — без вариантов
-совета. Варианты вопроса — из группы (фрагменты-предложения, которые на «Вопросах» уже отвечали
-на него: Fn), найденные советом (Pn, в порядке судьи) и свои варианты человека (Pn, в порядке, как
-их сохранили). Свой вариант получает номер дальше всех, какие поток уже давал (work.last_used), —
-и поиск вариантов после него нумерует дальше.
+совета. На экране они идут в порядке зависимостей вариантов (order_of): вопрос, от которого
+зависит вариант другого, — раньше него (решение владельца к задаче «…порядок вопросов по «зависит
+от»…»); номера порядок не меняет. Варианты вопроса — из группы (фрагменты-предложения, которые на
+«Вопросах» уже отвечали на него: Fn), найденные советом (Pn, в порядке судьи) и свои варианты
+человека (Pn, в порядке, как их сохранили). Свой вариант получает номер дальше всех, какие поток
+уже давал (work.last_used), — и поиск вариантов после него нумерует дальше.
 
 Человек выбирает по вопросу вариант или «Пока не решаю» (Stream.picks). Выбор стоит, пока его не
 поменяли, — и когда шаг запустили снова: варианты, найденные к тем же вопросам, повтор берёт как
@@ -29,6 +31,7 @@ from dataclasses import dataclass
 from typing import Literal
 
 from .models import Choice, OpenQuestion, OwnOption, Pick, Proposal, QuestionOptions, Stream
+from .order import Order, ordered
 from .pipeline import question_key
 from .scope import kept_of, listed, number
 from .work import earlier_choices, last_used
@@ -82,6 +85,20 @@ def sets_of(stream: Stream, fragments: Mapping[int, str] | None) -> list[OptionS
             item = OptionSet(question, found, offered, pick)
         sets.append(item)
     return sets
+
+
+def order_of(stream: Stream) -> Order:
+    """Порядок вопросов шага — по зависимостям вариантов совета (Proposal.depends_on), кругами:
+    вопрос, от которого зависит вариант другого, — раньше него (order.py). Варианты совета — от
+    запуска шага, поэтому и порядок: до нового запуска он не меняется. Считается по всем вопросам
+    шага, и убранным тоже: убрали и вернули вопрос — порядок тот же; добавленный после «Утвердить
+    вопросы» вариантов совета не имеет и встаёт по номеру — в конец. Свои варианты зависимостей не
+    имеют: их совет не дописывает."""
+    depends: dict[str, list[str]] = {}
+    for options in stream.proposals.options if stream.proposals else []:
+        for proposal in options.proposals:
+            depends.setdefault(options.question_id, []).extend(proposal.depends_on)
+    return ordered((item.question.id for item in listed(stream)), depends)
 
 
 def counted(stream: Stream) -> tuple[int, int]:

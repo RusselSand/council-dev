@@ -2,11 +2,13 @@
 правка решения (PATCH …/decisions/{questionId}), «Пересчитать» (POST
 …/decisions/{questionId}/recheck) и «Зафиксировать решения» (POST …/decisions/approve).
 
-Решения шага, их правка и фиксация — stream_decisions.py. Править можно, пока шаг ждёт вас,
-остановился или уже готов, — шаги потока это не меняет. Шаг не начат или на нём работают модели —
-decisions_not_ready; так же — когда запрос к решениям другого запуска шага (run): шаг с тех пор
-запустили снова, и решения уже другие, хоть вопросы у них те же, — и когда решение вопроса
-пересчитывают: оно занято, пока модели не кончат.
+Решения шага, их правка и фиксация — stream_decisions.py. Решения идут в порядке зависимостей
+проверки (stream_decisions.order_of; решение владельца к задаче «…порядок вопросов по «зависит
+от»…»), у решения круга зависимостей — вопросы его круга (cycle). Править можно, пока шаг
+ждёт вас, остановился или уже готов, — шаги потока это не меняет. Шаг не начат или на нём
+работают модели — decisions_not_ready; так же — когда запрос к решениям другого запуска шага
+(run): шаг с тех пор запустили снова, и решения уже другие, хоть вопросы у них те же, — и когда
+решение вопроса пересчитывают: оно занято, пока модели не кончат.
 
 «Это решение заменяет ADR-…» у противоречия с решением проекта — решения владельца к задачам
 «…подтверждение замены ADR…» и «…отметить замены ADR, потом пересчитать вопрос»: отметка — часть
@@ -32,6 +34,7 @@ from ..models import Choice, Council
 from ..models import Stream as Stored
 from ..options import OptionSet as Offering
 from ..options import sets_of
+from ..order import looped, placed
 from ..pipeline import rests_on
 from ..scope import Listed
 from ..standing import State, exported, stream_standing
@@ -42,6 +45,7 @@ from ..stream_decisions import (
     approved,
     fresh,
     marked,
+    order_of,
     recheck_of,
     rechecking_questions,
     shown_of,
@@ -107,6 +111,7 @@ class StreamDecision(Schema):
     rationale_by: Literal["ai", "user"]
     status: Status
     recheck: Recheck | None
+    cycle: list[str]
 
 
 class DecisionsRound(Schema):
@@ -273,12 +278,16 @@ def editable(stream: Stored, notes: str | None, run: int) -> State:
 # Решения по контракту.
 
 def decisions_of(council: Council, stream: Stored, notes: str | None) -> list[StreamDecision]:
-    """Решения шага: вопрос — тот же, что на «Вопросах»; вариант — тот же, что на «Вариантах»;
-    «в контексте» — варианты решений вопросов, на которые опирается проверка (pipeline.rests_on:
-    от которых зависит и где судья велел что-то поправить), как они на шаге. Номер в
-    каталоге — пока поток выгружен (standing.exported, как у «Документации»): выгрузка к другим
-    итогам знает ADR-n других решений — вопросы с тех пор могли отобрать заново."""
-    shown = shown_of(stream)
+    """Решения шага в порядке зависимостей проверки (stream_decisions.order_of): вопрос — тот же,
+    что на «Вопросах»; вариант — тот же, что на «Вариантах»; «в контексте» — варианты решений
+    вопросов, на которые опирается проверка (pipeline.rests_on: от которых зависит и где судья
+    велел что-то поправить), как они на шаге. Зависимости замкнулись в круг — у решения вопросы
+    круга, чьи решения есть на шаге, и оно само. Номер в каталоге — пока поток выгружен
+    (standing.exported, как у «Документации»): выгрузка к другим итогам знает ADR-n других
+    решений — вопросы с тех пор могли отобрать заново."""
+    order = order_of(stream.analysis)
+    shown = placed(order, shown_of(stream), lambda item: item.question.id)
+    on_step = [item.question.id for item in shown]
     offered = {item.question.id: item for item in sets_of(stream, texts_of(council, stream))}
     choices = {choice.question_id: choice for choice in stream.choices or []}
     options = {item.question.id: option_for(item.ruling.option, offered.get(item.question.id),
@@ -289,19 +298,20 @@ def decisions_of(council: Council, stream: Stored, notes: str | None) -> list[St
     past = {decision.adr_id: decision.decision for decision in stream.project_decisions or []}
     done = stream_standing(stream, notes).steps["decisions"] == "done"
     return [decision_of(item, question, options, refs.get(item.adr), past,
-                        None if done else recheck_of(stream, item))
+                        None if done else recheck_of(stream, item),
+                        looped(order, item.question.id, on_step))
             for item, question in zip(shown, questions, strict=True)]
 
 
 def decision_of(item: Shown, question: Question, options: dict[str, Option | None],
-                catalog_id: str | None, past: dict[str, str],
-                recheck: Recheck | None) -> StreamDecision:
+                catalog_id: str | None, past: dict[str, str], recheck: Recheck | None,
+                cycle: list[str]) -> StreamDecision:
     """Что совет сказал о решении: противоречие — проблемой и что поправить, без заметки судьи;
     иначе — заметкой судьи. Противоречит вариант ограничениям группы или решениям проекта —
     «последствия»: сначала ограничения, потом решения проекта, с тем, чем противоречит. Решения
     проекта, замену которых отметили, — с тем, что в них решено (past — прошлые решения,
     отобранные для потока). recheck — что с «Пересчитать»; у готового шага — ничего: решения
-    ушли в итоги."""
+    ушли в итоги. cycle — вопросы круга зависимостей, в который входит этот, и он сам."""
     found, ruling = item.analysis, item.ruling
     conflict = found.verdict == "conflict"
     problem = DecisionProblem(text=found.reason or "", fixes=[
@@ -320,7 +330,8 @@ def decision_of(item: Shown, question: Question, options: dict[str, Option | Non
                      for clash in found.project_conflicts)],
         replaces=[DecisionRef(id=adr, decision=past.get(adr, "")) for adr in ruling.replaces],
         risks=[f"F{n}" for n in found.risk_ids], fixes=[], rationale=ruling.rationale,
-        rationale_by=AUTHORS[ruling.rationale_by], status=ruling.status, recheck=recheck)
+        rationale_by=AUTHORS[ruling.rationale_by], status=ruling.status, recheck=recheck,
+        cycle=cycle)
 
 
 def context_of(question_id: str, options: dict[str, Option | None]) -> DecisionContext:
