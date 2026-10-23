@@ -465,26 +465,6 @@ export const decisionsStepApproved = (
 ): Stream => stepApproved(stream, 'decisions', decisionsNote(fixed, total), participants, judge, now);
 
 /**
- * Поток после «Это решение заменяет ADR-0003»: модели проверяют выбор вопроса заново, с сейчас (now) — «Решения» снова
- * «ИИ работает», модели совета работают, судья ждёт. В моках проверка не кончается.
- */
-export const decisionsRechecked = (stream: Stream, participants: string[], judge: string, now: string): Stream => ({
-  ...stream,
-  steps: stream.steps.map(
-    (step): StreamStep =>
-      step.step === 'decisions'
-        ? {
-            ...step,
-            state: 'running',
-            note: RUNNING_NOTE.decisions ?? '',
-            text: `${workText('decisions', participants)} заново.`,
-            progress: started('decisions', participants, judge, now),
-          }
-        : step,
-  ),
-});
-
-/**
  * Строка «Итогов» в цепочке: шаг готов — «итоги утверждены · 6», как у g1 в макете; иначе — «утверждено 2 из 3»: сколько
  * итогов утверждено из всех. Пишет сервер.
  */

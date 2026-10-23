@@ -11,3 +11,10 @@
   font-weight: var(--weight-bold);
   color: var(--color-ink);
 }
+
+/* Слева от «Зафиксировать решения»: почему она сейчас недоступна, как счётчик на «Вариантах». */
+.hint {
+  font-size: var(--text-sm);
+  color: var(--color-text-subtle);
+  text-wrap: pretty;
+}

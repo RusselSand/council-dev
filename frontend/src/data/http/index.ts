@@ -194,15 +194,16 @@ export const httpSource: DataSource = {
     const { run, decisions } = await request<DecisionsRound>('GET', `${streamPath(id, streamId)}/decisions`);
     return { run, decisions };
   },
-  async updateDecision(id, streamId, run, questionId, { rationale, status }) {
+  async updateDecision(id, streamId, run, questionId, { rationale, status, replaces }) {
     const path = `${streamPath(id, streamId)}/decisions/${encodeURIComponent(questionId)}`;
-    const { decision } = await request<{ decision: StreamDecision }>('PATCH', path, { run, rationale, status });
+    const body = { run, rationale, status, replaces };
+    const { decision } = await request<{ decision: StreamDecision }>('PATCH', path, body);
     return decision;
   },
-  async replaceDecision(id, streamId, run, questionId, adr) {
-    const path = `${streamPath(id, streamId)}/decisions/${encodeURIComponent(questionId)}/replaces`;
-    const { stream } = await request<{ stream: Stream }>('POST', path, { run, adr });
-    return stream;
+  async recheckDecision(id, streamId, run, questionId) {
+    const path = `${streamPath(id, streamId)}/decisions/${encodeURIComponent(questionId)}/recheck`;
+    const { decision } = await request<{ decision: StreamDecision }>('POST', path, { run });
+    return decision;
   },
   async approveDecisions(id, streamId, run) {
     const path = `${streamPath(id, streamId)}/decisions/approve`;

@@ -329,6 +329,9 @@ export const en = translation({
   'decisions.problem.hint':
     'To fix the option’s wording, go to the “Options” step: choose your own option with the corrected text, and the council will check it again. To keep it as it is, explain that in “why”.',
   'decisions.problem.toOptions': 'Fix in “Options”',
+  'decisions.recheck': 'Recheck',
+  'decisions.recheck.running': 'AI is rechecking this decision — please wait.',
+  'decisions.recheck.failed': 'The recheck stopped — press “Recheck” again.',
   'decisions.judge': 'Judge:',
   'decisions.adr.catalog': '{id} → {catalog}',
   'decisions.adr.state': '· {state}',
@@ -362,6 +365,7 @@ export const en = translation({
   'decisions.accept.fixed': 'Finalized · next →',
   'decisions.accept.open': 'Next →',
   'decisions.approve': 'Finalize decisions → to outcomes',
+  'decisions.approve.rechecking': 'A decision is being rechecked — you can finalize decisions once it is done.',
 
   'outcomes.nav': 'Stream outcomes',
   'outcomes.prev': 'Previous outcome',

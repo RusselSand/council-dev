@@ -1,19 +1,23 @@
 import { useI18n } from '../../../i18n';
 import { Button } from '../../../ui/Button';
-import type { ProblemView } from '../useDecisionsStep';
+import type { ProblemView, RecheckView } from '../useDecisionsStep';
 import styles from './ProblemNote.module.css';
 
 interface ProblemNoteProps {
   problem: ProblemView;
   /** «Поправить в «Вариантах»». */
   onFix: () => void;
+  /** «Пересчитать» рядом; нет — кнопки нет (шаг готов). */
+  recheck: RecheckView | null;
+  onRecheck: () => void;
 }
 
 /**
  * Красная плашка над решением, как в макете: «Проблема: …», «Что поправить» по номерам — вопрос и что сделать, —
- * пояснение, как поправить, и «Поправить в «Вариантах»».
+ * пояснение, как поправить, «Поправить в «Вариантах»» и, на месте «Перепроверить» макета, «Пересчитать»; под ними — идёт
+ * ли пересчёт или он остановился.
  */
-export function ProblemNote({ problem, onFix }: ProblemNoteProps) {
+export function ProblemNote({ problem, onFix, recheck, onRecheck }: ProblemNoteProps) {
   const { t } = useI18n();
   return (
     <section className={styles.problem}>
@@ -42,7 +46,17 @@ export function ProblemNote({ problem, onFix }: ProblemNoteProps) {
         <Button size="sm" tone="danger" onClick={onFix}>
           {t('decisions.problem.toOptions')}
         </Button>
+        {recheck && (
+          <Button variant="outline" size="sm" tone="danger" disabled={recheck.disabled} onClick={onRecheck}>
+            {t('decisions.recheck')}
+          </Button>
+        )}
       </div>
+      {recheck?.note && (
+        <p className={[styles.recheck, styles[recheck.note.tone]].join(' ')} role="status">
+          {recheck.note.text}
+        </p>
+      )}
     </section>
   );
 }

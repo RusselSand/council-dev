@@ -1,5 +1,5 @@
 import { cleanName, type CouncilFields, type CouncilSummary } from '../../domain/council';
-import { hasRationale, type StreamDecision } from '../../domain/decisions';
+import { hasRationale, recheckable, type StreamDecision } from '../../domain/decisions';
 import { canSaveOption, type Choice, type OptionSet } from '../../domain/options';
 import { canApproveOutcome, type StreamOutcome } from '../../domain/outcomes';
 import { cleanFields, MAX_PROJECT_REPOS, nameKey, type Project, type ProjectFields } from '../../domain/project';
@@ -38,7 +38,6 @@ import { noSlicing, SLICINGS, startedSlicing } from './slicings';
 import {
   decisionsApproved,
   decisionsNote,
-  decisionsRechecked,
   decisionsStepApproved,
   newDecisions,
   newStreams,
@@ -145,11 +144,15 @@ function checkNotSlicing(council: CouncilSummary) {
 }
 
 /**
- * Пока модели работают дальше «Нарезки» — раскладывают фрагменты, исследуют, работают на шаге потока, — нарезку не
- * запускают: она стёрла бы группы и потоки из-под них (решение q-001 бекенда).
+ * Пока модели работают дальше «Нарезки» — раскладывают фрагменты, исследуют, работают на шаге потока или пересчитывают
+ * решение, — нарезку не запускают: она стёрла бы группы и потоки из-под них (решение q-001 бекенда).
  */
 function checkNoModelsPastSlicing(council: CouncilSummary) {
-  const streaming = (streams.get(council.id) ?? []).some((s) => s.steps.some((step) => step.state === 'running'));
+  const streaming = (streams.get(council.id) ?? []).some(
+    (s) =>
+      s.steps.some((step) => step.state === 'running') ||
+      Object.values(storedDecisions(council.id, s.id)).some((d) => d.recheck === 'running'),
+  );
   if (council.stages.structure === 'running' || council.stages.research === 'running' || streaming) {
     throw new ApiError('models_running', `Модели совета ${council.id} работают дальше «Нарезки»`, 409);
   }
@@ -980,22 +983,48 @@ export const mockSource: DataSource = {
     if (!decisionListOf(id, streamId).some((d) => d.question.id === questionId)) {
       throw new ApiError('not_found', `Решения по вопросу ${questionId} у потока ${streamId} нет`, 404);
     }
+    const stored = storedDecisions(id, streamId)[questionId];
+    // Решение пересчитывают — оно занято, пока модели не кончат.
+    if (stored.recheck === 'running') {
+      throw new ApiError('decisions_not_ready', `Решение по ${questionId} пересчитывают`, 409);
+    }
+    // Отмечают и снимают замену только у противоречия с решением проекта; замену, которую проверка уже учла (противоречия
+    // с ней нет), не снимают.
+    const clashes = stored.conflicts.filter((c) => c.kind === 'decision').map((c) => c.id);
+    const marked = stored.replaces.map((ref) => ref.id);
+    const kept = marked.filter((adr) => !clashes.includes(adr));
+    if (
+      edit.replaces.some((adr) => !clashes.includes(adr) && !marked.includes(adr)) ||
+      kept.some((adr) => !edit.replaces.includes(adr))
+    ) {
+      throw new ApiError('unknown_conflict', `Замены решения по ${questionId} не те: ${edit.replaces.join(', ')}`, 422);
+    }
     // Без «почему» решение не фиксируется — ничего не меняем.
     if (edit.status === 'fixed' && !hasRationale(edit.rationale)) {
       throw new ApiError('rationale_required', `Решение по ${questionId} без обоснования не зафиксировать`, 422);
     }
-    const stored = storedDecisions(id, streamId)[questionId];
     // «почему» поменяли — теперь оно человека, как в макете («вы»).
     if (edit.rationale !== stored.rationale) {
       stored.rationale = edit.rationale;
       stored.rationaleBy = 'user';
     }
     stored.status = edit.status;
+    // Отметки — как прислали: прежние на своих местах, новые — в конце; моделей они не зовут. Есть отметки, которых
+    // проверка не учла (противоречие с ними ещё видно), — «Пересчитать» доступна; у готового шага — нет.
+    const past = decisionsOf(id, streamId).decisions;
+    stored.replaces = [
+      ...stored.replaces.filter((ref) => edit.replaces.includes(ref.id)),
+      ...edit.replaces
+        .filter((adr) => !marked.includes(adr))
+        .map((adr) => ({ id: adr, decision: past.find((d) => d.id === adr)?.decision ?? '' })),
+    ];
+    const done = stepOf((streams.get(id) ?? [])[at], 'decisions').state === 'done';
+    stored.recheck = !done && stored.replaces.some((ref) => clashes.includes(ref.id)) ? 'ready' : null;
     // Шаги потока правка не меняет, как в макете; меняются строка «Решений» в цепочке и совет.
     decisionsChanged(index, id, streamId);
     return copy(decisionListOf(id, streamId).find((d) => d.question.id === questionId) as StreamDecision);
   },
-  async replaceDecision(id, streamId, run, questionId, adr) {
+  async recheckDecision(id, streamId, run, questionId) {
     const index = councilAt(id);
     const at = streamAt(id, streamId);
     checkDecisionsReady(id, streamId, at, run);
@@ -1003,27 +1032,17 @@ export const mockSource: DataSource = {
       throw new ApiError('not_found', `Решения по вопросу ${questionId} у потока ${streamId} нет`, 404);
     }
     const stored = storedDecisions(id, streamId)[questionId];
-    const list = streams.get(id) ?? [];
-    // Замена уже подтверждена или шаг уже готов — ничего не меняем, отвечаем потоком как есть.
-    if (stored.replaces.some((ref) => ref.id === adr)) return copy(list[at]);
-    if (!stored.conflicts.some((c) => c.kind === 'decision' && c.id === adr)) {
-      throw new ApiError('unknown_conflict', `Решение по ${questionId} не противоречит ${adr}`, 422);
+    // Пересчитывать нечего, пересчёт уже идёт или шаг уже готов — ничего не меняем, отвечаем решением как есть.
+    const done = stepOf((streams.get(id) ?? [])[at], 'decisions').state === 'done';
+    if (!done && recheckable(stored.recheck)) {
+      // Модели проверяют выбор вопроса заново; решение — черновик и занято, «почему» ИИ напишет пересчёт, своё «почему»
+      // человека остаётся. Шаг и другие решения не меняются. В моках пересчёт не кончается, как работа моделей на шагах.
+      stored.recheck = 'running';
+      stored.status = 'draft';
+      if (stored.rationaleBy === 'ai') stored.rationale = '';
+      decisionsChanged(index, id, streamId);
     }
-    if (stepOf(list[at], 'decisions').state === 'done') return copy(list[at]);
-    // Для проверки заново подтверждённый ADR не действует: противоречия с ним нет. Решение — черновик; «почему» ИИ напишет
-    // новая проверка, своё «почему» человека остаётся.
-    const past = decisionsOf(id, streamId).decisions.find((d) => d.id === adr);
-    stored.replaces = [...stored.replaces, { id: adr, decision: past?.decision ?? '' }];
-    stored.conflicts = stored.conflicts.filter((c) => c.id !== adr);
-    stored.status = 'draft';
-    if (stored.rationaleBy === 'ai') stored.rationale = '';
-    // Модели проверяют выбор вопроса заново — новый запуск «Решений»; решения других вопросов остаются.
-    decisionRuns.set(streamKey(id, streamId), decisionsRun(id, streamId) + 1);
-    const now = new Date().toISOString();
-    const { participants, judge } = councils[index];
-    list[at] = decisionsRechecked(list[at], participants, judge, now);
-    councils[index] = streamsChanged(councils[index], list, streamId, now);
-    return copy(list[at]);
+    return copy(decisionListOf(id, streamId).find((d) => d.question.id === questionId) as StreamDecision);
   },
   async approveDecisions(id, streamId, run) {
     const index = councilAt(id);
@@ -1032,6 +1051,11 @@ export const mockSource: DataSource = {
     const list = streams.get(id) ?? [];
     // Шаг уже готов — ничего не меняем, отвечаем потоком как есть.
     if (stepOf(list[at], 'decisions').state !== 'done') {
+      // Пока хоть одно решение пересчитывают, решения не фиксируют.
+      const busy = Object.entries(storedDecisions(id, streamId)).filter(([, d]) => d.recheck === 'running');
+      if (busy.length) {
+        throw new ApiError('decisions_not_ready', `Решения по ${busy.map(([q]) => q).join(', ')} пересчитывают`, 409);
+      }
       // Где решения, переход не меняет, как в макете: черновики и открытые остаются такими.
       const all = decisionListOf(id, streamId);
       const fixed = all.filter((d) => d.status === 'fixed').length;

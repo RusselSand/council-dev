@@ -60,9 +60,16 @@ export function Decisions({ councilId, streamId, state, retrying, onBusy }: Deci
           <p className={styles.choice}>
             {t('decisions.choice')} <span className={styles.chosen}>{decision.choice}</span>
           </p>
-          {decision.problem && <ProblemNote problem={decision.problem} onFix={step.toOptions} />}
+          {decision.problem && (
+            <ProblemNote
+              problem={decision.problem}
+              onFix={step.toOptions}
+              recheck={decision.recheck}
+              onRecheck={step.recheck}
+            />
+          )}
           {decision.note && <JudgeLine note={decision.note} />}
-          <AdrCard decision={decision} onRationale={step.editRationale} onReplace={step.replace} />
+          <AdrCard decision={decision} onRationale={step.editRationale} onMark={step.mark} />
           <DecisionActions
             decision={decision}
             onDecide={step.decide}
@@ -70,12 +77,12 @@ export function Decisions({ councilId, streamId, state, retrying, onBusy }: Deci
             onAccept={step.accept}
           />
           <LoadState loading={false} error={decision.error} />
-          <LoadState loading={false} error={decision.replaceError} />
+          <LoadState loading={false} error={decision.recheckError} />
         </>
       )}
       {step.approvable && (
         <>
-          <CardFooter>
+          <CardFooter lead={step.approveHint && <span className={styles.hint}>{step.approveHint}</span>}>
             <Button disabled={step.approveDisabled} onClick={step.approve}>
               {t('decisions.approve')}
             </Button>

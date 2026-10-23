@@ -33,6 +33,7 @@ const decision = (
   rationale,
   rationaleBy: 'ai',
   status,
+  recheck: null,
   ...extra,
 });
 

@@ -354,6 +354,9 @@ export const ru = {
   'decisions.problem.hint':
     'Поправить текст варианта — на шаге «Варианты»: выберите свой вариант с поправленным текстом, совет проверит его заново. Оставить как есть — объясните это в «почему».',
   'decisions.problem.toOptions': 'Поправить в «Вариантах»',
+  'decisions.recheck': 'Пересчитать',
+  'decisions.recheck.running': 'ИИ пересчитывает это решение — дождитесь.',
+  'decisions.recheck.failed': 'Пересчёт остановился — нажмите «Пересчитать» снова.',
   'decisions.judge': 'Судья:',
   'decisions.adr.catalog': '{id} → {catalog}',
   'decisions.adr.state': '· {state}',
@@ -387,6 +390,7 @@ export const ru = {
   'decisions.accept.fixed': 'Зафиксировано · дальше →',
   'decisions.accept.open': 'Дальше →',
   'decisions.approve': 'Зафиксировать решения → к итогам',
+  'decisions.approve.rechecking': 'Идёт пересчёт решения — зафиксировать решения можно, когда он кончится.',
 
   'outcomes.nav': 'Итоги потока',
   'outcomes.prev': 'Предыдущий итог',
