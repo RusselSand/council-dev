@@ -593,6 +593,25 @@ def test_nothing_to_recheck_or_a_done_step_changes_nothing(store, pool, agents):
     assert pool.jobs == [] and stored(store, council_id) == before
 
 
+def test_a_done_step_keeps_the_marks_it_was_fixed_with(store, pool, agents):
+    """Шаг готов: решения ушли в итоги с теми заменами, что были, — отметки не ставят и не
+    снимают; «почему» и где решение правят, как прежде."""
+    council_id, _ = clashing(store, pool, agents, {"adr_id": "ADR-0007", "text": "срок"})
+    assert marks(council_id, "Q1", "ADR-0005", rationale=MINE, status="fixed").status_code == 200
+    assert approves(council_id).status_code == 200
+    pool.run()
+    before = stored(store, council_id)
+    assert error_of(marks(council_id, "Q1")) == (422, "unknown_conflict")
+    assert error_of(marks(council_id, "Q1", "ADR-0005", "ADR-0007")) == (422, "unknown_conflict")
+    assert stored(store, council_id) == before
+    q1 = marks(council_id, "Q1", "ADR-0005", rationale=WHY, status="draft").json()["decision"]
+    assert (q1["rationale"], q1["status"], [ref["id"] for ref in q1["replaces"]]) == (
+        WHY, "draft", ["ADR-0005"])
+    fixed = stored(store, council_id).decisions
+    assert [(d.question_id, d.replaces) for d in fixed if d.question_id == "Q1"] == [
+        ("Q1", ["ADR-0005"])]
+
+
 def test_a_mark_of_what_the_decision_does_not_go_against_is_refused(store, pool, agents):
     agents.judged["Q1"] = {
         "status": "conflict", "proposal_id": "P1", "reason": PROBLEM,

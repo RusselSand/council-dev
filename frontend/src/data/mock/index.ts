@@ -989,8 +989,9 @@ export const mockSource: DataSource = {
       throw new ApiError('decisions_not_ready', `Решение по ${questionId} пересчитывают`, 409);
     }
     // Отмечают и снимают замену только у противоречия с решением проекта; замену, которую проверка уже учла (противоречия
-    // с ней нет), не снимают.
-    const clashes = stored.conflicts.filter((c) => c.kind === 'decision').map((c) => c.id);
+    // с ней нет), не снимают. У готового шага отметки не ставят и не снимают: решения ушли в итоги с прежними заменами.
+    const done = stepOf((streams.get(id) ?? [])[at], 'decisions').state === 'done';
+    const clashes = done ? [] : stored.conflicts.filter((c) => c.kind === 'decision').map((c) => c.id);
     const marked = stored.replaces.map((ref) => ref.id);
     const kept = marked.filter((adr) => !clashes.includes(adr));
     if (
@@ -1018,7 +1019,6 @@ export const mockSource: DataSource = {
         .filter((adr) => !marked.includes(adr))
         .map((adr) => ({ id: adr, decision: past.find((d) => d.id === adr)?.decision ?? '' })),
     ];
-    const done = stepOf((streams.get(id) ?? [])[at], 'decisions').state === 'done';
     stored.recheck = !done && stored.replaces.some((ref) => clashes.includes(ref.id)) ? 'ready' : null;
     // Шаги потока правка не меняет, как в макете; меняются строка «Решений» в цепочке и совет.
     decisionsChanged(index, id, streamId);

@@ -565,7 +565,7 @@ export const en = translation({
   'error.decisions_not_ready':
     'Decisions can’t be changed now: the step hasn’t started or it was run again. The stream and decisions are updated.',
   'error.rationale_required': 'A decision can’t be finalized without a rationale — write the “why”.',
-  'error.unknown_conflict': 'This decision no longer has that conflict. Decisions have been refreshed.',
+  'error.unknown_conflict': 'This replacement can’t be marked or unmarked on the decision now. Decisions have been refreshed.',
   'error.outcomes_not_ready':
     'Outcomes can’t be approved now: the step hasn’t started or it was run again. The stream and outcomes are updated.',
   'error.outcome_blocked': 'The outcome is blocked — it lacks a decision, so there’s nothing to approve. Outcomes are updated.',

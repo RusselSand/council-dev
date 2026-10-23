@@ -183,18 +183,19 @@ def update_decision(council_id: str, stream_id: str, question_id: str, body: Edi
                     repositories: RepositoriesDep) -> DecisionAnswer:
     """«Почему», то, где решение, и отмеченные замены решений проекта — каким решение должно быть
     целиком. Без «почему» решение не фиксируется. Отмечают и снимают замену только у противоречия
-    с решением проекта; замену, которую проверка уже учла, не снимают. Шаги потока не меняются;
+    с решением проекта; замену, которую проверка уже учла, не снимают; у готового шага отметки не
+    ставят и не снимают — решения ушли в итоги с прежними заменами. Шаги потока не меняются;
     у шага — строка «решено 3 из 4», у совета — время изменения."""
     with council_lock:
         council = council_of(store, council_id)
         stream = stream_at(council, stream_id)
         notes = folders_of(council, projects, repositories).notes
-        editable(stream, notes, body.run)
+        state = editable(stream, notes, body.run)
         item = decision_at(stream, question_id)
         if question_id in rechecking_questions(stream):
             raise ApiError(409, "decisions_not_ready",
                            f"Решение по {question_id} потока {stream.group} пересчитывают")
-        allowed, kept = marked(item)
+        allowed, kept = marked(item, state == "done")
         if not set(body.replaces) <= allowed or not kept <= set(body.replaces):
             raise ApiError(422, "unknown_conflict",
                            f"Замены решения по {question_id} не те: {body.replaces}; отметить "

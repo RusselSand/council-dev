@@ -100,7 +100,10 @@ export interface DecisionView {
   locked: boolean;
   /** Не вышло сохранить решение — и с экрана, который закрыли раньше ответа: держится, пока его не сохраняют снова. */
   error: ApiError | undefined;
-  /** Не пересчитали: не вышло или не сохранились правки перед этим. Держится, пока не откроют другое решение. */
+  /**
+   * Не пересчитали это решение: не вышло или не сохранились правки перед этим — и когда ответ пришёл, пока было открыто
+   * другое. Держится, пока от решения не уйдут или его не пересчитывают снова.
+   */
   recheckError: ApiError | undefined;
 }
 
@@ -190,9 +193,13 @@ export function useDecisionsStep(
   const [current, setCurrent] = useState<string>();
   const [approving, setApproving] = useState(false);
   const [approveError, setApproveError] = useState<ApiError>();
-  /** «Пересчитать» ждёт ответа — у какого вопроса: у него ничего не меняют, «Зафиксировать решения» ждёт. */
-  const [rechecking, setRechecking] = useState<string | null>(null);
-  const [recheckError, setRecheckError] = useState<ApiError>();
+  /**
+   * «Пересчитать» ждёт ответа — у каких вопросов: у них ничего не меняют, «Зафиксировать решения» ждёт. Пока ждёт, можно
+   * открыть и пересчитать другое решение.
+   */
+  const [rechecking, setRechecking] = useState<string[]>([]);
+  /** Не пересчитали — по вопросу: ошибка под его решением, а не под тем, что открыто, когда пришёл ответ. */
+  const [recheckErrors, setRecheckErrors] = useState<Record<string, ApiError>>({});
   /** «Зафиксировать →» ждёт ответа — у какого вопроса: сохранилось — открывается следующее решение. */
   const [fixing, setFixing] = useState<string | null>(null);
   /** Набранное «почему» ждёт паузы в наборе. */
@@ -204,8 +211,8 @@ export function useDecisionsStep(
     setCurrent(undefined);
     setApproveError(undefined);
     setApproving(false);
-    setRechecking(null);
-    setRecheckError(undefined);
+    setRechecking([]);
+    setRecheckErrors({});
     setFixing(null);
   });
 
@@ -241,7 +248,16 @@ export function useDecisionsStep(
   const rationaleOf = (decision: StreamDecision) => edits.drafts[decision.question.id] ?? savedOf(decision);
   /** Решение пересчитывают — модели или по запросу, который ещё ждёт ответа: оно занято. */
   const busyOf = (decision: StreamDecision) =>
-    decision.recheck === 'running' || rechecking === decision.question.id;
+    decision.recheck === 'running' || rechecking.includes(decision.question.id);
+
+  /** Ошибка «Пересчитать» у решения вопроса: есть — ставится, нет — снимается. */
+  const putRecheckError = (question: string, error: ApiError | undefined) =>
+    setRecheckErrors((known) => {
+      const next = { ...known };
+      if (error) next[question] = error;
+      else delete next[question];
+      return next;
+    });
 
   /**
    * Набранное «почему» решения — на сервер, с тем, где решение, и отметками сейчас. Зафиксированное без «почему» не
@@ -277,7 +293,7 @@ export function useDecisionsStep(
 
   // Пока решения фиксируются, решение пересчитывается по запросу или правка ждёт паузы в наборе или ответа (и с экрана,
   // который закрыли), «Запустить снова» не действует; ответили или ушли с шага — снова действует.
-  const busy = approving || rechecking !== null || typing || Object.keys(edits.pending).length > 0;
+  const busy = approving || rechecking.length > 0 || typing || Object.keys(edits.pending).length > 0;
   useEffect(() => {
     if (!busy) return undefined;
     onBusy(true);
@@ -293,12 +309,12 @@ export function useDecisionsStep(
 
   const show = (id: string) => {
     if (id === currentId) return;
-    // Ушли от решения — набранное в нём уходит сразу.
+    // Ушли от решения — набранное в нём уходит сразу, а ошибка «Пересчитать» у него забывается.
     if (currentId !== undefined) {
       stopTyping();
       commit(currentId);
+      putRecheckError(currentId, undefined);
     }
-    setRecheckError(undefined);
     setCurrent(id);
   };
 
@@ -367,7 +383,7 @@ export function useDecisionsStep(
   };
 
   /** Решения пересчитывают: «Зафиксировать решения» ждёт, пока модели не кончат. */
-  const anyRechecking = rechecking !== null || decisions.some((d) => d.recheck === 'running');
+  const anyRechecking = rechecking.length > 0 || decisions.some((d) => d.recheck === 'running');
   const approveDisabled = approving || retrying || anyRechecking;
 
   /**
@@ -419,8 +435,8 @@ export function useDecisionsStep(
     // Пересчитывается решение, которое на экране: шаг с тех пор запустили снова — сервер его не пересчитает.
     const recheckedRun = query.data.run;
     const startedIn = generation.current;
-    setRechecking(id);
-    setRecheckError(undefined);
+    setRechecking((ids) => [...ids, id]);
+    putRecheckError(id, undefined);
     void (async () => {
       // Сначала — набранное и правки, которые ещё уходят (и отметки): пересчёт берёт то, что на сервере, а пока он идёт,
       // решение не правят.
@@ -430,8 +446,9 @@ export function useDecisionsStep(
         : await recheckAction.attempt(councilId, streamId, recheckedRun, id);
       // Набор сменился, пока пересчитывали (шаг запустили снова), — ответ про прежний.
       if (generation.current !== startedIn) return;
-      setRechecking(null);
-      setRecheckError(error);
+      setRechecking((ids) => ids.filter((one) => one !== id));
+      // Ошибка — у решения, которое пересчитывали, даже если открыто уже другое.
+      putRecheckError(id, error);
     })();
   };
 
@@ -462,7 +479,7 @@ export function useDecisionsStep(
       ...d.fixes.map((fix) => ({ tone: 'gray' as const, text: t('decisions.fix', { text: fix }) })),
     ];
     const recheckNote =
-      d.recheck === 'running' || rechecking === id
+      d.recheck === 'running' || rechecking.includes(id)
         ? { text: t('decisions.recheck.running'), tone: 'running' as const }
         : d.recheck === 'failed'
           ? { text: t('decisions.recheck.failed'), tone: 'failed' as const }
@@ -507,7 +524,7 @@ export function useDecisionsStep(
       acceptDisabled: lockedHere || fixing !== null || (status !== 'open' && !hasRationale(rationale)),
       locked: lockedHere,
       error: edits.errors[id],
-      recheckError,
+      recheckError: recheckErrors[id],
     };
   };
 
