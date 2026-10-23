@@ -705,8 +705,9 @@ export const mockSource: DataSource = {
     const index = councilAt(id);
     const research = researchOf(id);
     if (research[kind].state === 'setup') {
-      if (kind === 'code') research.code = { ...research.code, state: 'skipped' };
-      else research.design = { ...research.design, state: 'skipped' };
+      // Пропущенное — уже не остановившееся: причины нет.
+      if (kind === 'code') research.code = { ...research.code, state: 'skipped', stopReason: null };
+      else research.design = { ...research.design, state: 'skipped', stopReason: null };
       researchDone(index, research);
     }
     return copy(research);

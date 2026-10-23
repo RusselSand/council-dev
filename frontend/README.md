@@ -115,7 +115,9 @@ src/
 исследование уже кончилось, — так список догоняет его (`useCouncilResearch(id, running)`). Два блока рядом —
 код (`parts/CodeBlock`) и макет (`parts/DesignBlock`) — на общем `parts/ResearchBlock`, который по состоянию блока
 показывает настройку, работу моделей (`parts/RunList`), результат (`parts/ResultLine`) или «пропущено»
-(`parts/SkippedNote`) и свои кнопки. Отметки репозиториев и ссылка на Figma живут в `useResearch()` рядом с экраном и
+(`parts/SkippedNote`) и свои кнопки. Исследование остановилось (`stopReason` не `null`) — над настройкой красная
+`ui/Callout` «Остановилось» и под ней причина: сервер шлёт код, текст — из словаря (`research.stopReason.*`).
+Отметки репозиториев и ссылка на Figma живут в `useResearch()` рядом с экраном и
 уходят на сервер с «Начать исследование»; блок сменил состояние — снова как на сервере. Действия с блоком —
 `useResearchAction()`, по экземпляру на блок: у каждого своё «ждёт ответа» и своя ошибка. Есть находки — «Что пойдёт
 в потоки» (`parts/Findings`, `parts/FindingCard`, `parts/ConflictSides`): фильтр — на экране, группы — из раскладки
@@ -734,6 +736,9 @@ id); `QuestionHead` — открытый вопрос крупно, метка �
 | Судья задач     | Tasks judge       |
 | Перевод задач   | Tasks translation |
 | остановился (план) | stopped        |
+| Остановилось (исследование) | Stopped |
+| токен Figma     | Figma token       |
+| Figma ограничила запросы | Figma rate-limited the requests |
 
 ## Токены
 

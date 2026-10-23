@@ -27,6 +27,7 @@ from .models import (
     DesignScan,
     DesignStep,
     Evidence,
+    FigmaRefusal,
     FindingDecision,
     RepositoryScan,
     RepositoryStep,
@@ -35,6 +36,8 @@ from .models import (
 )
 
 Block = Literal["setup", "running", "done", "skipped"]
+# Почему исследование остановилось — кодом, текст у экрана: отказ Figma или общий failed.
+Stop = Literal["failed"] | FigmaRefusal
 Kind = Literal["fact", "inference", "conflict", "gap"]
 Source = Literal["code", "design"]
 
@@ -92,6 +95,15 @@ def stopped(scan: RepositoryScan | DesignScan | None, block: Block) -> bool:
     """Исследование снова в настройке, потому что его скан упал: модели не справились, рабочую
     копию или макет не прочитать."""
     return block == "setup" and scan is not None and scan.state == "failed"
+
+
+def stop_of(scan: RepositoryScan | DesignScan | None, block: Block) -> Stop | None:
+    """Почему исследование остановилось — кодом: Figma отказала — её отказ, другая причина —
+    failed; так и у сканов прежней версии, где причина только текстом. Не останавливалось —
+    None."""
+    if not stopped(scan, block):
+        return None
+    return scan.refusal if isinstance(scan, DesignScan) and scan.refusal else "failed"
 
 
 def taken_repos(research: Research) -> list[str] | None:

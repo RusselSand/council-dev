@@ -21,7 +21,7 @@ from spec_council.deps import (
     get_store,
 )
 from spec_council.export import design_map, repository_map
-from spec_council.figma import NO_TOKEN, FigmaError
+from spec_council.figma import NO_TOKEN, FigmaError, refused
 from spec_council.groups import marked
 from spec_council.models import (
     Council,
@@ -43,7 +43,7 @@ from spec_council.projects import Projects
 from spec_council.repository import inventory
 from spec_council.research import QUESTION, decided
 from spec_council.store import InMemoryStore
-from tests.figma_fake import LINK, FakeFigma
+from tests.figma_fake import LINK, FakeFigma, http_error
 
 client = TestClient(app)
 
@@ -64,7 +64,8 @@ GROUPED = Structure(state="done", run="g1", slicing_run="s1", labels=LABELS, ste
                               idea_fragment_ids=[], missing_idea=True, idea=IDEA_B,
                               idea_by="user")]))
 STAGES = ("brief", "slices", "structure", "research", "streams", "tasks")
-SETUP_DESIGN = {"state": "setup", "link": "", "runs": [], "minutes": 0, "frames": 0}
+SETUP_DESIGN = {"state": "setup", "link": "", "runs": [], "minutes": 0, "frames": 0,
+                "stopReason": None}
 
 # Карта кода от моделей: факт, вывод ИИ и пробел — у группы A (буква строчная и чужая — тоже),
 # неизвестное и противоречие текста с кодом — у B.
@@ -298,7 +299,7 @@ def test_before_any_research_both_wait_for_their_setup(store, projects):
     assert research_of(council_id) == {
         "code": {"state": "setup", "repos": [{"name": "api", "selected": True},
                                              {"name": "front", "selected": True}],
-                 "runs": [], "minutes": 0, "scanned": [], "rounds": 0},
+                 "runs": [], "minutes": 0, "scanned": [], "rounds": 0, "stopReason": None},
         "design": SETUP_DESIGN, "findings": [], "flows": [], "coverage": []}
     # Совет без проекта — репозиториев нет.
     store.update_council(council_id, {"project": ""})
@@ -335,7 +336,7 @@ def test_code_research_reads_the_chosen_copies_in_the_background(store, projects
                                       {"name": "front", "selected": False}],
         "runs": [{"model": "sol", "state": "waiting", "text": "проход 1 · ждёт снимка кода"},
                  {"model": "fable", "state": "waiting", "text": "проход 1 · ждёт снимка кода"}],
-        "minutes": 2, "scanned": [], "rounds": 0}
+        "minutes": 2, "scanned": [], "rounds": 0, "stopReason": None}
     council = listed(council_id)
     assert (council["stage"], council["state"]) == ("research", "running")
     assert council["activity"] == [at_stage("research", "running", "sol и fable исследуют код")]
@@ -349,7 +350,7 @@ def test_code_research_reads_the_chosen_copies_in_the_background(store, projects
                                    {"name": "front", "selected": False}],
         "runs": [], "minutes": 0,
         "scanned": [{"name": "api", "commit": inventory(repos).commit_sha, "files": 2}],
-        "rounds": 1}
+        "rounds": 1, "stopReason": None}
     assert research["findings"] == CODE_FINDINGS
     assert research["flows"] == [{"name": "Создание заявки", "entry": "app.py", "steps": [
         {"text": "main принимает заявку.", "findings": ["R1"]}]}]
@@ -415,24 +416,26 @@ def test_a_copy_that_cannot_be_read_stops_the_research_with_the_reason(store, pr
     assert scan.state == "failed" and "Каталога нет" in scan.error
     assert agents.asked == []
     code = research_of(council_id)["code"]
-    # Снова в настройке — с теми же рабочими копиями.
+    # Снова в настройке — с теми же рабочими копиями; у кода причина у экрана одна — общая.
     assert (code["state"], code["repos"]) == ("setup", [{"name": "api", "selected": True},
                                                         {"name": "front", "selected": True}])
+    assert code["stopReason"] == "failed"
     assert listed(council_id)["activity"] == [at_stage(
         "research", "waiting",
         "Исследование кода остановилось — начните его снова или пропустите.")]
-    assert starts(council_id, "code", {"repos": ["api"]}).json()["research"]["code"][
-        "state"] == "running"
+    code = starts(council_id, "code", {"repos": ["api"]}).json()["research"]["code"]
+    assert (code["state"], code["stopReason"]) == ("running", None)
 
 
 def test_models_that_fail_stop_the_research_and_a_new_start_runs_it(store, projects, agents,
                                                                    pool):
     council_id = confirmed(store, projects)
     agents.offline = {"sol", "fable"}
-    researched_code(council_id, pool)
-    assert research_of(council_id)["code"]["state"] == "setup"
+    code = researched_code(council_id, pool)["code"]
+    assert (code["state"], code["stopReason"]) == ("setup", "failed")
     agents.offline = set()
-    assert researched_code(council_id, pool)["code"]["state"] == "done"
+    code = researched_code(council_id, pool)["code"]
+    assert (code["state"], code["stopReason"]) == ("done", None)
 
 
 def test_the_code_research_does_not_read_the_council_folders(store, projects, agents, pool,
@@ -515,13 +518,14 @@ def test_design_research_reads_a_snapshot_of_the_figma_file(store, projects, age
     design = res.json()["research"]["design"]
     assert design == {"state": "running", "link": LINK, "minutes": 1, "frames": 0, "runs": [
         {"model": "sol", "state": "waiting", "text": "проход 1 · ждёт снимка макета"},
-        {"model": "fable", "state": "waiting", "text": "проход 1 · ждёт снимка макета"}]}
+        {"model": "fable", "state": "waiting", "text": "проход 1 · ждёт снимка макета"}],
+        "stopReason": None}
     assert listed(council_id)["activity"] == [
         at_stage("research", "running", "sol и fable исследуют макет")]
     pool.run()
     research = research_of(council_id)
     assert research["design"] == {"state": "done", "link": LINK, "runs": [], "minutes": 0,
-                                  "frames": 2}
+                                  "frames": 2, "stopReason": None}
     assert research["findings"] == [
         {"id": "D1", "group": "A", "source": "design", "kind": "fact",
          "text": "Экран тредов показывает поиск.", "conflict": None, "ref": "Figma · Threads",
@@ -567,19 +571,49 @@ def test_without_a_figma_token_the_design_research_stops_with_the_reason(store, 
     finally:
         app.dependency_overrides.pop(get_figma)
     assert store.get_council(council_id).research.design_scan.error == NO_TOKEN
-    assert research_of(council_id)["design"] == {**SETUP_DESIGN, "link": LINK}
+    # Токена нет — это не отказ Figma: причина у экрана общая.
+    assert research_of(council_id)["design"] == {**SETUP_DESIGN, "link": LINK,
+                                                 "stopReason": "failed"}
     assert listed(council_id)["activity"][0]["text"] == (
         "Исследование макета остановилось — начните его снова или пропустите.")
 
 
-def test_a_figma_refusal_stops_the_design_research(store, projects, pool, figma):
+@pytest.mark.parametrize(("code", "reason"), [
+    (401, "figma_token"), (403, "figma_token"), (429, "figma_limit"), (404, "figma_file"),
+    (400, "failed"), (500, "failed")])
+def test_a_figma_refusal_stops_the_design_research_with_its_code(store, projects, pool, figma,
+                                                                 code, reason):
+    """Токен не подходит, Figma ограничила запросы, файла нет — у экрана свои тексты; другой
+    отказ — общий. Причина — пока исследование снова в настройке."""
     council_id = confirmed(store, projects)
-    figma.fail = FigmaError("Токен Figma не подходит: истёк")
+    figma.fail = refused(http_error(code))
     starts(council_id, "design", {"link": LINK})
     pool.run()
-    assert "не подходит" in store.get_council(council_id).research.design_scan.error
-    assert research_of(council_id)["design"]["state"] == "setup"
-    assert acts(council_id, "design", "skip").json()["research"]["design"]["state"] == "skipped"
+    assert store.get_council(council_id).research.design_scan.error == str(figma.fail)
+    design = research_of(council_id)["design"]
+    assert (design["state"], design["stopReason"]) == ("setup", reason)
+    design = acts(council_id, "design", "skip").json()["research"]["design"]
+    assert (design["state"], design["stopReason"]) == ("skipped", None)
+    design = acts(council_id, "design", "reset").json()["research"]["design"]
+    assert (design["state"], design["stopReason"]) == ("setup", None)
+
+
+def test_a_new_start_after_a_refusal_has_no_reason_until_it_stops_again(store, projects, pool,
+                                                                        figma):
+    council_id = confirmed(store, projects)
+    figma.fail = refused(http_error(429))
+    starts(council_id, "design", {"link": LINK})
+    pool.run()
+    figma.fail = FigmaError("Figma недоступна: timed out")
+    design = starts(council_id, "design", {"link": LINK}).json()["research"]["design"]
+    assert (design["state"], design["stopReason"]) == ("running", None)
+    pool.run()
+    assert research_of(council_id)["design"]["stopReason"] == "failed"
+    figma.fail = None
+    starts(council_id, "design", {"link": LINK})
+    pool.run()
+    design = research_of(council_id)["design"]
+    assert (design["state"], design["stopReason"]) == ("done", None)
 
 
 # POST /api/councils/{id}/research/{kind}/skip
@@ -674,7 +708,8 @@ def test_reset_research_drops_its_findings_and_keeps_its_choice(store, projects,
     research = res.json()["research"]
     assert research["code"] == {"state": "setup", "repos": [{"name": "api", "selected": True},
                                                             {"name": "front", "selected": False}],
-                                "runs": [], "minutes": 0, "scanned": [], "rounds": 0}
+                                "runs": [], "minutes": 0, "scanned": [], "rounds": 0,
+                                "stopReason": None}
     assert [f["source"] for f in research["findings"]] == ["design"] * 3
     assert (research["flows"], research["coverage"]) == ([], [])
     researched_code(council_id, pool)
@@ -1033,7 +1068,7 @@ def test_research_of_the_previous_version_opens_as_it_was_passed(store, projects
                                    {"name": "front", "selected": False}],
         "runs": [], "minutes": 0, "scanned": [
             {"name": "api", "commit": "7440e1a59acf61eafe9d13c2441b39a8ee72e73b", "files": 3}],
-        "rounds": 2}
+        "rounds": 2, "stopReason": None}
     assert view["design"] == {**SETUP_DESIGN, "state": "skipped"}
     assert view["findings"] == [
         {"id": "R1", "group": "A", "source": "code", "kind": "fact", "text": "Факт.",
@@ -1049,6 +1084,21 @@ def test_research_of_the_previous_version_opens_as_it_was_passed(store, projects
          "ref": None, "decision": None}]
     assert view["flows"] == [{"name": "Поток", "entry": "core/a.py:run", "steps": []}]
     assert listed(council_id)["stages"]["research"] == "done"
+
+
+def test_research_stopped_in_the_previous_version_has_the_common_reason(store, projects):
+    """Прежняя версия писала причину только текстом — даже отказ Figma: код у неё общий."""
+    research = Research.model_validate({
+        "scan": {"state": "failed", "run": "s1", "path": "api", "steps": [],
+                 "error": "Каталога нет: /repos/api"},
+        "design_scan": {"state": "failed", "run": "d1", "links": [LINK], "steps": [],
+                        "error": "Токен Figma не подходит: истёк, отозван или без права "
+                                 "file_content:read — выпустите новый и впишите его в "
+                                 "FIGMA_TOKEN"}})
+    council_id = confirmed(store, projects, research=research)
+    view = research_of(council_id)
+    assert (view["code"]["state"], view["code"]["stopReason"]) == ("setup", "failed")
+    assert view["design"] == {**SETUP_DESIGN, "link": LINK, "stopReason": "failed"}
 
 
 def test_research_set_up_anew_keeps_the_explicit_approval(store, projects):

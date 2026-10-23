@@ -521,6 +521,11 @@ class FigmaSource(BaseModel):
     images: int = 0
 
 
+# Отказ Figma, который экран называет своим текстом: токен не подходит, Figma ограничила
+# запросы, файла нет или у владельца токена нет к нему доступа.
+FigmaRefusal = Literal["figma_token", "figma_limit", "figma_file"]
+
+
 class DesignScan(BaseModel):
     """Скан макета Figma под идею потока: снимок файла — страниц из ссылок, со структурой и
     картинками фреймов, — участники исследуют его, судья проверяет и, если пробелы
@@ -538,6 +543,9 @@ class DesignScan(BaseModel):
     result: DesignMap | None = None
     follow_up: list[DesignFollowUp] = []
     error: str | None = None
+    # Скан упал, потому что Figma отказала, — каким отказом. Другая причина и сканы прежней
+    # версии, у которых причина только текстом (error), — None.
+    refusal: FigmaRefusal | None = None
     # Решения человека по находкам описания, как у скана репозитория.
     decisions: dict[str, FindingDecision] = {}
 
