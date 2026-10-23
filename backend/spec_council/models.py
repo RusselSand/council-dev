@@ -829,6 +829,10 @@ class DecisionAnalysis(BaseModel):
     # По вопросу, по мере готовности.
     analyses: list[QuestionAnalysis] = []
     error: str | None = None
+    # Порядок решений на «Решениях» по зависимостям проверки — кругами (order.py), каким он был до
+    # первого пересчёта вопроса: пересчёт меняет зависимости вопроса, а порядок — нет, до нового
+    # запуска шага. Пересчётов не было (и у хода прежней версии) — None: порядок по анализам.
+    order: list[list[str]] | None = None
 
 
 class Decision(BaseModel):

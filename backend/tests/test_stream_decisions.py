@@ -213,7 +213,8 @@ def test_checked_decisions_are_drafts_with_the_councils_rationale(store, pool):
         "question": questions["Q1"], "adr": "ADR-1", "catalogId": None,
         "option": option_at(council_id, "Q1", "P1"), "verdict": "validated", "note": None,
         "problem": None, "context": [], "conflicts": [], "replaces": [], "risks": [],
-        "fixes": [], "rationale": WHY, "rationaleBy": "ai", "status": "draft", "recheck": None}
+        "fixes": [], "rationale": WHY, "rationaleBy": "ai", "status": "draft", "recheck": None,
+        "cycle": []}
     # Передан как unresolved — судья взял вариант сам и объяснил почему.
     assert (q2["question"], q2["adr"], q2["option"], q2["verdict"], q2["note"]) == (
         questions["Q2"], "ADR-2", option_at(council_id, "Q2", "P2"), "recommended", "проще")
@@ -877,6 +878,84 @@ def test_a_retry_takes_a_new_run_and_keeps_the_decisions_made(store, pool, agent
     assert approves(council_id, run=2).status_code == 200
 
 
+# --- порядок решений по зависимостям проверки
+
+def order_of(council_id) -> list[tuple[str, str, list[str]]]:
+    return [(item["question"]["id"], item["adr"], item["cycle"])
+            for item in round_of(council_id)["decisions"]]
+
+
+def test_a_decision_goes_after_the_ones_its_check_depends_on(store, pool, agents):
+    """Решение владельца: решение вопроса, от которого зависит проверка другого, — раньше; без
+    зависимостей — по номерам. Номера вопросов и решений (ADR-n) не меняются; правки, убрать и
+    вернуть вопрос порядок не меняют."""
+    agents.judged["Q1"] = {"status": "validated", "proposal_id": "P1",
+                           "rationale": {"text": WHY, "source": "ai"},
+                           "validation": {"depends_on_question_ids": ["Q3"]}}
+    council_id, _ = checked(store, pool)
+    assert order_of(council_id) == [("Q3", "ADR-3", []), ("Q1", "ADR-1", []),
+                                    ("Q2", "ADR-2", [])]
+    res = edits(council_id, "Q3", MINE, "fixed")
+    assert res.status_code == 200, res.text
+    assert res.json()["decision"]["cycle"] == []
+    questions = f"/api/councils/{council_id}/streams/A/questions"
+    assert client.patch(f"{questions}/Q3", json={"removed": True}).status_code == 200
+    assert order_of(council_id) == [("Q1", "ADR-1", []), ("Q2", "ADR-2", [])]
+    assert client.patch(f"{questions}/Q3", json={"removed": False}).status_code == 200
+    assert order_of(council_id) == [("Q3", "ADR-3", []), ("Q1", "ADR-1", []),
+                                    ("Q2", "ADR-2", [])]
+
+
+def test_decisions_that_depend_on_each_other_go_by_number_and_say_so(store, pool, agents):
+    """Решение владельца: зависимости замкнулись в круг — вопросы круга по номерам, и у них видно,
+    что они зависят друг от друга."""
+    agents.judged["Q1"] = {"status": "validated", "proposal_id": "P1",
+                           "rationale": {"text": WHY, "source": "ai"},
+                           "validation": {"depends_on_question_ids": ["Q3", "Q2"]}}
+    agents.judged["Q3"] = {"status": "validated", "rationale": {"text": WHY, "source": "ai"},
+                           "validation": {"depends_on_question_ids": ["Q1"]}}
+    council_id, _ = checked(store, pool)
+    # Q1 и Q3 зависят друг от друга, и Q1 — ещё от Q2: круг идёт после Q2.
+    assert order_of(council_id) == [("Q2", "ADR-2", []), ("Q1", "ADR-1", ["Q1", "Q3"]),
+                                    ("Q3", "ADR-3", ["Q1", "Q3"])]
+    res = edits(council_id, "Q1", MINE, "fixed")
+    assert res.status_code == 200, res.text
+    assert res.json()["decision"]["cycle"] == ["Q1", "Q3"]
+    # Убрали вопрос круга — его нет и в круге, а порядок тот же.
+    questions = f"/api/councils/{council_id}/streams/A/questions"
+    assert client.patch(f"{questions}/Q3", json={"removed": True}).status_code == 200
+    assert order_of(council_id) == [("Q2", "ADR-2", []), ("Q1", "ADR-1", [])]
+
+
+def test_a_recheck_keeps_the_order_and_a_new_run_of_the_step_changes_it(store, pool, agents):
+    """Решение владельца: порядок меняется только с новым запуском шага, а не после пересчёта
+    одного вопроса — чтобы вопросы не прыгали под руками."""
+    agents.judged["Q1"] = {"status": "conflict", "proposal_id": "P1",
+                           "reason": "P1 может заменить ADR-0005.",
+                           "validation": {"adr_conflicts": [AGAINST],
+                                          "depends_on_question_ids": ["Q2"]}}
+    agents.stuck = {"Q3"}
+    council_id, _ = chosen(store, pool, project_decisions=PAST)
+    pool.run()
+    assert steps_of(stream_of(council_id))["decisions"]["state"] == "failed"
+    assert order_of(council_id) == [("Q2", "ADR-2", []), ("Q1", "ADR-1", [])]
+    assert marks(council_id, "Q1", "ADR-0005").status_code == 200
+    assert rechecks(council_id, "Q1").status_code == 200
+    del agents.judged["Q1"]                         # пересчёт: от Q2 решение больше не зависит
+    pool.run()
+    q1 = decisions_of(council_id)["Q1"]
+    assert (q1["verdict"], q1["context"], q1["recheck"]) == ("validated", [], None)
+    assert order_of(council_id) == [("Q2", "ADR-2", []), ("Q1", "ADR-1", [])]
+    assert stored(store, council_id).analysis.order == [["Q2"], ["Q1"]]
+    # Новый запуск шага — порядок по его проверкам.
+    agents.stuck = set()
+    assert client.post(f"/api/councils/{council_id}/streams/A/retry", json={}).status_code == 200
+    pool.run()
+    assert round_of(council_id)["run"] == 2
+    assert order_of(council_id) == [("Q1", "ADR-1", []), ("Q2", "ADR-2", []),
+                                    ("Q3", "ADR-3", [])]
+
+
 # --- поток прежней версии
 
 def test_a_stream_of_the_prior_version_shows_its_fixed_decisions(store):
@@ -945,3 +1024,25 @@ def test_a_prior_option_the_models_did_not_check_gives_way_to_their_check(store)
     stream = stored(store, council_id)
     assert [(r.option, r.rationale, r.status) for r in stream.rulings] == [("P1", WHY, "fixed")]
     assert [(d.proposal, d.rationale) for d in stream.decisions] == [("P2", MINE)]
+
+
+def test_a_stream_of_the_prior_version_orders_its_decisions_by_their_checks(store):
+    """Порядка поток прежней версии не помнит — он по зависимостям проверки, как у нового."""
+    council_id = streaming(store)
+    questions = [OpenQuestion(id="Q1", text=SEARCH, source="inferred", proposal_ids=[2]),
+                 OpenQuestion(id="Q2", text=MEASURE, source="discovered")]
+    found = [QuestionOptions(question_id="Q1", verdict="recommended", proposals=[
+                 Proposal(id="P1", text=ONE, reason="так проще", recommended=True)]),
+             QuestionOptions(question_id="Q2", verdict="recommended", proposals=[
+                 Proposal(id="P2", text=SHARE, reason="мерило", recommended=True)])]
+    put(store, council_id, project_decisions=[],
+        questions=QuestionDiscovery(state="done", run="q1", steps=[], questions=questions),
+        scope=questions, proposals=ProposalDiscovery(state="done", run="p1", steps=[],
+                                                     options=found),
+        choices=[Choice(question_id="Q1", proposal="P1"), Choice(question_id="Q2", proposal="P2")],
+        analysis=DecisionAnalysis.model_validate({
+            "state": "done", "run": "a1", "steps": [], "analyses": [
+                {"question_id": "Q1", "verdict": "validated", "proposal": "P1",
+                 "depends_on": ["Q2"]},
+                {"question_id": "Q2", "verdict": "validated", "proposal": "P2"}]}))
+    assert order_of(council_id) == [("Q2", "ADR-2", []), ("Q1", "ADR-1", [])]

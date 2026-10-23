@@ -307,6 +307,7 @@ export const ru = {
   'questions.approve': 'Утвердить вопросы → к вариантам',
   'questions.prev': 'Предыдущий вопрос',
   'questions.next': 'Следующий вопрос',
+  'questions.loop': 'Круг зависимостей: {ids} зависят друг от друга.',
 
   'options.done': 'готово {done} из {total}',
   'options.judge': 'Выбор за вами',

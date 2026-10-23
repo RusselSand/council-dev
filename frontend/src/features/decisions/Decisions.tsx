@@ -1,3 +1,4 @@
+import { DependencyLoop } from '../../components/DependencyLoop';
 import { LoadState } from '../../components/LoadState';
 import { QuestionHead } from '../../components/QuestionHead';
 import { QuestionNav } from '../../components/QuestionNav';
@@ -60,6 +61,7 @@ export function Decisions({ councilId, streamId, state, retrying, onBusy }: Deci
           <p className={styles.choice}>
             {t('decisions.choice')} <span className={styles.chosen}>{decision.choice}</span>
           </p>
+          <DependencyLoop ids={decision.cycle} />
           {decision.problem && (
             <ProblemNote
               problem={decision.problem}

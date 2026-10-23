@@ -3,7 +3,10 @@
 Решения шага — по неубранным на «Вопросах» вопросам (scope.kept_of), которые модели проверили
 (DecisionAnalysis.analyses), по порядку: убранный сюда не идёт, вернули — его решение снова здесь;
 добавленный после проверки решения не имеет. Номер решения ADR-n — по n-му вопросу отбора
-(Stream.scope): тот же номер у решения в итогах и в выгрузке (pipeline.adr_id).
+(Stream.scope): тот же номер у решения в итогах и в выгрузке (pipeline.adr_id). На экране решения
+идут в порядке зависимостей проверки (order_of): решение вопроса, от которого зависят другие, —
+раньше них (решение владельца к задаче «…порядок вопросов по «зависит от»…»); номера порядок не
+меняет. Порядок — от запуска шага: пересчёт одного вопроса его не меняет.
 
 Вариант решения — тот, что проверили модели: выбор человека на «Вариантах», а у вопроса,
 переданного как unresolved, — вариант, который рекомендовал судья; не рекомендовал — варианта нет.
@@ -36,6 +39,7 @@ from dataclasses import dataclass
 from typing import Literal
 
 from .models import Decision, DecisionAnalysis, OpenQuestion, QuestionAnalysis, Ruling, Stream
+from .order import Order, ordered
 from .pipeline import adr_id, question_key
 from .scope import kept_of
 from .work import known_decisions, remembered
@@ -150,7 +154,9 @@ def with_recheck(stream: Stream, question_id: str, work: DecisionAnalysis) -> St
 
 def rechecked(stream: Stream, question_id: str, work: DecisionAnalysis) -> Stream:
     """Поток, где ход пересчёта вопроса — на своём месте. Пересчёт кончился — его проверка
-    встаёт в ход шага на место прежней проверки вопроса, и хода пересчёта больше нет."""
+    встаёт в ход шага на место прежней проверки вопроса, и хода пересчёта больше нет. Порядок
+    решений остаётся прежним: у новой проверки зависимости могли стать другими, а порядок
+    меняется только с новым запуском шага (order_of)."""
     rechecks = {**stream.rechecks, question_id: work}
     if work.state != "done":
         return stream.model_copy(update={"rechecks": rechecks})
@@ -158,9 +164,22 @@ def rechecked(stream: Stream, question_id: str, work: DecisionAnalysis) -> Strea
     found = next((one for one in work.analyses if one.question_id == question_id), None)
     analysis = stream.analysis
     if found is not None and analysis is not None:
-        analysis = analysis.model_copy(update={"analyses": [
+        analysis = analysis.model_copy(update={"order": order_of(analysis), "analyses": [
             found if one.question_id == question_id else one for one in analysis.analyses]})
     return stream.model_copy(update={"rechecks": rechecks, "analysis": analysis})
+
+
+def order_of(analysis: DecisionAnalysis | None) -> Order:
+    """Порядок решений шага — по зависимостям проверки (depends_on), кругами: решение вопроса, от
+    которого зависят другие, — раньше них (order.py). Считается по проверкам запуска шага, и
+    убранные вопросы в нём тоже: убрали и вернули вопрос — порядок тот же. Вопрос пересчитали —
+    порядок такой, каким был до пересчёта (DecisionAnalysis.order)."""
+    if analysis is None:
+        return []
+    if analysis.order is not None:
+        return analysis.order
+    return ordered((found.question_id for found in analysis.analyses),
+                   {found.question_id: found.depends_on for found in analysis.analyses})
 
 
 def confirmed(stream: Stream) -> dict[str, list[str]]:

@@ -1,0 +1,14 @@
+/* Жёлтая строка под вопросом, как зависимость варианта «не решён»: длинная — переносится. */
+.loop {
+  align-self: flex-start;
+  max-width: 100%;
+  margin: 0;
+  padding: var(--space-4) var(--space-10);
+  border-radius: var(--radius-6);
+  background: var(--state-waiting-bg);
+  color: var(--state-waiting-ink);
+  font-size: var(--text-sm);
+  line-height: var(--leading-normal);
+  text-wrap: pretty;
+  overflow-wrap: anywhere;
+}

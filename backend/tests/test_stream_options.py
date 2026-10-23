@@ -227,7 +227,7 @@ def test_options_come_by_question_the_group_ones_first_with_what_the_judge_says(
              "reason": None, "cost": None, "dependsOn": [], "basedOn": None},
             {"id": "P1", "text": ONE, "source": "ai", "recommended": True, "reason": "так проще",
              "cost": None, "dependsOn": [], "basedOn": None}],
-        "choice": None}
+        "choice": None, "cycle": []}
     assert (q2["summary"], q2["dropped"], q2["choice"]) == (BOTH, [], None)
     assert [(o["id"], o["text"], o["recommended"], o["dependsOn"]) for o in q2["options"]] == [
         ("P2", SHARE, False, []), ("P3", POLL, False, ["Q1"])]
@@ -247,6 +247,51 @@ def test_only_kept_questions_are_on_the_options_and_a_new_one_has_none(store, po
     assert client.patch(f"{questions_path(council_id)}/Q2",
                         json={"removed": False}).status_code == 200
     assert sets_of(council_id)["Q2"]["choice"] == {"kind": "option", "option": "P3"}
+
+
+def order_of(council_id) -> list[tuple[str, list[str]]]:
+    return [(item["question"]["id"], item["cycle"]) for item in round_of(council_id)["optionSets"]]
+
+
+def test_a_question_goes_after_the_ones_its_options_depend_on(store, pool, monkeypatch):
+    """Решение владельца: вопрос, от которого зависит вариант другого, — раньше; без
+    зависимостей — по номерам. Номера не меняются; порядок меняется только с новым запуском шага —
+    выбор, свой вариант, убрать и вернуть вопрос его не меняют."""
+    monkeypatch.setitem(FOUND_OPTIONS, SEARCH, [{"text": ONE, "reason": "так проще",
+                                                 "depends_on_question_ids": ["Q3"]}])
+    council_id = offered(store, pool)
+    # Вариант Q1 зависит от Q3, вариант Q2 (P3) — от Q1.
+    assert order_of(council_id) == [("Q3", []), ("Q1", []), ("Q2", [])]
+    assert [o["dependsOn"] for o in sets_of(council_id)["Q1"]["options"]] == [[], ["Q3"]]
+    assert chooses(council_id, "Q3", "P4").status_code == 200
+    assert adds(council_id, "Q1", OWN).status_code == 201
+    assert order_of(council_id) == [("Q3", []), ("Q1", []), ("Q2", [])]
+    assert client.patch(f"{questions_path(council_id)}/Q3",
+                        json={"removed": True}).status_code == 200
+    assert order_of(council_id) == [("Q1", []), ("Q2", [])]
+    assert client.patch(f"{questions_path(council_id)}/Q3",
+                        json={"removed": False}).status_code == 200
+    # Вопрос, добавленный после «Утвердить вопросы», вариантов совета не имеет — по номеру.
+    assert client.post(questions_path(council_id), json={"text": HOSTING}).status_code == 201
+    assert order_of(council_id) == [("Q3", []), ("Q1", []), ("Q2", []), ("Q4", [])]
+
+
+def test_questions_whose_options_depend_on_each_other_go_by_number_and_say_so(store, pool,
+                                                                            monkeypatch):
+    """Решение владельца: зависимости замкнулись в круг — вопросы круга по номерам, и у них видно,
+    что они зависят друг от друга. Вопрос круга — и в ответе на выбор."""
+    monkeypatch.setitem(FOUND_OPTIONS, SEARCH, [{"text": ONE, "reason": "так проще",
+                                                 "depends_on_question_ids": ["Q2", "Q3"]}])
+    council_id = offered(store, pool)
+    # Q1 и Q2 зависят друг от друга, и Q1 — ещё от Q3: круг идёт после Q3.
+    assert order_of(council_id) == [("Q3", []), ("Q1", ["Q1", "Q2"]), ("Q2", ["Q1", "Q2"])]
+    res = chooses(council_id, "Q1", "P1")
+    assert res.status_code == 200, res.text
+    assert res.json()["optionSet"]["cycle"] == ["Q1", "Q2"]
+    # Убрали вопрос круга — его нет и в круге, а порядок тот же.
+    assert client.patch(f"{questions_path(council_id)}/Q2",
+                        json={"removed": True}).status_code == 200
+    assert order_of(council_id) == [("Q3", []), ("Q1", [])]
 
 
 def test_options_of_a_missing_council_or_stream_are_not_found(store):

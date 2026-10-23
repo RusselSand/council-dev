@@ -88,8 +88,11 @@ export interface OptionsStep {
   show: (id: string) => void;
   prev: () => void;
   next: () => void;
-  /** Открытый вопрос; вопросов нет — null. */
-  question: { id: string; text: string; source: string } | null;
+  /**
+   * Открытый вопрос; вопросов нет — null. cycle — вопросы его круга зависимостей, и он сам, по номерам: «Круг
+   * зависимостей: Q1 и Q2 зависят друг от друга.»; не в круге — пусто.
+   */
+  question: { id: string; text: string; source: string; cycle: string[] } | null;
   judge: JudgeView | null;
   toggleDropped: () => void;
 
@@ -392,7 +395,12 @@ export function useOptionsStep(
       if (index >= 0 && index < sets.length - 1) show(sets[index + 1].question.id);
     },
     question: set
-      ? { id: set.question.id, text: set.question.text, source: t(`questions.source.${set.question.source}`) }
+      ? {
+          id: set.question.id,
+          text: set.question.text,
+          source: t(`questions.source.${set.question.source}`),
+          cycle: set.cycle,
+        }
       : null,
     judge: set
       ? {

@@ -1,8 +1,11 @@
 import type { Choice, DroppedOption, Option, OptionSet, OptionSource } from '../../domain/options';
 import { streamKey } from './streams';
 
-/** Варианты на вопрос в моках — без самого вопроса: вопрос берётся из вопросов потока, как его видит «Вопросы». */
-export type MockOptionSet = Omit<OptionSet, 'question'>;
+/**
+ * Варианты на вопрос в моках — без самого вопроса: вопрос берётся из вопросов потока, как его видит «Вопросы»; и без
+ * круга зависимостей: его, как и порядок вопросов, моки считают по зависимостям вариантов (order.ts).
+ */
+export type MockOptionSet = Omit<OptionSet, 'question' | 'cycle'>;
 
 /** Вариант совета: без цены и зависимостей, не рекомендован, если не сказано другое. */
 const option = (

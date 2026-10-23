@@ -1,3 +1,4 @@
+import { DependencyLoop } from '../../components/DependencyLoop';
 import { LoadState } from '../../components/LoadState';
 import { QuestionHead } from '../../components/QuestionHead';
 import { QuestionNav } from '../../components/QuestionNav';
@@ -59,6 +60,7 @@ export function Options({ councilId, streamId, state, judge, retrying, onBusy }:
               </Tag>
             }
           />
+          <DependencyLoop ids={step.question.cycle} />
           <JudgeNote judge={step.judge} onToggle={step.toggleDropped} />
           <div className={styles.options} role="radiogroup" aria-label={step.question.text}>
             {step.options.map((option) => (
