@@ -8,7 +8,7 @@ export default defineConfig(({ mode }) => {
   return {
     plugins: [react()],
     server: {
-      port: 5173,
+      port: 5420,
       // Фронт ходит в /api на своём адресе, а сервер в разработке — на своём порту: vite передаёт запросы ему.
       proxy: { '/api': env.VITE_API_PROXY || 'http://localhost:8420' },
       // В докере на Windows правки с хоста не присылают событий файловой системы — vite их опрашивает.

@@ -11,6 +11,6 @@ RUN npm ci
 
 COPY . .
 
-EXPOSE 5173
+EXPOSE 5420
 # --host: иначе vite слушает только localhost контейнера, и с хоста его не открыть.
 CMD ["npm", "run", "dev", "--", "--host", "0.0.0.0"]

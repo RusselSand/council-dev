@@ -84,7 +84,7 @@ services:
   frontend:
     build: ./frontend
     ports:
-      - "5173:5173"
+      - "5420:5420"
     volumes:
       - ./frontend:/app
       # node_modules берём из образа: с хоста приедут бинарники под Windows.

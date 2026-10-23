@@ -10,7 +10,7 @@ React 18, TypeScript, Vite. Экраны собираются по макету 
 
 ```
 npm --prefix frontend install
-npm --prefix frontend run dev          # http://localhost:5173, запросы /api — на бекенд, localhost:8420
+npm --prefix frontend run dev          # http://localhost:5420, запросы /api — на бекенд, localhost:8420
 npm --prefix frontend run dev:mock     # то же на моках, без бекенда
 npm --prefix frontend run typecheck    # проверка типов, в том числе словарей
 npm --prefix frontend run build        # typecheck + сборка в frontend/dist
