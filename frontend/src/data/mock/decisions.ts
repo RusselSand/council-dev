@@ -4,9 +4,9 @@ import { streamKey } from './streams';
 /**
  * Решение в моках — без вопроса и варианта: они берутся из вопросов и вариантов потока, как их видят «Вопросы» и
  * «Варианты». option — id варианта, который берёт решение; dependsOn — вопросы, от решений которых оно зависит: из них
- * складывается «в контексте».
+ * складывается «в контексте», по ним же — порядок решений и круги зависимостей (order.ts).
  */
-export interface MockDecision extends Omit<StreamDecision, 'question' | 'option' | 'context'> {
+export interface MockDecision extends Omit<StreamDecision, 'question' | 'option' | 'context' | 'cycle'> {
   option: string | null;
   dependsOn: string[];
 }

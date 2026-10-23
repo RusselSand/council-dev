@@ -67,6 +67,11 @@ export interface DecisionView {
   tag: { tone: TagTone; label: string };
   /** «P12 · текст варианта»; вопрос передан как unresolved — «— · Передан как unresolved». */
   choice: string;
+  /**
+   * Вопросы круга зависимостей, в который входит это решение, и он сам, по номерам: «Круг зависимостей: Q1 и Q3 зависят
+   * друг от друга.»; не в круге — пусто.
+   */
+  cycle: string[];
   problem: ProblemView | null;
   /** «Пересчитать» на плашке проблемы; у готового шага — нет. */
   recheck: RecheckView | null;
@@ -496,6 +501,7 @@ export function useDecisionsStep(
             }
           : { tone: status === 'fixed' ? 'green' : 'red', label: t(`decisions.state.${status}`) },
       choice: d.option ? t('decisions.option', { id: d.option.id, text: d.option.text }) : t('decisions.unresolved'),
+      cycle: d.cycle,
       problem: d.problem && {
         text: d.problem.text,
         fixes: d.problem.fixes.map((fix, i) => ({ num: formatNumber(i + 1), question: fix.question, text: fix.text })),

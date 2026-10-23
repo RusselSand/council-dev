@@ -282,6 +282,7 @@ export const en = translation({
   'questions.approve': 'Approve questions → to options',
   'questions.prev': 'Previous question',
   'questions.next': 'Next question',
+  'questions.loop': 'Dependency loop: {ids} depend on each other.',
 
   'options.done': '{done} of {total} done',
   'options.judge': 'Your choice',

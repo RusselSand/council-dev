@@ -30,6 +30,7 @@ import { DECISIONS, type MockDecision } from './decisions';
 import { MODELS } from './models';
 import { COUNCIL_LANGUAGE, NOTES, type MockNotes } from './notes';
 import { noOptions, OPTIONS, ownOption, type MockOptionSet } from './options';
+import { cycleOf, dependencyOrder, inOrder } from './order';
 import { OUTCOMES } from './outcomes';
 import { PROJECT_LIST, REPO_LIST, type MockProject } from './projects';
 import { ownQuestion, QUESTIONS } from './questions';
@@ -254,17 +255,28 @@ function optionsOf(id: string, streamId: string): Record<string, MockOptionSet> 
 }
 
 /**
- * Вопросы на «Вариантах» — неубранные вопросы потока по порядку, у каждого — его варианты; вопросу, добавленному после
- * утверждения вопросов, вариантов не искали.
+ * Вопросы на «Вариантах» — неубранные вопросы потока, у каждого — его варианты; вопросу, добавленному после утверждения
+ * вопросов, вариантов не искали. Порядок и круги — по зависимостям вариантов совета (свои варианты их не имеют), как у
+ * сервера: считаются по всем вопросам потока, и убранным тоже, — убрали и вернули вопрос, а порядок тот же.
  */
 function optionSetsOf(id: string, streamId: string): OptionSet[] {
   const sets = optionsOf(id, streamId);
-  return questionsOf(id, streamId)
-    .filter((q) => !q.removed)
-    .map((question) => {
-      sets[question.id] ??= noOptions();
-      return { question, ...sets[question.id] };
-    });
+  const all = questionsOf(id, streamId);
+  const order = dependencyOrder(
+    all.map((q) => q.id),
+    Object.fromEntries(
+      all.map((q) => [
+        q.id,
+        (sets[q.id]?.options ?? []).filter((o) => o.source !== 'user').flatMap((o) => o.dependsOn),
+      ]),
+    ),
+  );
+  const kept = all.filter((q) => !q.removed);
+  const shown = kept.map((q) => q.id);
+  return inOrder(order, kept, (q) => q.id).map((question) => {
+    sets[question.id] ??= noOptions();
+    return { question, ...sets[question.id], cycle: cycleOf(order, question.id, shown) };
+  });
 }
 
 /** Номер запуска шага «Варианты»: шаг не начат — 0; начат в данных моков и с тех пор не запускался — 1. */
@@ -319,13 +331,24 @@ function storedDecisions(id: string, streamId: string): Record<string, MockDecis
 }
 
 /**
- * Решения на «Решениях» — по неубранным вопросам потока, по порядку, у которых решение есть. Вопрос, вариант и «в
- * контексте» — из вопросов, вариантов и решений других вопросов потока: решения нет или вопрос убран — варианта нет.
+ * Решения на «Решениях» — по неубранным вопросам потока, у которых решение есть. Вопрос, вариант и «в контексте» — из
+ * вопросов, вариантов и решений других вопросов потока: решения нет или вопрос убран — варианта нет. Порядок и круги —
+ * по зависимостям проверки (dependsOn), как у сервера: по всем решениям запуска шага, и убранных вопросов тоже. В моках
+ * пересчёт не кончается, поэтому зависимости до следующего запуска те же — и порядок тоже.
  */
 function decisionListOf(id: string, streamId: string): StreamDecision[] {
   const stored = storedDecisions(id, streamId);
   const sets = optionsOf(id, streamId);
-  const kept = questionsOf(id, streamId).filter((q) => !q.removed && stored[q.id]);
+  const order = dependencyOrder(
+    Object.keys(stored),
+    Object.fromEntries(Object.entries(stored).map(([question, decision]) => [question, decision.dependsOn])),
+  );
+  const kept = inOrder(
+    order,
+    questionsOf(id, streamId).filter((q) => !q.removed && stored[q.id]),
+    (q) => q.id,
+  );
+  const shown = kept.map((q) => q.id);
   const optionOf = (question: string, option: string | null) =>
     option === null ? null : (sets[question]?.options.find((o) => o.id === option) ?? null);
   return kept.map((question) => {
@@ -339,6 +362,7 @@ function decisionListOf(id: string, streamId: string): StreamDecision[] {
         const chosen = found ? optionOf(other, found.option) : null;
         return { question: other, option: chosen?.id ?? null, text: chosen?.source === 'user' ? chosen.text : null };
       }),
+      cycle: cycleOf(order, question.id, shown),
     };
   });
 }
