@@ -141,8 +141,9 @@ def created(project: Project) -> datetime:
 def name_key(name: str) -> str:
     """Название, как их сравнивают на повтор: без пробелов по краям и без учёта регистра —
     «Кромка» и «кромка » одно название (решение владельца к задаче «Бекенд · Проекты: названия
-    не повторяются»)."""
-    return name.strip().casefold()
+    не повторяются»). lower, не casefold: моки фронтенда сравнивают через toLowerCase — то же
+    стандартное приведение, — и повтор на моках тот же, что на сервере."""
+    return name.strip().lower()
 
 
 def notes_root(text: str, base: Path | None) -> Path:

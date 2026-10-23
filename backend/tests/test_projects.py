@@ -247,6 +247,11 @@ def test_a_repeat_is_only_up_to_case_and_spaces_at_the_ends(repos, projects, sto
     for name in ("Кромка api", "Кром ка", "Kromka"):
         assert creates(name=name).status_code == 201
     assert len(listed()) == 4
+    # Регистр — как в моках фронтенда (toLowerCase): «Straße» и «STRASSE» разные, их склеил бы
+    # только casefold.
+    assert creates(name="Straße").status_code == 201
+    assert creates(name="STRASSE").status_code == 201
+    assert error_of(creates(name="STRAßE")) == (409, "name_taken")
 
 
 def test_a_rename_does_not_repeat_another_projects_name(repos, projects, store):
