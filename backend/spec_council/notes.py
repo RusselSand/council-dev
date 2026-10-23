@@ -267,11 +267,10 @@ class Catalog:
     def replacements(self) -> dict[tuple[str, int], str]:
         """Решения, которые ADR каталога называют своей строкой замен (declared_replacements), —
         по номеру (ADR-7 и ADR-0007 — одно решение): каким ADR заменено. Называют несколько —
-        первым по номеру; себя ADR не заменяет."""
+        первым по номеру (ADR-2 раньше ADR-10); себя ADR не заменяет."""
         found: dict[tuple[str, int], str] = {}
-        for note in sorted(self.notes.values(), key=order):
-            if note.type != "adr":
-                continue
+        adrs = [note for note in self.notes.values() if note.type == "adr"]
+        for note in sorted(adrs, key=lambda note: (number_of(note.id), note.id)):
             for adr in declared_replacements(note.body):
                 if number_of(adr) != number_of(note.id):
                     found.setdefault(number_of(adr), note.id)

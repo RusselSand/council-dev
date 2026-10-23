@@ -200,6 +200,14 @@ def test_a_decision_named_in_the_replaces_line_of_a_newer_one_is_superseded():
         "ADR-7") == ("superseded", "ADR-0002")
 
 
+def test_a_decision_named_by_several_newer_ones_is_superseded_by_the_first_by_number():
+    """Номера без нулей сравниваются как числа: ADR-2 раньше ADR-10."""
+    later = Note("ADR-10", "adr", "Деплой по кнопке.\n\nЗаменяет: ADR-0001.", ("PRO-0001",))
+    first = Note("ADR-2", "adr", "Деплой по тегу.\n\nЗаменяет: ADR-0001.", ("PRO-0001",))
+    catalog = Catalog({note.id: note for note in (*CHAIN, later, first)})
+    assert catalog.status("ADR-0001") == ("superseded", "ADR-2")
+
+
 @pytest.mark.parametrize(("body", "found"), [
     ("Решение, потому что так.\n\nЗаменяет: ADR-0003, ADR-0005.", ["ADR-0003", "ADR-0005"]),
     ("Decision, because so.\n\nSupersedes: ADR-0003.", ["ADR-0003"]),
