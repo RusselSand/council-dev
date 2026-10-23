@@ -39,8 +39,10 @@ export interface ProjectForm {
   canSave: boolean;
   /** Проект сохраняется. */
   pending: boolean;
-  /** Не вышло сохранить; новая попытка сбрасывает. */
+  /** Не вышло сохранить, кроме повтора названия, — над кнопками; новая попытка сбрасывает. */
   error: ApiError | undefined;
+  /** Название — как у другого проекта (name_taken) — под полем «Название»; новая попытка сбрасывает. */
+  nameError: ApiError | undefined;
   save: () => void;
 }
 
@@ -67,6 +69,7 @@ export function useProjectForm(project: Project | undefined, onClose: () => void
 
   const canSave = canSaveFields(fields) && !action.pending;
   const full = reposFull(fields.repos);
+  const nameTaken = action.error?.code === 'name_taken';
 
   return {
     isNew: !project,
@@ -88,7 +91,8 @@ export function useProjectForm(project: Project | undefined, onClose: () => void
     toggleRepo: (name) => setFields((f) => ({ ...f, repos: toggleRepo(f.repos, name) })),
     canSave,
     pending: action.pending,
-    error: action.error,
+    error: nameTaken ? undefined : action.error,
+    nameError: nameTaken ? action.error : undefined,
     save: () => {
       if (!canSave) return;
       const clean = cleanFields(fields);

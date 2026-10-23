@@ -1,7 +1,9 @@
 """Проекты — docs/api-contract.md, «GET /api/projects» и ниже: список, новый, правка, удаление.
 
 Проект хранится по-прежнему (models.Project): repositories — это repos, notes — docs, issues —
-tasks («Папка задач» в окне проекта, решение q-010 бекенда).
+tasks («Папка задач» в окне проекта, решение q-010 бекенда). Названия не повторяются без учёта
+регистра; проверяют их ручки, а не хранение: проекты, которые уже лежат с одинаковыми
+названиями, открываются и работают.
 """
 
 from collections import Counter
@@ -12,7 +14,7 @@ from fastapi import APIRouter, Response
 from ..deps import ProjectsDep, RepositoriesDep, StoreDep
 from ..models import REPOSITORIES_MAX, ProjectDraft
 from ..models import Project as Saved
-from ..projects import working_copies
+from ..projects import Projects, name_key, working_copies
 from ..store import Store, council_lock
 from .errors import ApiError, ContractRoute, not_found
 from .schema import IdempotencyKey, Schema
@@ -66,11 +68,14 @@ def create_project(fields: ProjectFields, projects: ProjectsDep, store: StoreDep
                    repositories: RepositoriesDep,
                    key: IdempotencyKey = "") -> ProjectAnswer:
     """Новый проект — в конец списка. Проект с этим ключом уже создан — в ответ он, какие бы
-    поля ни пришли."""
-    project = projects.keyed(key)
-    if project is None:
-        draft = ProjectDraft(**checked(fields, set(ProjectFields.model_fields), repositories))
-        project = projects.create_project(draft, key)
+    поля ни пришли. Под замком советов, как и правка: два проекта с одним названием не
+    создадутся и одновременно."""
+    with council_lock:
+        project = projects.keyed(key)
+        if project is None:
+            draft = ProjectDraft(**checked(fields, set(ProjectFields.model_fields), repositories))
+            unique(draft.name, projects)
+            project = projects.create_project(draft, key)
     return ProjectAnswer(project=shown(project, council_counts(store)))
 
 
@@ -85,6 +90,8 @@ def update_project(project_id: str, fields: ProjectFields, projects: ProjectsDep
         if before is None:
             raise missing(project_id)
         changes = checked(fields, fields.model_fields_set, repositories, before.repositories)
+        if "name" in changes:
+            unique(changes["name"], projects, before)
         project = projects.update_project(project_id, changes) or before
     return ProjectAnswer(project=shown(project, council_counts(store)))
 
@@ -130,6 +137,20 @@ def checked(fields: ProjectFields, sent: set[str], repositories: Path | None,
     if "tasks" in sent:
         changes["issues"] = fields.tasks.strip()
     return changes
+
+
+def unique(name: str, projects: Projects, before: Saved | None = None) -> None:
+    """Название не повторяет название другого проекта — без учёта регистра и пробелов по краям,
+    иначе ApiError. before — проект до правки: своё название, хотя бы с другим регистром, — не
+    повтор. Проекты, которые уже лежат с одинаковыми названиями, ошибку получают, только когда
+    их переименовывают, — при сохранении с прежним названием её нет."""
+    key = name_key(name)
+    if before is not None and name_key(before.name) == key:
+        return
+    taken = next((project for project in projects.list_projects()
+                  if name_key(project.name) == key), None)
+    if taken is not None:
+        raise ApiError(409, "name_taken", f"Проект «{taken.name}» уже есть: {taken.id}")
 
 
 def council_counts(store: Store) -> Counter[str]:

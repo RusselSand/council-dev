@@ -118,10 +118,11 @@ def test_a_repeated_key_does_not_create_a_second_project(repos, projects, store)
     # Тот же ключ — тот же проект, даже если поля другие и даже без названия.
     again = creates(key="k1", name="", repos=["front"])
     assert again.status_code == 201 and again.json()["project"] == first
-    other = creates(key="k2").json()["project"]
+    other = creates(key="k2", name="Сайт").json()["project"]
     assert other["id"] != first["id"]
     # Без ключа каждый запрос — новый проект.
-    assert creates().json()["project"]["id"] != creates().json()["project"]["id"]
+    assert creates(name="Агенты").json()["project"]["id"] != creates(
+        name="looper").json()["project"]["id"]
     assert len(listed()) == 4
 
 
@@ -229,6 +230,70 @@ def test_an_edit_of_a_missing_project_is_not_found(repos, projects, store):
     assert error_of(edits("nope", name="Кромка")) == (404, "not_found")
 
 
+@pytest.mark.parametrize("name", ["Кромка", " кромка ", "КРОМКА", "\tкРоМкА\n"])
+def test_a_new_project_does_not_repeat_a_name(repos, projects, store, name):
+    """Повтор — без учёта регистра и пробелов по краям (решение владельца к задаче «Бекенд ·
+    Проекты: названия не повторяются»)."""
+    first = creates(repos=["back"]).json()["project"]
+    assert error_of(creates(key="k2", name=name, repos=["front"])) == (409, "name_taken")
+    assert listed() == [first]
+    # Отказ не запоминает ключ: с другим названием тот же ключ создаёт проект.
+    other = creates(key="k2", name="Кромка 2")
+    assert other.status_code == 201 and other.json()["project"]["name"] == "Кромка 2"
+
+
+def test_a_repeat_is_only_up_to_case_and_spaces_at_the_ends(repos, projects, store):
+    creates(name="Кромка")
+    for name in ("Кромка api", "Кром ка", "Kromka"):
+        assert creates(name=name).status_code == 201
+    assert len(listed()) == 4
+
+
+def test_a_rename_does_not_repeat_another_projects_name(repos, projects, store):
+    kromka, site = (creates(name=name, repos=["back"]).json()["project"]
+                    for name in ("Кромка", "Сайт"))
+    for name in ("Кромка", " кромка", "КРОМКА "):
+        assert error_of(edits(site["id"], name=name, repos=["front"])) == (409, "name_taken")
+    assert listed() == [kromka, site]
+    # Правка без названия название не проверяет.
+    assert edits(site["id"], repos=["front"]).status_code == 200
+
+
+def test_an_own_name_is_not_a_repeat(repos, projects, store):
+    project = creates().json()["project"]
+    # Сохранили с тем же названием или только сменили регистр — не повтор.
+    assert edits(project["id"], name="Кромка", docs="back/docs").status_code == 200
+    res = edits(project["id"], name=" КРОМКА ")
+    assert res.status_code == 200 and res.json()["project"]["name"] == "КРОМКА"
+
+
+def test_projects_that_already_share_a_name_open_and_save(repos, projects, store):
+    """Проекты, которые уже лежат с одинаковыми названиями, открываются и работают; ошибка —
+    только когда такое название сохраняют: создают проект или переименовывают в него."""
+    first = projects.create_project(ProjectDraft(name="Кромка"))
+    second = projects.create_project(ProjectDraft(name="кромка "))
+    assert [project["name"] for project in listed()] == ["Кромка", "кромка "]
+    # Правка второго с прежним названием — и даже со сменой регистра — сохраняется.
+    assert edits(second.id, name="кромка", repos=["back"]).status_code == 200
+    assert edits(second.id, name="КРОМКА", docs="back/docs").status_code == 200
+    assert edits(first.id, name="Кромка", repos=["front"]).status_code == 200
+    # Новый проект с этим названием — повтор.
+    assert error_of(creates(name="кромка")) == (409, "name_taken")
+    # Переименовали второй в другое — назад в название первого уже не вернуть.
+    assert edits(second.id, name="Сайт").status_code == 200
+    assert error_of(edits(second.id, name="кромка")) == (409, "name_taken")
+    assert [project["name"] for project in listed()] == ["Кромка", "Сайт"]
+
+
+def test_a_freed_name_can_be_taken_again(repos, projects, store):
+    project = creates().json()["project"]
+    assert edits(project["id"], name="Кромка старая").status_code == 200
+    assert creates(name="кромка").status_code == 201
+    other = creates(name="Сайт").json()["project"]
+    assert client.delete(f"/api/projects/{other['id']}").status_code == 204
+    assert creates(name="САЙТ").status_code == 201
+
+
 def test_the_council_count_is_how_many_councils_chose_the_project(repos, projects, store):
     chosen, alone = (creates(name=name).json()["project"] for name in ("Кромка", "Сайт"))
     for _ in range(2):
@@ -255,9 +320,11 @@ def test_only_a_project_no_council_chose_is_deleted(repos, projects, store):
 @pytest.mark.parametrize("change", [
     lambda project_id: edits(project_id, name="Кромка 2"),
     lambda project_id: client.delete(f"/api/projects/{project_id}"),
+    lambda project_id: creates(name="Сайт"),
 ])
 def test_a_project_is_changed_under_the_councils_lock(repos, projects, store, change):
-    """Ход совета берёт папку проекта под замком советов: правка и удаление ждут его."""
+    """Ход совета берёт папку проекта под замком советов: правка и удаление ждут его. Новый
+    проект — тоже: проверка названия и запись не разойдутся с правкой другого проекта."""
     project_id = creates().json()["project"]["id"]
     done = []
     with council_lock:
@@ -266,7 +333,20 @@ def test_a_project_is_changed_under_the_councils_lock(repos, projects, store, ch
         worker.join(0.3)
         assert worker.is_alive() and done == []
     worker.join(5)
-    assert done[0].status_code in (200, 204)
+    assert done[0].status_code in (200, 201, 204)
+
+
+def test_two_new_projects_with_one_name_at_once_make_one(repos, projects, store):
+    results = []
+    with council_lock:
+        workers = [threading.Thread(target=lambda name=name: results.append(creates(name=name)))
+                   for name in ("Кромка", "кромка")]
+        for worker in workers:
+            worker.start()
+    for worker in workers:
+        worker.join(5)
+    assert sorted(res.status_code for res in results) == [201, 409]
+    assert len(listed()) == 1
 
 
 def test_a_project_of_the_previous_version_opens(repos, tmp_path, store):
