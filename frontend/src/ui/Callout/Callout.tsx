@@ -1,7 +1,10 @@
 import type { ReactNode } from 'react';
 import styles from './Callout.module.css';
 
-/** red — предупреждение: вопрос пересматривает решение проекта; green — подсказка: в тексте уже есть ответ. */
+/**
+ * red — предупреждение: вопрос пересматривает решение проекта, исследование остановилось; green — подсказка: в тексте
+ * уже есть ответ.
+ */
 export type CalloutTone = 'red' | 'green';
 
 interface CalloutProps {
@@ -11,7 +14,7 @@ interface CalloutProps {
   children: ReactNode;
 }
 
-/** Цветная плашка-пояснение внутри строки списка: заголовок и под ним содержимое. */
+/** Цветная плашка-пояснение внутри строки списка или блока: заголовок и под ним содержимое. */
 export function Callout({ tone, title, children }: CalloutProps) {
   return (
     <div className={`${styles.callout} ${styles[tone]}`}>

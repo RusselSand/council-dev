@@ -14,6 +14,14 @@
   min-width: 0;
 }
 
+/* Почему исследование остановилось — под «Остановилось» на красной плашке. */
+.stopped {
+  margin: 0;
+  font-size: var(--text-sm);
+  line-height: var(--leading-relaxed);
+  overflow-wrap: anywhere;
+}
+
 /* Пояснение внизу блока, слева от кнопки: «Результаты — ниже». */
 .note {
   min-width: 0;

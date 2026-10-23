@@ -25,6 +25,7 @@ import {
   type ResearchKind,
   type ResearchRun,
   type ResearchState,
+  type ResearchStop,
 } from '../../domain/research';
 import type { RunState } from '../../domain/run';
 import { withoutIdea } from '../../domain/structure';
@@ -75,6 +76,8 @@ export interface BlockView {
   /** Метка: «не начато», «идёт», «готово», «пропущено». */
   tag: string;
   tagTone: TagTone;
+  /** Исследование остановилось — под «Остановилось» причина: «Токен Figma не подходит»; не останавливалось — null. */
+  stopped: string | null;
   /** Пока идёт: модели и что они делают. */
   runs: RunView[];
   /** Пока идёт: «2 репоз. · ~2 мин». */
@@ -223,8 +226,8 @@ export interface ResearchScreen {
 
 /** Исследование, которого ещё нет на экране: пока грузится. */
 const EMPTY: Research = {
-  code: { state: 'setup', repos: [], runs: [], minutes: 0, scanned: [], rounds: 0 },
-  design: { state: 'setup', link: '', runs: [], minutes: 0, frames: 0 },
+  code: { state: 'setup', repos: [], runs: [], minutes: 0, scanned: [], rounds: 0, stopReason: null },
+  design: { state: 'setup', link: '', runs: [], minutes: 0, frames: 0, stopReason: null },
   findings: [],
   flows: [],
   coverage: [],
@@ -242,8 +245,9 @@ function choiceLabel(finding: Finding, decision: Decision, t: Translate): string
 
 /**
  * «Исследование» совета. Два исследования — кода и макета — со своим состоянием: настройка (репозитории или ссылка,
- * «Пропустить», «Начать исследование»), идёт («Остановить»), готово («Изменить и перезапустить»), пропущено («Вернуть
- * исследование»). Отметки репозиториев и ссылку человек меняет на экране; на сервер они уходят с «Начать исследование».
+ * «Пропустить», «Начать исследование»; остановилось — и почему), идёт («Остановить»), готово («Изменить и
+ * перезапустить»), пропущено («Вернуть исследование»). Отметки репозиториев и ссылку человек меняет на экране; на сервер
+ * они уходят с «Начать исследование».
  * Находки — по группам, с фильтром; решение по находке сохраняется сразу. «К потокам →» доступна, когда оба
  * исследования кончились, находок, которые ждут решения, нет, группы подтверждены (решение q-002) и у каждой есть
  * идея (решение q-002 бекенда: пока её нет, раскладка опрашивается); сначала дожидается решений, которые ещё идут, потом
@@ -319,7 +323,12 @@ export function useResearch(council: CouncilSummary): ResearchScreen {
     t('research.findings.count', { count: findings.filter((f) => f.source === kind).length });
   const [scanned] = code.scanned;
 
-  const block = (kind: ResearchKind, state: ResearchState, canStart: boolean, start: ResearchAction) => {
+  const block = (
+    kind: ResearchKind,
+    { state, stopReason }: { state: ResearchState; stopReason: ResearchStop | null },
+    canStart: boolean,
+    start: ResearchAction,
+  ) => {
     const mutation = kind === 'code' ? codeAction : designAction;
     const actions: Record<ResearchAction['action'], () => void> = {
       start: () => {
@@ -333,6 +342,9 @@ export function useResearch(council: CouncilSummary): ResearchScreen {
       state,
       tag: t(`research.state.${state}`),
       tagTone: STATE_TONE[state],
+      // Причину сервер присылает кодом, текст — из словаря (решение владельца к задаче «Бекенд · Исследование: причина
+      // остановки на экране»).
+      stopped: state === 'setup' && stopReason ? t(`research.stopReason.${stopReason}`) : null,
       count: count(kind),
       canStart,
       busy: mutation.pending || approving,
@@ -411,7 +423,7 @@ export function useResearch(council: CouncilSummary): ResearchScreen {
     },
 
     code: {
-      ...block('code', code.state, canStartCode(chosen.length), { action: 'start', kind: 'code', repos: chosen }),
+      ...block('code', code, canStartCode(chosen.length), { action: 'start', kind: 'code', repos: chosen }),
       runs: runViews(code.runs, t),
       runNote: t('research.code.running', {
         repos: code.repos.filter((repo) => repo.selected).length,
@@ -432,7 +444,7 @@ export function useResearch(council: CouncilSummary): ResearchScreen {
       },
     },
     design: {
-      ...block('design', design.state, isFigmaLink(link), { action: 'start', kind: 'design', link }),
+      ...block('design', design, isFigmaLink(link), { action: 'start', kind: 'design', link }),
       runs: runViews(design.runs, t),
       runNote: t('research.design.running', { count: design.frames, minutes: design.minutes }),
       result: design.link,

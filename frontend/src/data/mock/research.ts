@@ -41,10 +41,18 @@ const codeSetup = (repos: string[], unneeded: string[] = []): CodeResearch => ({
   minutes: 0,
   scanned: [],
   rounds: 0,
+  stopReason: null,
 });
 
 /** Исследование макета, которое ещё не начинали. */
-const designSetup = (): DesignResearch => ({ state: 'setup', link: '', runs: [], minutes: 0, frames: 0 });
+const designSetup = (): DesignResearch => ({
+  state: 'setup',
+  link: '',
+  runs: [],
+  minutes: 0,
+  frames: 0,
+  stopReason: null,
+});
 
 const flow = (name: string, entry: string, steps: [string, ...string[]][]): Flow => ({
   name,
@@ -491,8 +499,9 @@ const G1: Research = {
       { name: 'python-t-cloud', commit: 'ba74a37679b790a8a6f9c6e1e397de945bac549c', files: 74 },
     ],
     rounds: 1,
+    stopReason: null,
   },
-  design: { state: 'skipped', link: '', runs: [], minutes: 0, frames: 0 },
+  design: { state: 'skipped', link: '', runs: [], minutes: 0, frames: 0, stopReason: null },
   findings: G1_FINDINGS,
   flows: G1_FLOWS,
   coverage: G1_COVERAGE,
@@ -592,6 +601,7 @@ const DESIGN_DONE: DesignResearch = {
   runs: [],
   minutes: 0,
   frames: 4,
+  stopReason: null,
 };
 
 /** Совет утвердил исследование: решения по всем выводам и противоречиям приняты. */
@@ -655,6 +665,7 @@ export const startedCode = (code: CodeResearch, repos: string[], participants: s
   minutes: 2,
   scanned: [],
   rounds: 0,
+  stopReason: null,
 });
 
 /** Исследование макета запустилось — как в макете (rd.runs): одна модель читает фреймы, другие сверяют с группами. */
@@ -669,6 +680,7 @@ export const startedDesign = (design: DesignResearch, link: string, participants
   })),
   minutes: 1,
   frames: 4,
+  stopReason: null,
 });
 
 /** Исследование вернулось к настройке: с прошлыми репозиториями или ссылкой, без работы моделей и результатов. */
@@ -676,7 +688,7 @@ export function toSetup(research: Research, kind: ResearchKind): Research {
   if (kind === 'code') {
     return {
       ...research,
-      code: { ...research.code, state: 'setup', runs: [], minutes: 0, scanned: [], rounds: 0 },
+      code: { ...research.code, state: 'setup', runs: [], minutes: 0, scanned: [], rounds: 0, stopReason: null },
       findings: research.findings.filter((f) => f.source !== 'code'),
       flows: [],
       coverage: [],
@@ -684,7 +696,7 @@ export function toSetup(research: Research, kind: ResearchKind): Research {
   }
   return {
     ...research,
-    design: { ...research.design, state: 'setup', runs: [], minutes: 0, frames: 0 },
+    design: { ...research.design, state: 'setup', runs: [], minutes: 0, frames: 0, stopReason: null },
     findings: research.findings.filter((f) => f.source !== 'design'),
   };
 }

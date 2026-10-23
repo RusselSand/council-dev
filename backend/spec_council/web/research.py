@@ -14,8 +14,9 @@ ResearchStage, startStream). По контракту исследования к
 «Решения проекта» сразу ждут человека.
 
 Исследование кода — по рабочим копиям проекта совета: их inventory берёт уже ход, в фоне
-(pipeline.CodeResearchRun). Скан упал — исследование снова в настройке (research.block_of), а в
-списке советов видно, что оно остановилось.
+(pipeline.CodeResearchRun). Скан упал — исследование снова в настройке (research.block_of), в
+списке советов видно, что оно остановилось, а у исследования — почему, кодом (stopReason):
+Figma отказала — её отказ, другая причина — общий failed (research.stop_of).
 """
 
 from collections.abc import Callable
@@ -113,6 +114,8 @@ class CodeResearch(Schema):
     minutes: int
     scanned: list[ScannedRepo]
     rounds: int
+    # У исследования кода своих причин у экрана нет — только общая.
+    stop_reason: Literal["failed"] | None
 
 
 class DesignResearch(Schema):
@@ -121,6 +124,7 @@ class DesignResearch(Schema):
     runs: list[ResearchRun]
     minutes: int
     frames: int
+    stop_reason: domain.Stop | None
 
 
 class ConflictSides(Schema):
@@ -445,13 +449,15 @@ def research_of(council: Council, projects: Projects) -> Research:
             scanned=[ScannedRepo(name=repo.path or repo.name, commit=repo.commit_sha,
                                  files=repo.files) for repo in scan.repositories]
             if code_done else [],
-            rounds=scan.rounds if code_done else 0),
+            rounds=scan.rounds if code_done else 0,
+            stop_reason="failed" if domain.stopped(scan, code) else None),
         design=DesignResearch(
             state=design, link=domain.taken_link(research),
             runs=runs_of(shot, "design") if design == "running" and shot else [],
             minutes=design_minutes(shot) if design == "running" and shot else 0,
             frames=shot.source.images if design in ("running", "done") and shot and shot.source
-            else 0),
+            else 0,
+            stop_reason=domain.stop_of(shot, design)),
         findings=[finding_of(one) for one in domain.findings_of(research, first_group(council))],
         flows=flows_of(scan) if code_done else [],
         coverage=coverage_of(scan) if code_done else [])

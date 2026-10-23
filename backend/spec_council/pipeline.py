@@ -1476,7 +1476,8 @@ def fragments_prompt(fragments: Iterable[LabeledFragment]) -> str:
 class DesignRun(CouncilRun[DesignScan]):
     """Скан макета Figma под идею потока. Снимок файла совет делает сам, через REST API, с
     одной версии: страницы из ссылок целиком — структура и узлы как есть, — картинки фреймов
-    и сводка файла. Модели читают снимок, а не Figma: все видят одно и то же, ответы ключуются
+    и сводка файла. Снимок не вышел — скан падает с причиной, а если Figma отказала, — и с её
+    отказом (refusal). Модели читают снимок, а не Figma: все видят одно и то же, ответы ключуются
     его отпечатком, а токена и сети в ходе модели нет. Дальше — как у скана репозитория:
     участники по отдельности, судья проверяет по снимку и сводит, доисследование — до двух
     раз. Снимок удаляется, когда скан закончен."""
@@ -1502,6 +1503,9 @@ class DesignRun(CouncilRun[DesignScan]):
             try:
                 shot = figma_snapshot(self.links, self.fetch, folder)
             except FigmaError as exc:
+                # Отказ Figma экран называет своим текстом — скан помнит, каким он был.
+                with self._lock:
+                    self.state.refusal = exc.refusal
                 raise StageFailed(str(exc)) from exc
             self.fingerprint = shot.fingerprint
             with self._lock:

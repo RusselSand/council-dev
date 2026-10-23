@@ -2,15 +2,13 @@
 
 import io
 import json
-import urllib.error
-from email.message import Message
 
 import pytest
 
 from spec_council import figma
 from spec_council.figma import Figma, FigmaError, link_of, links_of, refused, snapshot
 from spec_council.models import DesignNode
-from tests.figma_fake import KEY, LINK, FakeFigma
+from tests.figma_fake import KEY, LINK, FakeFigma, http_error
 
 
 @pytest.mark.parametrize(("url", "key", "node"), [
@@ -150,24 +148,22 @@ def test_a_render_error_fails_the_snapshot(tmp_path):
         shot(tmp_path, fetch=Broken())
 
 
-def http_error(code, headers=(), body=b""):
-    message = Message()
-    for key, value in headers:
-        message[key] = value
-    return urllib.error.HTTPError("https://api.figma.com/v1/x", code, "x", message,
-                                  io.BytesIO(body))
-
-
-@pytest.mark.parametrize(("error", "told"), [
-    (http_error(429, [("Retry-After", "120")]), "повторите через 2 мин"),
+@pytest.mark.parametrize(("error", "told", "refusal"), [
+    (http_error(429, [("Retry-After", "120")]), "повторите через 2 мин", "figma_limit"),
     (http_error(403, body=b'{"status":403,"err":"Invalid token"}'),
      "Токен Figma не подходит: истёк, отозван или без права file_content:read — выпустите новый "
-     "и впишите его в FIGMA_TOKEN: Invalid token"),
-    (http_error(404), "Файла Figma нет или у владельца токена нет к нему доступа"),
-    (http_error(500), "ошибка 500"),
+     "и впишите его в FIGMA_TOKEN: Invalid token", "figma_token"),
+    (http_error(401), "Токен Figma не подходит", "figma_token"),
+    (http_error(404), "Файла Figma нет или у владельца токена нет к нему доступа", "figma_file"),
+    (http_error(400), "Figma не приняла запрос", None),
+    (http_error(500), "ошибка 500", None),
 ])
-def test_a_figma_refusal_is_told_in_words(error, told):
-    assert told in str(refused(error))
+def test_a_figma_refusal_is_told_in_words_and_named_by_its_code(error, told, refusal):
+    """Токен не подходит, ограничила запросы, файла нет — у экрана свои тексты: отказ помнит,
+    какой он; другие — нет."""
+    refusal_of = refused(error)
+    assert told in str(refusal_of)
+    assert refusal_of.refusal == refusal
 
 
 class Opened(io.BytesIO):

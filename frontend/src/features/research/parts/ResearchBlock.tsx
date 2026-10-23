@@ -3,6 +3,7 @@ import { LoadState } from '../../../components/LoadState';
 import { useI18n } from '../../../i18n';
 import { BlockTitle } from '../../../ui/BlockTitle';
 import { Button } from '../../../ui/Button';
+import { Callout } from '../../../ui/Callout';
 import { Caption } from '../../../ui/Caption';
 import { Card } from '../../../ui/Card';
 import { CardFooter } from '../../../ui/CardFooter';
@@ -27,7 +28,8 @@ interface ResearchBlockProps {
 
 /**
  * Блок исследования, как в макете: подпись капсом и метка состояния, заголовок, пояснение; дальше — по состоянию:
- * не начато — настройка, «Пропустить» и «Начать исследование»; идёт — модели и «Остановить»; готово — что исследовано
+ * не начато — настройка, «Пропустить» и «Начать исследование», а если исследование остановилось, над настройкой красная
+ * плашка «Остановилось» и причина (в макете её нет); идёт — модели и «Остановить»; готово — что исследовано
  * и «Изменить и перезапустить»; пропущено — пунктирная плашка и «Вернуть исследование». Не вышло действие —
  * ошибка под кнопками и «Повторить».
  */
@@ -42,7 +44,14 @@ export function ResearchBlock({ block, kicker, title, intro, skipped, setup }: R
     switch (block.state) {
       case 'setup':
         return [
-          setup,
+          <>
+            {block.stopped && (
+              <Callout tone="red" title={t('research.stopped')}>
+                <p className={styles.stopped}>{block.stopped}</p>
+              </Callout>
+            )}
+            {setup}
+          </>,
           <Button variant="subtle" disabled={block.busy} onClick={block.skip}>
             {t('research.skip')}
           </Button>,

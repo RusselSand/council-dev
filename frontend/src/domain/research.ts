@@ -8,6 +8,14 @@ export type ResearchKind = (typeof RESEARCH_KINDS)[number];
 export const RESEARCH_STATES = ['setup', 'running', 'done', 'skipped'] as const;
 export type ResearchState = (typeof RESEARCH_STATES)[number];
 
+/**
+ * Почему исследование остановилось — модели не довели его до конца, и оно снова в настройке: у макета Figma не приняла
+ * токен, ограничила запросы или файла нет; любая другая причина — общая (решение владельца к задаче «Бекенд ·
+ * Исследование: причина остановки на экране»).
+ */
+export const RESEARCH_STOPS = ['failed', 'figma_token', 'figma_limit', 'figma_file'] as const;
+export type ResearchStop = (typeof RESEARCH_STOPS)[number];
+
 /** Вид находки — как в макете: факт, вывод ИИ, противоречие, пробел. */
 export const FINDING_KINDS = ['fact', 'inference', 'conflict', 'gap'] as const;
 export type FindingKind = (typeof FINDING_KINDS)[number];
@@ -61,6 +69,8 @@ export interface CodeResearch {
   scanned: ScannedRepo[];
   /** Сколько проходов по коду, когда готово. */
   rounds: number;
+  /** Почему остановилось — у кода только общая причина; не останавливалось — null. */
+  stopReason: Extract<ResearchStop, 'failed'> | null;
 }
 
 /** Исследование макета Figma. */
@@ -72,6 +82,8 @@ export interface DesignResearch {
   minutes: number;
   /** Сколько фреймов по ссылке, пока идёт и готово. */
   frames: number;
+  /** Почему остановилось: отказ Figma или общая причина; не останавливалось — null. */
+  stopReason: ResearchStop | null;
 }
 
 /** Две стороны противоречия: что говорит текст ввода или документация и что на деле в коде или макете. */

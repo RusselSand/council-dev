@@ -23,7 +23,7 @@ from pathlib import Path
 from typing import Protocol
 from urllib.parse import parse_qs, urlencode, urlparse
 
-from .models import DesignNode, FigmaSource
+from .models import DesignNode, FigmaRefusal, FigmaSource
 
 API = "https://api.figma.com/v1"
 TIMEOUT = 60
@@ -43,7 +43,12 @@ SOURCE_CHARS = 60_000
 
 class FigmaError(ValueError):
     """Макет не прочитать: ссылка не на Figma, токена нет или он не подходит, файла нет,
-    Figma ограничила запросы. Текст — для человека."""
+    Figma ограничила запросы. Текст — для человека; refusal — отказ Figma, который экран
+    называет своим текстом (токен не подходит, ограничила запросы, файла нет), иначе None."""
+
+    def __init__(self, message: str, refusal: FigmaRefusal | None = None) -> None:
+        super().__init__(message)
+        self.refusal = refusal
 
 
 @dataclass(frozen=True)
@@ -159,12 +164,13 @@ def refused(exc: urllib.error.HTTPError) -> FigmaError:
         kind = exc.headers.get("X-Figma-Rate-Limit-Type", "")
         return FigmaError(f"Figma ограничила запросы владельца токена{f' ({kind})' if kind else ''}"
                           f" — повторите{when}. У места View или Collab это 20 запросов в месяц:"
-                          " нужно место Dev или Full")
+                          " нужно место Dev или Full", "figma_limit")
     if exc.code in (401, 403):
         return FigmaError("Токен Figma не подходит: истёк, отозван или без права file_content:read"
-                          f" — выпустите новый и впишите его в FIGMA_TOKEN{told}")
+                          f" — выпустите новый и впишите его в FIGMA_TOKEN{told}", "figma_token")
     if exc.code == 404:
-        return FigmaError(f"Файла Figma нет или у владельца токена нет к нему доступа{told}")
+        return FigmaError(f"Файла Figma нет или у владельца токена нет к нему доступа{told}",
+                          "figma_file")
     if exc.code == 400:
         return FigmaError(f"Figma не приняла запрос{told}")
     return FigmaError(f"Figma не ответила: ошибка {exc.code}{told}")

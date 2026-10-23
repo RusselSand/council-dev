@@ -3,6 +3,9 @@
 ссылки не попадает."""
 
 import copy
+import io
+import urllib.error
+from email.message import Message
 
 from spec_council.figma import FigmaError
 
@@ -30,6 +33,15 @@ ARCHIVE = {"id": "1:1", "type": "CANVAS", "name": "Archive / old",
 PAGES = {"1:0": SCREENS, "1:1": ARCHIVE}
 COMPONENTS = {"5:1": {"name": "State=Default", "componentSetId": "5:0", "description": ""}}
 SETS = {"5:0": {"name": "Button", "description": "Основная кнопка"}}
+
+
+def http_error(code, headers=(), body=b""):
+    """Отказ Figma, как его отдаёт urllib: код ответа, заголовки и тело."""
+    message = Message()
+    for key, value in headers:
+        message[key] = value
+    return urllib.error.HTTPError("https://api.figma.com/v1/x", code, "x", message,
+                                  io.BytesIO(body))
 
 
 def shallow(node, depth):
