@@ -7,6 +7,7 @@ import { runLanes, updateLane, useLaneState, type RunLane } from './runLanes';
 import { markStale, type StreamDecisions } from './stale';
 import { useMutation, type Mutation } from './useMutation';
 import { useQuery, type Query } from './useQuery';
+import { useModelsPoll } from './useStageQuery';
 import { replaceStream } from './useStreams';
 import { without } from './without';
 
@@ -15,7 +16,8 @@ import { without } from './without';
  * сменилось (модели закончили или остановились, шаг запустили снова) — решения перезапрашиваются, а до ответа их нет
  * (data — undefined, loading): прежние — от другой работы моделей. Перезапрашиваются и после правок решений, и вместе с
  * опросом потоков (useCouncilStreams()); run в ответе — номер запуска шага: по нему видно, что решения от другой
- * работы моделей, и когда состояние шага то же.
+ * работы моделей, и когда состояние шага то же. Пока хоть одно решение пересчитывают, решения и список советов
+ * перезапрашиваются через 5 с после ответа — см. useModelsPoll(): шаг при этом ждёт вас, и опрос потоков их не берёт.
  */
 export function useStreamDecisions(id: string, streamId: string, state: State): Query<StreamDecisions> {
   const query = useQuery(
@@ -25,6 +27,7 @@ export function useStreamDecisions(id: string, streamId: string, state: State): 
   );
   const { data, loading, error } = query;
   const fresh = data?.council === id && data.stream === streamId && data.state === state;
+  useModelsPoll(fresh && data.decisions.some((d) => d.recheck === 'running'), query);
   return { ...query, data: fresh ? data : undefined, loading: loading || (!fresh && error === undefined) };
 }
 
@@ -39,9 +42,10 @@ const putDecision = (councilId: string, streamId: string, run: number, decision:
       : current;
 
 /**
- * Решения сейчас не правят (шаг запустили снова в другой вкладке: модели ещё работают или решения уже другого запуска) —
- * потоки и решения на экране устарели; решения или потока уже нет, сервер не зафиксировал решение без «почему», у решения
- * уже нет противоречия, замену которого подтверждают, — на экране не то, что на сервере: решения устарели.
+ * Решения сейчас не правят (шаг запустили снова в другой вкладке: модели ещё работают или решения уже другого запуска;
+ * решение начали пересчитывать) — потоки и решения на экране устарели; решения или потока уже нет, сервер не
+ * зафиксировал решение без «почему», отметки замен не те, что у решения на сервере, — на экране не то, что на сервере:
+ * решения устарели.
  */
 function staleOnRefused(error: unknown) {
   if (!(error instanceof ApiError)) return;
@@ -152,8 +156,9 @@ export interface DecisionEdits extends EditsState {
 }
 
 /**
- * Правки решений — PATCH /api/councils/<id>/streams/<streamId>/decisions/<questionId>: «почему» и где решение
- * (черновик, зафиксировано, открыт). У каждого вопроса своя очередь, и запрос шлёт последнее, что сделал человек, —
+ * Правки решений — PATCH /api/councils/<id>/streams/<streamId>/decisions/<questionId>: «почему», где решение
+ * (черновик, зафиксировано, открыт) и отметки «Это решение заменяет ADR-0003». У каждого вопроса своя очередь, и
+ * запрос шлёт последнее, что сделал человек, —
  * между экранами тоже. Ответ встаёт в решения сразу, если у них тот же run; решения, потоки (строка шага в цепочке) и
  * список советов перезапрашиваются. run — номер запуска шага, решения которого на экране: правки уходят с ним, и сервер
  * не примет их, если шаг с тех пор запустили снова.
@@ -171,27 +176,27 @@ export function useDecisionEdits(councilId: string, streamId: string, run: numbe
 }
 
 /**
- * «Это решение заменяет ADR-0003» — POST /api/councils/<id>/streams/<streamId>/decisions/<questionId>/replaces; ответ —
- * поток: модели проверяют выбор вопроса заново, и «Решения» — «ИИ работает». Поток сразу встаёт на место прежнего;
- * потоки, решения и список советов перезапрашиваются. run — номер запуска шага, решения которого на экране: шаг с тех
- * пор запустили снова — сервер замену не подтвердит.
+ * «Пересчитать» — POST /api/councils/<id>/streams/<streamId>/decisions/<questionId>/recheck; ответ — решение: модели
+ * проверяют выбор этого вопроса заново, а шаг и другие решения не меняются. Решение сразу встаёт на место прежнего в
+ * решениях того же запуска шага; решения и список советов перезапрашиваются, а пока пересчёт идёт — опрашиваются
+ * (useStreamDecisions()). run — номер запуска шага, решения которого на экране: шаг с тех пор запустили снова — сервер
+ * не пересчитает.
  */
-export function useReplaceDecision(): Mutation<
-  [id: string, streamId: string, run: number, questionId: string, adr: string],
-  Stream
+export function useRecheckDecision(): Mutation<
+  [id: string, streamId: string, run: number, questionId: string],
+  StreamDecision
 > {
   return useMutation(
-    async (id: string, streamId: string, run: number, questionId: string, adr: string) => {
+    async (id: string, streamId: string, run: number, questionId: string) => {
       try {
-        return await source.replaceDecision(id, streamId, run, questionId, adr);
+        return await source.recheckDecision(id, streamId, run, questionId);
       } catch (error) {
         staleOnRefused(error);
         throw error;
       }
     },
-    (stream, id) => {
-      markStale('streams', replaceStream(id, stream));
-      markStale('decisions');
+    (decision, id, streamId, run) => {
+      markStale('decisions', putDecision(id, streamId, run, decision));
       markStale('councils');
     },
   );

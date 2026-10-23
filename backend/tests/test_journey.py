@@ -127,7 +127,8 @@ def test_a_council_goes_from_the_brief_to_the_tasks(base):
     run = decisions["run"]
     assert len(decisions["decisions"]) == len(questions)
     for decision in decisions["decisions"]:
-        body = {"run": run, "rationale": decision["rationale"] or WHY, "status": "fixed"}
+        body = {"run": run, "rationale": decision["rationale"] or WHY, "status": "fixed",
+                "replaces": [ref["id"] for ref in decision["replaces"]]}
         fixed = ok(client.patch(f"{stream_path}/decisions/{decision['question']['id']}",
                                 json=body))["decision"]
         assert fixed["status"] == "fixed"

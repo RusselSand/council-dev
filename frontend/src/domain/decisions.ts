@@ -14,6 +14,13 @@ export type DecisionState = (typeof DECISION_STATES)[number];
 /** Кто написал «почему»: модели или человек. */
 export type RationaleAuthor = 'ai' | 'user';
 
+/**
+ * Что с «Пересчитать» у решения: ready — отмечены замены, которых при прошлой проверке не было; running — модели проверяют
+ * выбор вопроса заново, решение занято; failed — пересчёт остановился, отметки те же.
+ */
+export const DECISION_RECHECKS = ['ready', 'running', 'failed'] as const;
+export type DecisionRecheck = (typeof DECISION_RECHECKS)[number];
+
 /** Решение другого вопроса, от которого зависит это: «Q2: P16». */
 export interface DecisionContext {
   /** id того вопроса. */
@@ -26,7 +33,7 @@ export interface DecisionContext {
 
 /**
  * С чем расходится вариант: ограничение (фрагмент) или решение проекта. У противоречия с решением проекта на «Решениях» —
- * «Это решение заменяет ADR-0003».
+ * отметка «Это решение заменяет ADR-0003».
  */
 export type DecisionConflictKind = 'constraint' | 'decision';
 
@@ -70,8 +77,9 @@ export interface StreamDecision {
   /** «последствия»: ограничения, которым вариант противоречит, его риски (id) и правки, которые предлагают модели. */
   conflicts: DecisionConflict[];
   /**
-   * Решения проекта, замену которых человек подтвердил («Это решение заменяет ADR-0003»), по порядку подтверждения: для
-   * проверки выбора они не действуют, и противоречий с ними в conflicts нет. Нет — пусто.
+   * Решения проекта, замену которых человек отметил («Это решение заменяет ADR-0003»), по порядку отметок. Пока вопрос с
+   * ними не пересчитали, противоречие с ними ещё в conflicts; пересчитали — для проверки они не действуют, и противоречий
+   * с ними нет. Нет — пусто.
    */
   replaces: DecisionRef[];
   risks: string[];
@@ -80,22 +88,25 @@ export interface StreamDecision {
   rationale: string;
   rationaleBy: RationaleAuthor;
   status: DecisionState;
+  /** Что с «Пересчитать»; пересчитывать нечего или шаг готов — null. */
+  recheck: DecisionRecheck | null;
 }
 
 /** Решения потока и от какого запуска шага «Решения» они. */
 export interface DecisionsRound {
   /**
    * Номер запуска шага «Решения»: растёт с каждым запуском моделей на шаге — первым и каждым «Запустить снова»; шаг не
-   * начат — 0. Номер другой — решения от другой работы моделей, хоть id у них те же.
+   * начат — 0. «Пересчитать» — не запуск шага. Номер другой — решения от другой работы моделей, хоть id у них те же.
    */
   run: number;
   decisions: StreamDecision[];
 }
 
-/** Что человек меняет в решении: «почему» и где решение. */
+/** Что человек меняет в решении: «почему», где решение и замену каких решений проекта он отметил (их id). */
 export interface DecisionEdit {
   rationale: string;
   status: DecisionState;
+  replaces: string[];
 }
 
 /** Решения правят, пока шаг ждёт вас, остановился или уже готов, — как в макете. Не начат или работают модели — нет. */
@@ -103,6 +114,9 @@ export const decisionsEditable = (state: State): boolean => stepEditable(state);
 
 /** «Зафиксировать решения → к итогам» — когда шаг ждёт вас или остановился, как в макете. */
 export const decisionsApprovable = (state: State): boolean => stepApprovable(state);
+
+/** «Пересчитать» доступна: есть новые отметки или пересчёт остановился. */
+export const recheckable = (recheck: DecisionRecheck | null): boolean => recheck === 'ready' || recheck === 'failed';
 
 /** Есть «почему»: из одних пробелов — нет. Без него решение не фиксируется, как в макете. */
 export const hasRationale = (text: string): boolean => text.trim() !== '';

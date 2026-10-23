@@ -275,8 +275,12 @@ def interrupted(council: Council) -> Council:
             field: halted(getattr(research, field)) for field in ("scan", "design_scan")
             if running(getattr(research, field))})
     streams = [stream.model_copy(update={
-        field: halted(getattr(stream, field))
-        for field in STREAM_RUNS if running(getattr(stream, field))
+        **{field: halted(getattr(stream, field))
+           for field in STREAM_RUNS if running(getattr(stream, field))},
+        # Пересчёт решения вопроса на «Решениях» — тоже ход: «Пересчитать» снова.
+        **({"rechecks": {question: halted(work) if running(work) else work
+                         for question, work in stream.rechecks.items()}}
+           if any(running(work) for work in stream.rechecks.values()) else {}),
     }) for stream in council.streams or []]
     if streams != (council.streams or []):
         changes["streams"] = streams

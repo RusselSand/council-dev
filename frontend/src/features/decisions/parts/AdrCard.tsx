@@ -10,16 +10,17 @@ import styles from './AdrCard.module.css';
 interface AdrCardProps {
   decision: DecisionView;
   onRationale: (text: string) => void;
-  /** «Это решение заменяет ADR-0003» у противоречия с решением проекта. */
-  onReplace: (adr: string) => void;
+  /** Отметка «Это решение заменяет ADR-0003» у противоречия с решением проекта: поставить или снять. */
+  onMark: (adr: string) => void;
 }
 
 /**
  * Решение (ADR), как в макете: номер, где решение и что о нём думает совет; ниже — контекст, решение, «почему» (поле и
- * кто его написал), в контексте, последствия. У противоречия с решением проекта — «Это решение заменяет ADR-0003».
- * «почему» пусто, а решение не открыто, — «Без обоснования решение не зафиксировать.»
+ * кто его написал), в контексте, последствия. У противоречия с решением проекта — отметка «Это решение заменяет
+ * ADR-0003»: отмеченная залита, нет — в рамке. «почему» пусто, а решение не открыто, — «Без обоснования решение не
+ * зафиксировать.»
  */
-export function AdrCard({ decision, onRationale, onReplace }: AdrCardProps) {
+export function AdrCard({ decision, onRationale, onMark }: AdrCardProps) {
   const { t } = useI18n();
   const facts: Fact[] = [
     { label: t('decisions.fact.context'), value: decision.question },
@@ -63,18 +64,19 @@ export function AdrCard({ decision, onRationale, onReplace }: AdrCardProps) {
       label: t('decisions.fact.consequences'),
       value: (
         <ul className={styles.consequences}>
-          {decision.consequences.map(({ tone, text, replace }, i) => (
+          {decision.consequences.map(({ tone, text, mark }, i) => (
             <li key={i} className={[styles.consequence, styles[tone]].join(' ')}>
               <span>{text}</span>
-              {replace !== undefined && (
+              {mark !== undefined && (
                 <Button
-                  variant="outline"
+                  variant={mark.on ? 'primary' : 'outline'}
                   tone="danger"
                   size="sm"
-                  disabled={decision.replaceDisabled}
-                  onClick={() => onReplace(replace)}
+                  aria-pressed={mark.on}
+                  disabled={decision.locked}
+                  onClick={() => onMark(mark.id)}
                 >
-                  {t('decisions.replace', { id: replace })}
+                  {t('decisions.replace', { id: mark.id })}
                 </Button>
               )}
             </li>

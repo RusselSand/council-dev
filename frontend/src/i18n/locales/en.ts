@@ -329,6 +329,9 @@ export const en = translation({
   'decisions.problem.hint':
     'To fix the option’s wording, go to the “Options” step: choose your own option with the corrected text, and the council will check it again. To keep it as it is, explain that in “why”.',
   'decisions.problem.toOptions': 'Fix in “Options”',
+  'decisions.recheck': 'Recheck',
+  'decisions.recheck.running': 'AI is rechecking this decision — please wait.',
+  'decisions.recheck.failed': 'The recheck stopped — press “Recheck” again.',
   'decisions.judge': 'Judge:',
   'decisions.adr.catalog': '{id} → {catalog}',
   'decisions.adr.state': '· {state}',
@@ -362,6 +365,7 @@ export const en = translation({
   'decisions.accept.fixed': 'Finalized · next →',
   'decisions.accept.open': 'Next →',
   'decisions.approve': 'Finalize decisions → to outcomes',
+  'decisions.approve.rechecking': 'A decision is being rechecked — you can finalize decisions once it is done.',
 
   'outcomes.nav': 'Stream outcomes',
   'outcomes.prev': 'Previous outcome',
@@ -561,7 +565,7 @@ export const en = translation({
   'error.decisions_not_ready':
     'Decisions can’t be changed now: the step hasn’t started or it was run again. The stream and decisions are updated.',
   'error.rationale_required': 'A decision can’t be finalized without a rationale — write the “why”.',
-  'error.unknown_conflict': 'This decision no longer has that conflict. Decisions have been refreshed.',
+  'error.unknown_conflict': 'This replacement can’t be marked or unmarked on the decision now. Decisions have been refreshed.',
   'error.outcomes_not_ready':
     'Outcomes can’t be approved now: the step hasn’t started or it was run again. The stream and outcomes are updated.',
   'error.outcome_blocked': 'The outcome is blocked — it lacks a decision, so there’s nothing to approve. Outcomes are updated.',

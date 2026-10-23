@@ -120,8 +120,9 @@ def running(state: RunState | None) -> bool:
 
 def seeking(council: Council) -> bool:
     """Совет ищет идею группы, работает хоть над одним потоком — ищет идею, вопросы, варианты,
-    проверяет выбор или собирает итоги, — исследует код и макет или строит и выгружает план
-    задач: новая нарезка стёрла бы группы и потоки из-под него."""
+    проверяет выбор (и пересчитывает решение вопроса) или собирает итоги, — исследует код и
+    макет или строит и выгружает план задач: новая нарезка стёрла бы группы и потоки из-под
+    него."""
     structure = council.structure
     if structure is not None and any(running(group.discovery) for group in structure.groups):
         return True
@@ -131,4 +132,5 @@ def seeking(council: Council) -> bool:
     if running(council.tasks) or running(council.tasks_draft):
         return True
     return any(running(getattr(stream, field))
-               for stream in council.streams or [] for field in STREAM_RUNS)
+               for stream in council.streams or [] for field in STREAM_RUNS) or any(
+        running(work) for stream in council.streams or [] for work in stream.rechecks.values())

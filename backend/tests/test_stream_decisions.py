@@ -1,5 +1,6 @@
 """«Решения» потока по контракту: GET /api/councils/{id}/streams/{streamId}/decisions, правка
-решения (PATCH …/decisions/{questionId}) и «Зафиксировать решения» (POST …/decisions/approve) —
+решения (PATCH …/decisions/{questionId}) — и отметки «Это решение заменяет ADR-…», «Пересчитать»
+(POST …/decisions/{questionId}/recheck) и «Зафиксировать решения» (POST …/decisions/approve) —
 оно переводит поток к «Итогам»: модели начинают собирать итоги на сервере."""
 
 import json
@@ -25,7 +26,7 @@ from spec_council.models import (
 )
 from spec_council.pipeline import ModelFailed
 from spec_council.projects import Projects
-from spec_council.store import InMemoryStore
+from spec_council.store import InMemoryStore, interrupted
 from tests.test_stream_options import ONE, OWN, SHARE, WHY, adds, chooses, offered, sets_of
 from tests.test_stream_options import Agents as OptionAgents
 from tests.test_stream_options import approves as approves_choice
@@ -169,9 +170,10 @@ def decisions_of(council_id) -> dict[str, dict]:
     return {item["question"]["id"]: item for item in round_of(council_id)["decisions"]}
 
 
-def edits(council_id, question_id, rationale, status, run=1, stream_id="A"):
+def edits(council_id, question_id, rationale, status, run=1, stream_id="A", replaces=()):
     return client.patch(f"{path(council_id, stream_id)}/{question_id}",
-                        json={"run": run, "rationale": rationale, "status": status})
+                        json={"run": run, "rationale": rationale, "status": status,
+                              "replaces": list(replaces)})
 
 
 def approves(council_id, run=1, stream_id="A"):
@@ -211,7 +213,7 @@ def test_checked_decisions_are_drafts_with_the_councils_rationale(store, pool):
         "question": questions["Q1"], "adr": "ADR-1", "catalogId": None,
         "option": option_at(council_id, "Q1", "P1"), "verdict": "validated", "note": None,
         "problem": None, "context": [], "conflicts": [], "replaces": [], "risks": [],
-        "fixes": [], "rationale": WHY, "rationaleBy": "ai", "status": "draft"}
+        "fixes": [], "rationale": WHY, "rationaleBy": "ai", "status": "draft", "recheck": None}
     # Передан как unresolved — судья взял вариант сам и объяснил почему.
     assert (q2["question"], q2["adr"], q2["option"], q2["verdict"], q2["note"]) == (
         questions["Q2"], "ADR-2", option_at(council_id, "Q2", "P2"), "recommended", "проще")
@@ -368,7 +370,7 @@ def test_a_removed_question_has_no_decision_until_it_is_back(store, pool):
     assert (q2["adr"], q2["rationale"], q2["status"]) == ("ADR-2", MINE, "fixed")
 
 
-# --- подтвердить замену решения проекта
+# --- отметить замену решения проекта и пересчитать вопрос
 
 SERVER = "Сервер — источник истины для статуса."
 PAST = [ProjectDecision(adr_id="ADR-0005", decision=SERVER),
@@ -376,9 +378,16 @@ PAST = [ProjectDecision(adr_id="ADR-0005", decision=SERVER),
 AGAINST = {"adr_id": "ADR-0005", "text": "статус ведёт сервер"}
 
 
-def replaces(council_id, question_id, adr, run=1, stream_id="A"):
-    return client.post(f"{path(council_id, stream_id)}/{question_id}/replaces",
-                       json={"run": run, "adr": adr})
+def marks(council_id, question_id, *adrs, rationale=None, status=None, run=1):
+    """Отметки «Это решение заменяет ADR-…» у решения — правкой решения: «почему» и где решение —
+    как они на экране, если не сказано другое."""
+    now = decisions_of(council_id)[question_id]
+    return edits(council_id, question_id, now["rationale"] if rationale is None else rationale,
+                 status or now["status"], run=run, replaces=adrs)
+
+
+def rechecks(council_id, question_id, run=1, stream_id="A"):
+    return client.post(f"{path(council_id, stream_id)}/{question_id}/recheck", json={"run": run})
 
 
 def clashing(store, pool, agents, *also) -> tuple[str, str]:
@@ -390,160 +399,335 @@ def clashing(store, pool, agents, *also) -> tuple[str, str]:
     return checked(store, pool, project_decisions=PAST)
 
 
-def test_a_decision_replacing_a_project_decision_is_checked_again(store, pool, agents):
-    council_id, own = clashing(store, pool, agents)
+def test_a_mark_only_marks_the_replacement_and_calls_no_models(store, pool, agents):
+    council_id, _ = clashing(store, pool, agents)
     q1 = decisions_of(council_id)["Q1"]
-    assert (q1["verdict"], q1["problem"], q1["replaces"]) == (
-        "conflict", {"text": "P1 может заменить ADR-0005.", "fixes": []}, [])
+    assert (q1["verdict"], q1["problem"], q1["replaces"], q1["recheck"]) == (
+        "conflict", {"text": "P1 может заменить ADR-0005.", "fixes": []}, [], None)
     assert q1["conflicts"] == [{"id": "ADR-0005", "kind": "decision",
                                 "text": "статус ведёт сервер"}]
-    assert edits(council_id, "Q2", MINE, "fixed").status_code == 200
     asked = len(agents.prompts["decision_analysis"])
-    res = replaces(council_id, "Q1", "ADR-0005")
+    res = marks(council_id, "Q1", "ADR-0005")
     assert res.status_code == 200, res.text
-    stream = res.json()["stream"]
-    assert stream == stream_of(council_id)
-    decisions = steps_of(stream)["decisions"]
-    assert (decisions["state"], decisions["note"], decisions["text"]) == (
-        "running", "проверка решений идёт", "sol и fable проверяют решения заново.")
-    work, judge = decisions["progress"]
-    assert [(run["model"], run["state"]) for run in work["runs"]] == [
-        ("sol", "running"), ("fable", "running")]
-    assert judge == {"phase": "decision_judge",
-                     "runs": [{"model": "fable", "state": "waiting", "startedAt": None}]}
-    # Новый запуск шага: пока модели проверяют, решений нет, а прежние правки не принимаются.
-    assert round_of(council_id) == {"run": 2, "decisions": []}
-    assert error_of(edits(council_id, "Q3", MINE, "fixed")) == (409, "decisions_not_ready")
-    assert {"stage": "streams", "stream": "A", "step": "decisions", "state": "running",
-            "text": "sol и fable проверяют решения"} in summary_of(council_id)["activity"]
+    q1 = res.json()["decision"]
+    assert q1 == decisions_of(council_id)["Q1"]
+    # Отметка — у решения; проверка прежняя: противоречие видно, пока вопрос не пересчитали.
+    assert (q1["replaces"], q1["recheck"], q1["verdict"], q1["status"]) == (
+        [{"id": "ADR-0005", "decision": SERVER}], "ready", "conflict", "draft")
+    assert q1["conflicts"] == [{"id": "ADR-0005", "kind": "decision",
+                                "text": "статус ведёт сервер"}]
+    assert pool.jobs == [] and len(agents.prompts["decision_analysis"]) == asked
+    assert round_of(council_id)["run"] == 1
+    assert steps_of(stream_of(council_id))["decisions"]["state"] == "waiting"
+    # Повторное нажатие снимает отметку.
+    q1 = marks(council_id, "Q1").json()["decision"]
+    assert (q1["replaces"], q1["recheck"]) == ([], None)
+
+
+def test_a_recheck_checks_only_its_question_and_holds_nothing_else(store, pool, agents):
+    council_id, own = clashing(store, pool, agents)
+    assert edits(council_id, "Q2", MINE, "fixed").status_code == 200
+    assert marks(council_id, "Q1", "ADR-0005").status_code == 200
+    asked = len(agents.prompts["decision_analysis"])
+    before = stream_of(council_id)
+    res = rechecks(council_id, "Q1")
+    assert res.status_code == 200, res.text
+    q1 = res.json()["decision"]
+    assert q1 == decisions_of(council_id)["Q1"]
+    # Вопрос занят: модели проверяют его заново; решение — черновик, «почему» ИИ напишет пересчёт.
+    assert (q1["recheck"], q1["status"], q1["rationale"], q1["verdict"]) == (
+        "running", "draft", "", "conflict")
+    # Шаг не занят: тот же запуск, решения видны, строка шага и совет — как были.
+    assert stream_of(council_id) == before
+    shown = round_of(council_id)
+    assert shown["run"] == 1 and [d["question"]["id"] for d in shown["decisions"]] == [
+        "Q1", "Q2", "Q3"]
+    assert {"stage": "streams", "stream": "A", "step": "decisions", "state": "waiting",
+            "text": "Зафиксируйте решения"} in summary_of(council_id)["activity"]
+    # Другие решения правят дальше; это — нет, и решения не фиксируют, пока его пересчитывают.
+    assert edits(council_id, "Q3", MINE, "fixed").status_code == 200
+    assert error_of(edits(council_id, "Q1", MINE, "fixed", replaces=["ADR-0005"])) == (
+        409, "decisions_not_ready")
+    assert error_of(approves(council_id)) == (409, "decisions_not_ready")
+    # Пересчёт уже идёт — второе нажатие ничего не запускает.
+    assert rechecks(council_id, "Q1").json()["decision"] == q1 and len(pool.jobs) == 1
 
     del agents.judged["Q1"]                             # других проблем нет
     pool.run()
-    # Заново проверили только Q1 — с ADR-0005, замену которого подтвердили.
+    # Заново проверили только Q1 — с ADR-0005, замену которого отметили; другие вопросы модели
+    # видят, как всегда.
     prompts = agents.prompts["decision_analysis"][asked:]
     assert {json.loads(section(prompt, "OPEN QUESTION"))["id"] for prompt in prompts} == {"Q1"}
     accepted = json.loads(section(prompts[0], "ACCEPTED DECISIONS"))
     assert [(d["adr_id"], d.get("replaced_by_this_decision")) for d in accepted] == [
         ("ADR-0005", True), ("ADR-0007", None)]
+    assert [q["id"] for q in json.loads(section(prompts[0], "RELATED QUESTIONS"))] == ["Q2", "Q3"]
     shown = round_of(council_id)
-    assert shown["run"] == 2
+    assert shown["run"] == 1
     q1, q2, q3 = shown["decisions"]
     # Проверка прошла: «проверено», «почему» — черновик ИИ; замена — у решения.
     assert (q1["verdict"], q1["problem"], q1["conflicts"], q1["rationale"], q1["rationaleBy"],
-            q1["status"]) == ("validated", None, [], WHY, "ai", "draft")
+            q1["status"], q1["recheck"]) == ("validated", None, [], WHY, "ai", "draft", None)
     assert q1["replaces"] == [{"id": "ADR-0005", "decision": SERVER}]
-    # Решения других вопросов — как были на экране.
-    assert [(d["rationale"], d["status"]) for d in (q2, q3)] == [(MINE, "fixed"), (WHY, "draft")]
-    assert {found.question_id: found.replaced
-            for found in stored(store, council_id).analysis.analyses} == {
+    # Решения других вопросов — как их оставили на экране.
+    assert [(d["rationale"], d["status"]) for d in (q2, q3)] == [(MINE, "fixed"), (MINE, "fixed")]
+    after = stored(store, council_id)
+    assert {found.question_id: found.replaced for found in after.analysis.analyses} == {
         "Q1": ["ADR-0005"], "Q2": [], "Q3": []}
+    assert (after.analysis.launch, after.rechecks) == (1, {})
     assert steps_of(stream_of(council_id))["decisions"]["state"] == "waiting"
+    assert approves(council_id).status_code == 200
 
 
 def test_other_problems_stay_and_ones_own_rationale_too(store, pool, agents):
-    """После подтверждения замены другие проблемы видны, как прежде; «почему», которое человек
-    написал сам, остаётся, а решение снова черновик."""
+    """После пересчёта другие проблемы видны, как прежде; «почему», которое человек написал сам,
+    остаётся, а решение снова черновик."""
     agents.judged["Q1"] = {
         "status": "conflict", "proposal_id": "P1", "reason": PROBLEM,
         "validation": {"constraint_conflicts": ["F3"], "adr_conflicts": [AGAINST]},
         "fixes": [{"question_id": "Q1", "change": "Искать по заголовкам."}]}
     council_id, _ = checked(store, pool, project_decisions=PAST)
-    assert edits(council_id, "Q1", MINE, "fixed").status_code == 200
-    assert replaces(council_id, "Q1", "ADR-0005").status_code == 200
+    q1 = marks(council_id, "Q1", "ADR-0005", rationale=MINE, status="fixed").json()["decision"]
+    # Отметка не трогает, где решение.
+    assert (q1["status"], q1["recheck"]) == ("fixed", "ready")
+    assert rechecks(council_id, "Q1").status_code == 200
     agents.judged["Q1"] = {**agents.judged["Q1"], "validation": {"constraint_conflicts": ["F3"]}}
     pool.run()
     q1 = decisions_of(council_id)["Q1"]
     assert (q1["verdict"], q1["problem"]["text"], q1["conflicts"]) == (
         "conflict", PROBLEM, [{"id": "F3", "kind": "constraint", "text": None}])
     assert (q1["rationale"], q1["rationaleBy"], q1["status"]) == (MINE, "user", "draft")
-    assert q1["replaces"] == [{"id": "ADR-0005", "decision": SERVER}]
+    assert (q1["replaces"], q1["recheck"]) == ([{"id": "ADR-0005", "decision": SERVER}], None)
 
 
-def test_each_project_decision_is_replaced_on_its_own(store, pool, agents):
-    """Выбор противоречит двум решениям проекта: замену подтверждают у каждого. Подтвердили одно
-    — второе противоречие остаётся, и его можно подтвердить тоже."""
+def test_each_project_decision_is_marked_on_its_own(store, pool, agents):
+    """Выбор противоречит двум решениям проекта: замену отмечают у каждого. Пересчитали с одной —
+    второе противоречие остаётся, его отмечают тоже, и пересчитывают снова."""
     council_id, _ = clashing(store, pool, agents, {"adr_id": "ADR-0007", "text": "срок"})
-    assert replaces(council_id, "Q1", "ADR-0005").status_code == 200
+    assert marks(council_id, "Q1", "ADR-0005").status_code == 200
+    assert rechecks(council_id, "Q1").status_code == 200
     agents.judged["Q1"] = {**agents.judged["Q1"], "validation": {"adr_conflicts": [
         {"adr_id": "ADR-0007", "text": "срок"}]}}
     pool.run()
     q1 = decisions_of(council_id)["Q1"]
-    assert (q1["conflicts"], q1["replaces"]) == (
+    assert (q1["conflicts"], q1["replaces"], q1["recheck"]) == (
         [{"id": "ADR-0007", "kind": "decision", "text": "срок"}],
-        [{"id": "ADR-0005", "decision": SERVER}])
-    assert replaces(council_id, "Q1", "ADR-0007", run=2).status_code == 200
+        [{"id": "ADR-0005", "decision": SERVER}], None)
+    # Учтённую замену не снять — противоречия с ней уже не видно; новую отмечают в конце.
+    assert error_of(marks(council_id, "Q1", "ADR-0007")) == (422, "unknown_conflict")
+    q1 = marks(council_id, "Q1", "ADR-0007", "ADR-0005").json()["decision"]
+    assert ([ref["id"] for ref in q1["replaces"]], q1["recheck"]) == (
+        ["ADR-0005", "ADR-0007"], "ready")
+    assert rechecks(council_id, "Q1").status_code == 200
     del agents.judged["Q1"]
     pool.run()
     q1 = decisions_of(council_id)["Q1"]
     assert (q1["verdict"], [ref["id"] for ref in q1["replaces"]]) == (
         "validated", ["ADR-0005", "ADR-0007"])
-    assert round_of(council_id)["run"] == 3
+    assert round_of(council_id)["run"] == 1
 
 
-def test_a_confirmed_replacement_goes_with_the_fixed_decision(store, pool, agents):
-    council_id, own = clashing(store, pool, agents)
-    assert replaces(council_id, "Q1", "ADR-0005").status_code == 200
+def test_a_mark_in_one_question_leaves_the_same_conflict_in_another(store, pool, agents):
+    """Решение владельца: замену отмечают в каждом вопросе отдельно — отметка у Q1 не снимает
+    противоречие с тем же решением проекта у Q3."""
+    agents.judged["Q1"] = {"status": "conflict", "reason": PROBLEM,
+                           "validation": {"adr_conflicts": [AGAINST]}}
+    agents.judged["Q3"] = dict(agents.judged["Q1"])
+    council_id, _ = checked(store, pool, project_decisions=PAST)
+    assert marks(council_id, "Q1", "ADR-0005").status_code == 200
+    assert rechecks(council_id, "Q1").status_code == 200
     del agents.judged["Q1"]
     pool.run()
-    assert edits(council_id, "Q1", WHY, "fixed", run=2).status_code == 200
-    assert edits(council_id, "Q3", WHY, "open", run=2).status_code == 200
-    assert approves(council_id, run=2).status_code == 200
+    shown = decisions_of(council_id)
+    assert (shown["Q1"]["verdict"], shown["Q1"]["conflicts"]) == ("validated", [])
+    q3 = shown["Q3"]
+    assert (q3["verdict"], q3["replaces"], q3["recheck"]) == ("conflict", [], None)
+    assert q3["conflicts"] == [{"id": "ADR-0005", "kind": "decision",
+                                "text": "статус ведёт сервер"}]
+
+
+def test_a_marked_replacement_goes_with_the_fixed_decision(store, pool, agents):
+    """Отмеченная замена уходит с решением, и пересчитали его или нет: так решил человек."""
+    council_id, own = clashing(store, pool, agents, {"adr_id": "ADR-0007", "text": "срок"})
+    assert marks(council_id, "Q1", "ADR-0005").status_code == 200
+    assert rechecks(council_id, "Q1").status_code == 200
+    agents.judged["Q1"] = {**agents.judged["Q1"], "validation": {"adr_conflicts": [
+        {"adr_id": "ADR-0007", "text": "срок"}]}}
+    pool.run()
+    assert marks(council_id, "Q1", "ADR-0005", "ADR-0007", rationale=MINE,
+                 status="fixed").status_code == 200
+    assert edits(council_id, "Q3", WHY, "open").status_code == 200
+    assert approves(council_id).status_code == 200
     # Открытый вопрос ничего не заменяет.
     fixed = stored(store, council_id).decisions
     assert [(d.question_id, d.proposal, d.replaces) for d in fixed] == [
-        ("Q1", "P1", ["ADR-0005"]), ("Q2", "P2", []), ("Q3", None, [])]
+        ("Q1", "P1", ["ADR-0005", "ADR-0007"]), ("Q2", "P2", []), ("Q3", None, [])]
 
 
-def test_a_replacement_confirmed_again_or_on_a_done_step_changes_nothing(store, pool, agents):
+def test_nothing_to_recheck_or_a_done_step_changes_nothing(store, pool, agents):
     council_id, _ = clashing(store, pool, agents)
-    assert replaces(council_id, "Q1", "ADR-0005").status_code == 200
+    before = stored(store, council_id)
+    res = rechecks(council_id, "Q1")                             # отметок нет
+    assert res.status_code == 200 and res.json()["decision"] == decisions_of(council_id)["Q1"]
+    assert pool.jobs == [] and stored(store, council_id) == before
+    assert marks(council_id, "Q1", "ADR-0005").status_code == 200
+    assert rechecks(council_id, "Q1").status_code == 200
     del agents.judged["Q1"]
     pool.run()
     before = stored(store, council_id)
-    res = replaces(council_id, "Q1", "ADR-0005", run=2)              # уже подтверждена
-    assert res.status_code == 200 and res.json()["stream"] == stream_of(council_id)
+    res = rechecks(council_id, "Q1")                             # отметки уже учтены
+    assert res.status_code == 200 and res.json()["decision"]["recheck"] is None
     assert pool.jobs == [] and stored(store, council_id) == before
 
     agents.judged["Q1"] = {"status": "conflict", "proposal_id": "P1", "reason": PROBLEM,
                            "validation": {"adr_conflicts": [AGAINST]}}
     council_id, _ = checked(store, pool, project_decisions=PAST)
+    assert marks(council_id, "Q1", "ADR-0005").status_code == 200
     assert approves(council_id).status_code == 200
     pool.run()
+    # Шаг готов: решения ушли в итоги — пересчитывать нечего.
+    assert decisions_of(council_id)["Q1"]["recheck"] is None
     before = stored(store, council_id)
-    res = replaces(council_id, "Q1", "ADR-0005")                      # шаг готов
-    assert res.status_code == 200 and res.json()["stream"] == stream_of(council_id)
+    res = rechecks(council_id, "Q1")
+    assert res.status_code == 200 and res.json()["decision"] == decisions_of(council_id)["Q1"]
     assert pool.jobs == [] and stored(store, council_id) == before
 
 
-def test_a_replacement_of_what_the_decision_does_not_go_against_is_refused(store, pool, agents):
+def test_a_done_step_keeps_the_marks_it_was_fixed_with(store, pool, agents):
+    """Шаг готов: решения ушли в итоги с теми заменами, что были, — отметки не ставят и не
+    снимают; «почему» и где решение правят, как прежде."""
+    council_id, _ = clashing(store, pool, agents, {"adr_id": "ADR-0007", "text": "срок"})
+    assert marks(council_id, "Q1", "ADR-0005", rationale=MINE, status="fixed").status_code == 200
+    assert approves(council_id).status_code == 200
+    pool.run()
+    before = stored(store, council_id)
+    assert error_of(marks(council_id, "Q1")) == (422, "unknown_conflict")
+    assert error_of(marks(council_id, "Q1", "ADR-0005", "ADR-0007")) == (422, "unknown_conflict")
+    assert stored(store, council_id) == before
+    q1 = marks(council_id, "Q1", "ADR-0005", rationale=WHY, status="draft").json()["decision"]
+    assert (q1["rationale"], q1["status"], [ref["id"] for ref in q1["replaces"]]) == (
+        WHY, "draft", ["ADR-0005"])
+    fixed = stored(store, council_id).decisions
+    assert [(d.question_id, d.replaces) for d in fixed if d.question_id == "Q1"] == [
+        ("Q1", ["ADR-0005"])]
+
+
+def test_a_mark_of_what_the_decision_does_not_go_against_is_refused(store, pool, agents):
     agents.judged["Q1"] = {
         "status": "conflict", "proposal_id": "P1", "reason": PROBLEM,
         "validation": {"constraint_conflicts": ["F3"], "adr_conflicts": [AGAINST]},
         "fixes": [{"question_id": "Q1", "change": "Искать по заголовкам."}]}
     council_id, _ = checked(store, pool, project_decisions=PAST)
-    assert error_of(replaces(council_id, "Q1", "ADR-0007")) == (422, "unknown_conflict")
-    assert error_of(replaces(council_id, "Q1", "F3")) == (422, "unknown_conflict")
-    assert error_of(replaces(council_id, "Q2", "ADR-0005")) == (422, "unknown_conflict")
-    assert error_of(replaces(council_id, "Q9", "ADR-0005")) == (404, "not_found")
-    assert error_of(replaces(council_id, "Q1", "ADR-0005", stream_id="Z")) == (404, "not_found")
-    assert error_of(replaces("нет", "Q1", "ADR-0005")) == (404, "not_found")
-    assert error_of(replaces(council_id, "Q1", "ADR-0005", run=2)) == (
-        409, "decisions_not_ready")
-    assert error_of(client.post(f"{path(council_id)}/Q1/replaces", json={"run": 1})) == (
-        400, "bad_request")
+    assert error_of(marks(council_id, "Q1", "ADR-0007")) == (422, "unknown_conflict")
+    assert error_of(marks(council_id, "Q1", "F3")) == (422, "unknown_conflict")
+    assert error_of(marks(council_id, "Q2", "ADR-0005")) == (422, "unknown_conflict")
+    assert error_of(client.patch(f"{path(council_id)}/Q1", json={
+        "run": 1, "rationale": "", "status": "draft"})) == (400, "bad_request")
     assert pool.jobs == [] and decisions_of(council_id)["Q1"]["replaces"] == []
 
 
-def test_a_replacement_waits_until_the_models_have_checked(store, pool):
-    council_id, _ = chosen(store, pool)
-    assert error_of(replaces(council_id, "Q1", "ADR-0005")) == (409, "decisions_not_ready")
-
-
-def test_a_stopping_server_does_not_leave_the_check_running(store, pool, agents):
+def test_a_recheck_of_a_missing_or_strange_decision_is_refused(store, pool, agents):
     council_id, _ = clashing(store, pool, agents)
+    assert marks(council_id, "Q1", "ADR-0005").status_code == 200
+    assert error_of(rechecks(council_id, "Q9")) == (404, "not_found")
+    assert error_of(rechecks(council_id, "Q1", stream_id="Z")) == (404, "not_found")
+    assert error_of(rechecks("нет", "Q1")) == (404, "not_found")
+    assert error_of(rechecks(council_id, "Q1", run=2)) == (409, "decisions_not_ready")
+    assert error_of(client.post(f"{path(council_id)}/Q1/recheck", json={})) == (
+        400, "bad_request")
+    assert error_of(client.post(f"{path(council_id)}/Q1/recheck",
+                                json={"run": 1, "adr": "ADR-0005"})) == (400, "bad_request")
+    assert pool.jobs == [] and decisions_of(council_id)["Q1"]["recheck"] == "ready"
+
+
+def test_marks_and_rechecks_wait_until_the_models_have_checked(store, pool):
+    council_id, _ = chosen(store, pool)
+    assert error_of(rechecks(council_id, "Q1")) == (409, "decisions_not_ready")
+    assert error_of(edits(council_id, "Q1", "", "draft", replaces=["ADR-0005"])) == (
+        409, "decisions_not_ready")
+
+
+def test_a_stopped_recheck_is_run_again(store, pool, agents):
+    """Пересчёт не справился — решение прежнее, «Пересчитать» снова; поменяли отметки — сбой
+    забыт."""
+    council_id, _ = clashing(store, pool, agents, {"adr_id": "ADR-0007", "text": "срок"})
+    assert marks(council_id, "Q1", "ADR-0005").status_code == 200
+    agents.stuck = {"Q1"}
+    assert rechecks(council_id, "Q1").status_code == 200
+    pool.run()
+    q1 = decisions_of(council_id)["Q1"]
+    assert (q1["recheck"], q1["verdict"], q1["status"]) == ("failed", "conflict", "draft")
+    assert steps_of(stream_of(council_id))["decisions"]["state"] == "waiting"
+    # Отметили ещё одну замену — сбой забыт, пересчитывать снова есть что.
+    q1 = marks(council_id, "Q1", "ADR-0005", "ADR-0007").json()["decision"]
+    assert q1["recheck"] == "ready"
+    agents.stuck = set()
+    del agents.judged["Q1"]
+    assert rechecks(council_id, "Q1").json()["decision"]["recheck"] == "running"
+    pool.run()
+    q1 = decisions_of(council_id)["Q1"]
+    assert (q1["recheck"], q1["verdict"], q1["rationale"]) == (None, "validated", WHY)
+
+
+def test_a_stopping_server_does_not_leave_the_recheck_running(store, pool, agents):
+    council_id, _ = clashing(store, pool, agents)
+    assert marks(council_id, "Q1", "ADR-0005").status_code == 200
     app.dependency_overrides[get_launcher] = lambda: Closed()
-    assert error_of(replaces(council_id, "Q1", "ADR-0005")) == (500, "internal")
+    assert error_of(rechecks(council_id, "Q1")) == (500, "internal")
+    assert decisions_of(council_id)["Q1"]["recheck"] == "failed"
+    assert steps_of(stream_of(council_id))["decisions"]["state"] == "waiting"
+
+
+def test_a_restarted_server_stops_the_recheck_that_was_going(store, pool, agents):
+    council_id, _ = clashing(store, pool, agents)
+    assert marks(council_id, "Q1", "ADR-0005").status_code == 200
+    assert rechecks(council_id, "Q1").status_code == 200
+    council = interrupted(store.get_council(council_id))
+    store.update_council(council_id, {"streams": council.streams})
+    assert decisions_of(council_id)["Q1"]["recheck"] == "failed"
+    assert approves(council_id).status_code == 200
+
+
+def test_new_slicing_waits_for_the_recheck(store, pool, agents):
+    """Решение q-001 бекенда: пока модели работают на потоках — и пересчитывают решение, —
+    нарезку не запускают."""
+    council_id, _ = clashing(store, pool, agents)
+    assert marks(council_id, "Q1", "ADR-0005").status_code == 200
+    assert rechecks(council_id, "Q1").status_code == 200
+    slicing = f"/api/councils/{council_id}/slicing"
+    assert error_of(client.post(slicing, json={})) == (409, "models_running")
+    pool.run()
+    assert client.post(slicing, json={}).status_code == 200
+
+
+def test_a_retry_of_the_step_checks_the_marks_itself(store, pool, agents):
+    """Шаг остановился, а вопрос с отметкой пересчитывают: «Запустить снова» проверяет его сам,
+    с отметками, — пересчёт снят и остановлен."""
+    agents.judged["Q1"] = {"status": "conflict", "proposal_id": "P1", "reason": PROBLEM,
+                           "validation": {"adr_conflicts": [AGAINST]}}
+    agents.stuck = {"Q2"}
+    council_id, _ = chosen(store, pool, project_decisions=PAST)
+    pool.run()
     assert steps_of(stream_of(council_id))["decisions"]["state"] == "failed"
+    assert marks(council_id, "Q1", "ADR-0005").status_code == 200
+    assert rechecks(council_id, "Q1").status_code == 200
+    assert len(pool.jobs) == 1
+    agents.stuck = set()
+    del agents.judged["Q1"]
+    assert client.post(f"/api/councils/{council_id}/streams/A/retry", json={}).status_code == 200
+    assert stored(store, council_id).rechecks == {}
+    asked = len(agents.prompts["decision_analysis"])
+    pool.run()
+    # Остановленный пересчёт моделей не звал; Q1 проверил новый запуск — с отмеченной заменой.
+    prompts = agents.prompts["decision_analysis"][asked:]
+    accepted = [json.loads(section(prompt, "ACCEPTED DECISIONS")) for prompt in prompts
+                if json.loads(section(prompt, "OPEN QUESTION"))["id"] == "Q1"]
+    assert [[d.get("replaced_by_this_decision") for d in each] for each in accepted] == [
+        [True, None], [True, None]]
+    shown = round_of(council_id)
+    q1 = next(d for d in shown["decisions"] if d["question"]["id"] == "Q1")
+    assert (shown["run"], q1["verdict"], q1["replaces"], q1["recheck"]) == (
+        2, "validated", [{"id": "ADR-0005", "decision": SERVER}], None)
 
 
 # --- зафиксировать решения

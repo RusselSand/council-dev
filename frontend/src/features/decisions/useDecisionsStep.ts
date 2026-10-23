@@ -4,7 +4,7 @@ import {
   ApiError,
   useApproveDecisions,
   useDecisionEdits,
-  useReplaceDecision,
+  useRecheckDecision,
   useRound,
   useStreamDecisions,
 } from '../../data';
@@ -17,6 +17,8 @@ import {
   hasRationale,
   isAlarming,
   nextDecision,
+  recheckable,
+  type DecisionEdit,
   type DecisionState,
   type StreamDecision,
 } from '../../domain/decisions';
@@ -28,14 +30,17 @@ import type { TagTone } from '../../ui/Tag';
 const RATIONALE_DELAY = 600;
 
 /**
- * Строка «последствий»: противоречие — красным, риск — жёлтым, правка и подтверждённая замена решения проекта — серым,
+ * Строка «последствий»: противоречие — красным, риск — жёлтым, правка и отмеченная замена решения проекта — серым,
  * ничего — «… нет» зелёным.
  */
 export interface Consequence {
   tone: 'red' | 'yellow' | 'gray' | 'green';
   text: string;
-  /** У противоречия с решением проекта, пока шаг ждёт вас или остановился, — его id: «Это решение заменяет ADR-0003». */
-  replace?: string;
+  /**
+   * У противоречия с решением проекта, пока шаг ждёт вас или остановился, — отметка «Это решение заменяет ADR-0003»: id
+   * решения проекта и отмечена ли.
+   */
+  mark?: { id: string; on: boolean };
 }
 
 /** Проблема решения на красной плашке. */
@@ -43,6 +48,14 @@ export interface ProblemView {
   text: string;
   /** «Что поправить» по порядку: номер, вопрос, что сделать. */
   fixes: { num: string; question: string; text: string }[];
+}
+
+/** «Пересчитать» на красной плашке: есть, пока шаг ждёт вас или остановился. */
+export interface RecheckView {
+  /** Не действует: пересчитывать нечего, пересчёт идёт или решение сейчас не правят. */
+  disabled: boolean;
+  /** Под кнопкой: пересчёт идёт — «ИИ пересчитывает…», остановился — «Пересчёт остановился…»; иначе — null. */
+  note: { text: string; tone: 'running' | 'failed' } | null;
 }
 
 /** Открытое решение. */
@@ -55,6 +68,8 @@ export interface DecisionView {
   /** «P12 · текст варианта»; вопрос передан как unresolved — «— · Передан как unresolved». */
   choice: string;
   problem: ProblemView | null;
+  /** «Пересчитать» на плашке проблемы; у готового шага — нет. */
+  recheck: RecheckView | null;
   /** Что сказал судья; при проблеме не показывается, как в макете. */
   note: string | null;
   /** «ADR-1 → ADR-0041»: номер в потоке и, когда поток выгружен, в каталоге. */
@@ -78,14 +93,18 @@ export interface DecisionView {
   /** «Зафиксировать →», «Зафиксировано · дальше →», «Дальше →». */
   acceptLabel: string;
   acceptDisabled: boolean;
-  /** «Решение:», «Оставить открытым» и «почему» не действуют: правки заперты или решение фиксируется. */
+  /**
+   * «Решение:», «Оставить открытым», «почему» и отметки замен не действуют: правки заперты, решение фиксируется или его
+   * пересчитывают.
+   */
   locked: boolean;
   /** Не вышло сохранить решение — и с экрана, который закрыли раньше ответа: держится, пока его не сохраняют снова. */
   error: ApiError | undefined;
-  /** «Это решение заменяет …» не действует: правки заперты, решение фиксируется или замену уже подтверждают. */
-  replaceDisabled: boolean;
-  /** Замену не подтвердили: не вышло или не сохранились правки перед ней. Держится, пока не откроют другое решение. */
-  replaceError: ApiError | undefined;
+  /**
+   * Не пересчитали это решение: не вышло или не сохранились правки перед этим — и когда ответ пришёл, пока было открыто
+   * другое. Держится, пока от решения не уйдут или его не пересчитывают снова.
+   */
+  recheckError: ApiError | undefined;
 }
 
 export interface DecisionsStep {
@@ -113,15 +132,19 @@ export interface DecisionsStep {
   keepOpen: () => void;
   /** «Зафиксировать →» и «Дальше →». */
   accept: () => void;
-  /** «Это решение заменяет ADR-0003»: решение заменяет решение проекта adr, и модели проверяют выбор заново. */
-  replace: (adr: string) => void;
+  /** «Это решение заменяет ADR-0003»: поставить отметку или, если она стоит, снять — моделей она не зовёт. */
+  mark: (adr: string) => void;
+  /** «Пересчитать»: модели проверяют выбор этого вопроса заново с отмеченными заменами. */
+  recheck: () => void;
   /** «Поправить в «Вариантах»»: открыть этот вопрос на «Вариантах». */
   toOptions: () => void;
 
   /** «Зафиксировать решения → к итогам» есть: шаг ждёт вас или остановился. */
   approvable: boolean;
-  /** Не действует: решения уже фиксируются или шаг запускают снова. */
+  /** Не действует: решения уже фиксируются, шаг запускают снова или решение пересчитывают. */
   approveDisabled: boolean;
+  /** Под «Зафиксировать решения»: решение пересчитывают — «Идёт пересчёт решения…»; иначе — null. */
+  approveHint: string | null;
   approve: () => void;
   /** Не вышло или что-то из правок не сохранилось — в этом наборе решений. */
   approveError: ApiError | undefined;
@@ -129,25 +152,25 @@ export interface DecisionsStep {
 
 /** «Зафиксировать решения» не ушло: «почему» или правка решения не сохранились. */
 const NOT_SAVED = new ApiError('not_saved', 'Не всё сохранилось — решения не зафиксированы');
-/** Замена не подтверждена: «почему» или правка решения не сохранились, а после подтверждения их уже не примут. */
-const NOT_SAVED_REPLACE = new ApiError('not_saved', 'Не всё сохранилось — замена не подтверждена');
+/** Не пересчитали: «почему» или правка решения (и отметки) не сохранились, а пересчёт берёт то, что на сервере. */
+const NOT_SAVED_RECHECK = new ApiError('not_saved', 'Не всё сохранилось — решение не пересчитано');
 
 /**
  * Шаг «Решения», как в макете: решения по одному — чипы, «готово 2 из 4», «←» / «→»; вопрос и метка решения, «Ваш
- * выбор»; проблема и «Поправить в «Вариантах»»; что сказал судья; решение (ADR) — контекст, решение, «почему», в
- * контексте, последствия; внизу — «Решение: P12», «Оставить открытым» и «Зафиксировать →». «почему» уходит после паузы в
- * наборе и когда уходят от решения, «Оставить открытым», вариант и «Зафиксировать →» — сразу, вместе с набранным
- * «почему» (useDecisionEdits()); «Зафиксировать →» дожидается ответа и открывает следующее незафиксированное решение.
- * Зафиксированное без «почему» не сохраняется: без него решение не фиксируется, и набранное ждёт. Шаг ждёт вас или
- * остановился — внизу «Зафиксировать решения → к итогам»: сначала отправляет набранное и дожидается правок — и тех, что
- * уходят с экрана, который закрыли, — потом фиксирует решения и открывает «Итоги»; что-то не сохранилось — не фиксирует,
- * под кнопкой — «Не всё сохранилось», и открывается решение, где не сохранилось. «Это решение заменяет ADR-0003» у
- * противоречия с решением проекта (шаг ждёт вас или остановился) так же сначала отправляет набранное и дожидается правок,
- * потом подтверждает замену (useReplaceDecision()): модели проверяют выбор заново, шаг — «ИИ работает»; не вышло —
- * ошибка под решением. Правки, подтверждения и «Зафиксировать решения» не уходят вместе с «Запустить снова» шага:
- * retrying — шаг запускают снова, и они не действуют; пока решения фиксируются, замену подтверждают или правка ждёт паузы
- * в наборе или ответа, onBusy(true) — не действует «Запустить снова». Другой поток — другой экран: ставьте с key по совету
- * и потоку.
+ * выбор»; проблема, «Поправить в «Вариантах»» и «Пересчитать»; что сказал судья; решение (ADR) — контекст, решение,
+ * «почему», в контексте, последствия; внизу — «Решение: P12», «Оставить открытым» и «Зафиксировать →». «почему» уходит
+ * после паузы в наборе и когда уходят от решения, «Оставить открытым», вариант, «Зафиксировать →» и отметка «Это решение
+ * заменяет ADR-0003» — сразу, вместе с набранным «почему» (useDecisionEdits()); «Зафиксировать →» дожидается ответа и
+ * открывает следующее незафиксированное решение. Зафиксированное без «почему» не сохраняется: без него решение не
+ * фиксируется, и набранное ждёт. «Пересчитать» (шаг ждёт вас или остановился, есть отметки, которых проверка не учла)
+ * сначала отправляет набранное и дожидается правок, потом пересчитывает решение (useRecheckDecision()): пока модели
+ * проверяют, это решение занято, остальные правят, а «Зафиксировать решения» не действует. Шаг ждёт вас или остановился —
+ * внизу «Зафиксировать решения → к итогам»: сначала отправляет набранное и дожидается правок — и тех, что уходят с
+ * экрана, который закрыли, — потом фиксирует решения и открывает «Итоги»; что-то не сохранилось — не фиксирует, под
+ * кнопкой — «Не всё сохранилось», и открывается решение, где не сохранилось. Правки, «Пересчитать» и «Зафиксировать
+ * решения» не уходят вместе с «Запустить снова» шага: retrying — шаг запускают снова, и они не действуют; пока решения
+ * фиксируются, решение пересчитывается по запросу или правка ждёт паузы в наборе или ответа, onBusy(true) — не действует
+ * «Запустить снова». Другой поток — другой экран: ставьте с key по совету и потоку.
  */
 export function useDecisionsStep(
   councilId: string,
@@ -160,18 +183,23 @@ export function useDecisionsStep(
   const query = useStreamDecisions(councilId, streamId, state);
   // Набор решений: шаг сменил состояние или пришли решения другого его запуска — решения другие, хоть id те же.
   const round = query.data && `${query.data.state}/${query.data.run}`;
-  // Номер запуска шага, решения которого на экране: с ним уходят правки и «Зафиксировать решения», и сервер не примет
-  // их, если шаг с тех пор запустили снова. Решений нет — 0, как у не начатого шага: без решений правок нет.
+  // Номер запуска шага, решения которого на экране: с ним уходят правки, «Пересчитать» и «Зафиксировать решения», и
+  // сервер не примет их, если шаг с тех пор запустили снова. Решений нет — 0, как у не начатого шага: без решений правок
+  // нет.
   const run = query.data?.run ?? 0;
   const edits = useDecisionEdits(councilId, streamId, run);
   const approveAction = useApproveDecisions();
-  const replaceAction = useReplaceDecision();
+  const recheckAction = useRecheckDecision();
   const [current, setCurrent] = useState<string>();
   const [approving, setApproving] = useState(false);
   const [approveError, setApproveError] = useState<ApiError>();
-  /** Замену решения проекта подтверждают: правки и «Зафиксировать решения» ждут. */
-  const [replacing, setReplacing] = useState(false);
-  const [replaceError, setReplaceError] = useState<ApiError>();
+  /**
+   * «Пересчитать» ждёт ответа — у каких вопросов: у них ничего не меняют, «Зафиксировать решения» ждёт. Пока ждёт, можно
+   * открыть и пересчитать другое решение.
+   */
+  const [rechecking, setRechecking] = useState<string[]>([]);
+  /** Не пересчитали — по вопросу: ошибка под его решением, а не под тем, что открыто, когда пришёл ответ. */
+  const [recheckErrors, setRecheckErrors] = useState<Record<string, ApiError>>({});
   /** «Зафиксировать →» ждёт ответа — у какого вопроса: сохранилось — открывается следующее решение. */
   const [fixing, setFixing] = useState<string | null>(null);
   /** Набранное «почему» ждёт паузы в наборе. */
@@ -183,8 +211,8 @@ export function useDecisionsStep(
     setCurrent(undefined);
     setApproveError(undefined);
     setApproving(false);
-    setReplacing(false);
-    setReplaceError(undefined);
+    setRechecking([]);
+    setRecheckErrors({});
     setFixing(null);
   });
 
@@ -212,13 +240,28 @@ export function useDecisionsStep(
   /** Где решение: правка, на которую сервер ещё не ответил, иначе — как на сервере. */
   const statusOf = (decision: StreamDecision): DecisionState =>
     edits.pending[decision.question.id]?.status ?? decision.status;
+  /** Отмеченные замены решений проекта: правка, на которую сервер ещё не ответил, иначе — как на сервере. */
+  const marksOf = (decision: StreamDecision): string[] =>
+    edits.pending[decision.question.id]?.replaces ?? decision.replaces.map((ref) => ref.id);
   /** «почему», которое будет на сервере без набранного. */
   const savedOf = (decision: StreamDecision) => edits.pending[decision.question.id]?.rationale ?? decision.rationale;
   const rationaleOf = (decision: StreamDecision) => edits.drafts[decision.question.id] ?? savedOf(decision);
+  /** Решение пересчитывают — модели или по запросу, который ещё ждёт ответа: оно занято. */
+  const busyOf = (decision: StreamDecision) =>
+    decision.recheck === 'running' || rechecking.includes(decision.question.id);
+
+  /** Ошибка «Пересчитать» у решения вопроса: есть — ставится, нет — снимается. */
+  const putRecheckError = (question: string, error: ApiError | undefined) =>
+    setRecheckErrors((known) => {
+      const next = { ...known };
+      if (error) next[question] = error;
+      else delete next[question];
+      return next;
+    });
 
   /**
-   * Набранное «почему» решения — на сервер, с тем, где решение сейчас. Зафиксированное без «почему» не сохраняется: без
-   * него решение не фиксируется, и набранное ждёт.
+   * Набранное «почему» решения — на сервер, с тем, где решение, и отметками сейчас. Зафиксированное без «почему» не
+   * сохраняется: без него решение не фиксируется, и набранное ждёт.
    */
   const commit = (question: string) => {
     const { decisions: list, edits: now } = latest.current;
@@ -228,7 +271,8 @@ export function useDecisionsStep(
     if (draft === undefined || !decision) return;
     const status = pending[question]?.status ?? decision.status;
     if (status === 'fixed' && !hasRationale(draft)) return;
-    void now.save(question, { rationale: draft, status });
+    const replaces = pending[question]?.replaces ?? decision.replaces.map((ref) => ref.id);
+    void now.save(question, { rationale: draft, status, replaces });
   };
 
   const stopTyping = () => {
@@ -247,28 +291,30 @@ export function useDecisionsStep(
     [],
   );
 
-  // Пока решения фиксируются, замену подтверждают или правка ждёт паузы в наборе или ответа (и с экрана, который закрыли),
-  // «Запустить снова» не действует; ответили или ушли с шага — снова действует.
-  const busy = approving || replacing || typing || Object.keys(edits.pending).length > 0;
+  // Пока решения фиксируются, решение пересчитывается по запросу или правка ждёт паузы в наборе или ответа (и с экрана,
+  // который закрыли), «Запустить снова» не действует; ответили или ушли с шага — снова действует.
+  const busy = approving || rechecking.length > 0 || typing || Object.keys(edits.pending).length > 0;
   useEffect(() => {
     if (!busy) return undefined;
     onBusy(true);
     return () => onBusy(false);
   }, [busy, onBusy]);
 
-  const locked = approving || replacing || retrying || !decisionsEditable(state);
+  const locked = approving || retrying || !decisionsEditable(state);
   const ids = decisions.map((d) => d.question.id);
   const index = ids.indexOf(currentId ?? '');
   const decision = index >= 0 ? decisions[index] : undefined;
+  /** Открытое решение не правят: правки заперты, оно фиксируется или его пересчитывают. */
+  const lockedNow = !decision || locked || fixing === decision.question.id || busyOf(decision);
 
   const show = (id: string) => {
     if (id === currentId) return;
-    // Ушли от решения — набранное в нём уходит сразу.
+    // Ушли от решения — набранное в нём уходит сразу, а ошибка «Пересчитать» у него забывается.
     if (currentId !== undefined) {
       stopTyping();
       commit(currentId);
+      putRecheckError(currentId, undefined);
     }
-    setReplaceError(undefined);
     setCurrent(id);
   };
 
@@ -287,14 +333,22 @@ export function useDecisionsStep(
     );
   };
 
+  /** Решение целиком, каким оно станет: «почему» на экране, где решение и отметки — как сейчас, если не сказано другое. */
+  const editOf = (d: StreamDecision, change: Partial<DecisionEdit>): DecisionEdit => ({
+    rationale: rationaleOf(d),
+    status: statusOf(d),
+    replaces: marksOf(d),
+    ...change,
+  });
+
   const save = (status: DecisionState) => {
     if (!decision) return;
     stopTyping();
-    void edits.save(decision.question.id, { rationale: rationaleOf(decision), status });
+    void edits.save(decision.question.id, editOf(decision, { status }));
   };
 
   const accept = () => {
-    if (!decision || locked || fixing !== null) return;
+    if (!decision || lockedNow || fixing !== null) return;
     const id = decision.question.id;
     const status = statusOf(decision);
     // Открытый — дальше, как в макете; зафиксированный, у которого ничего не набрано, — тоже.
@@ -307,7 +361,7 @@ export function useDecisionsStep(
     stopTyping();
     setFixing(id);
     const startedIn = generation.current;
-    void edits.save(id, { rationale, status: 'fixed' }).then((saved) => {
+    void edits.save(id, editOf(decision, { rationale, status: 'fixed' })).then((saved) => {
       // Набор сменился, пока решение фиксировалось, — ответ про прежний.
       if (generation.current !== startedIn) return;
       setFixing((value) => (value === id ? null : value));
@@ -316,19 +370,33 @@ export function useDecisionsStep(
     });
   };
 
-  const approveDisabled = approving || replacing || retrying;
+  const mark = (adr: string) => {
+    if (!decision || lockedNow || !decisionsApprovable(state)) return;
+    const marks = marksOf(decision);
+    const replaces = marks.includes(adr) ? marks.filter((one) => one !== adr) : [...marks, adr];
+    // Набранное «почему» уходит с отметкой; зафиксированное без «почему» не сохраняется — тогда уходит прежнее, а
+    // набранное ждёт.
+    const status = statusOf(decision);
+    const rationale = status === 'fixed' && !hasRationale(rationaleOf(decision)) ? savedOf(decision) : rationaleOf(decision);
+    stopTyping();
+    void edits.save(decision.question.id, { rationale, status, replaces });
+  };
+
+  /** Решения пересчитывают: «Зафиксировать решения» ждёт, пока модели не кончат. */
+  const anyRechecking = rechecking.length > 0 || decisions.some((d) => d.recheck === 'running');
+  const approveDisabled = approving || retrying || anyRechecking;
 
   /**
    * Набранное «почему» — на сервер, и дождаться правок, которые ещё уходят в этом запуске шага, и с экранов, которые
-   * закрыли. Ответ — решение, где не сохранилось «почему» (и то, что без него не зафиксировать) или правка: на сервере не
-   * то, что на экране; всё сохранилось — undefined.
+   * закрыли. Ответ — решения, где не сохранилось «почему» (и то, что без него не зафиксировать) или правка: на сервере не
+   * то, что на экране; всё сохранилось — пусто.
    */
-  const flush = async (): Promise<StreamDecision | undefined> => {
+  const flush = async (): Promise<StreamDecision[]> => {
     stopTyping();
     Object.keys(edits.latest().drafts).forEach(commit);
     await edits.settle();
     const { drafts, errors } = edits.latest();
-    return latest.current.decisions.find(
+    return latest.current.decisions.filter(
       (d) => drafts[d.question.id] !== undefined || errors[d.question.id] !== undefined,
     );
   };
@@ -343,7 +411,7 @@ export function useDecisionsStep(
     setApproveError(undefined);
     void (async () => {
       // Сначала — набранное и правки, которые ещё уходят; что-то не сохранилось — не фиксируем.
-      const unsaved = await flush();
+      const [unsaved] = await flush();
       const { value: stream, error } = unsaved
         ? { value: undefined, error: NOT_SAVED }
         : await approveAction.attempt(councilId, streamId, approvedRun);
@@ -360,26 +428,27 @@ export function useDecisionsStep(
     })();
   };
 
-  const replace = (adr: string) => {
-    if (!decision || !query.data || !decisionsApprovable(state) || locked || fixing !== null) return;
+  const recheck = () => {
+    if (!decision || !query.data || !decisionsApprovable(state) || lockedNow || fixing !== null) return;
+    if (!recheckable(decision.recheck)) return;
     const id = decision.question.id;
-    // Подтверждается замена у решения, которое на экране: шаг с тех пор запустили снова — сервер её не примет.
-    const replacedRun = query.data.run;
+    // Пересчитывается решение, которое на экране: шаг с тех пор запустили снова — сервер его не пересчитает.
+    const recheckedRun = query.data.run;
     const startedIn = generation.current;
-    setReplacing(true);
-    setReplaceError(undefined);
+    setRechecking((ids) => [...ids, id]);
+    putRecheckError(id, undefined);
     void (async () => {
-      // Сначала — набранное и правки, которые ещё уходят: после подтверждения шаг — другой запуск, и прежние правки
-      // сервер уже не примет.
-      const unsaved = await flush();
+      // Сначала — набранное и правки, которые ещё уходят (и отметки): пересчёт берёт то, что на сервере, а пока он идёт,
+      // решение не правят.
+      const unsaved = (await flush()).some((d) => d.question.id === id);
       const { error } = unsaved
-        ? { error: NOT_SAVED_REPLACE }
-        : await replaceAction.attempt(councilId, streamId, replacedRun, id, adr);
-      // Набор сменился, пока подтверждали (модели начали проверять заново), — ответ про прежний.
+        ? { error: NOT_SAVED_RECHECK }
+        : await recheckAction.attempt(councilId, streamId, recheckedRun, id);
+      // Набор сменился, пока пересчитывали (шаг запустили снова), — ответ про прежний.
       if (generation.current !== startedIn) return;
-      setReplacing(false);
-      setReplaceError(error);
-      if (unsaved) setCurrent(unsaved.question.id);
+      setRechecking((ids) => ids.filter((one) => one !== id));
+      // Ошибка — у решения, которое пересчитывали, даже если открыто уже другое.
+      putRecheckError(id, error);
     })();
   };
 
@@ -388,22 +457,33 @@ export function useDecisionsStep(
     const status = statusOf(d);
     const rationale = rationaleOf(d);
     const user = rationale !== d.rationale || d.rationaleBy === 'user';
+    const marks = marksOf(d);
+    // Отмечают и снимают замену, пока шаг ждёт вас или остановился: у готового решения уже ушли в итоги.
+    const marking = decisionsApprovable(state);
+    const lockedHere = locked || fixing === id || busyOf(d);
     const consequences: Consequence[] = [
       ...d.conflicts.map((c) => ({
         tone: 'red' as const,
         text: c.text ? t('decisions.conflict.text', { id: c.id, text: c.text }) : t('decisions.conflict', { id: c.id }),
-        // Замену решения проекта подтверждают, пока шаг ждёт вас или остановился: у готового решения уже ушли в итоги.
-        ...(c.kind === 'decision' && decisionsApprovable(state) ? { replace: c.id } : {}),
+        ...(c.kind === 'decision' && marking ? { mark: { id: c.id, on: marks.includes(c.id) } } : {}),
       })),
-      ...d.replaces.map((ref) => ({
-        tone: 'gray' as const,
-        text: ref.decision
-          ? t('decisions.replaces', { id: ref.id, text: ref.decision })
-          : t('decisions.replaces.id', { id: ref.id }),
-      })),
+      ...d.replaces
+        .filter((ref) => marks.includes(ref.id))
+        .map((ref) => ({
+          tone: 'gray' as const,
+          text: ref.decision
+            ? t('decisions.replaces', { id: ref.id, text: ref.decision })
+            : t('decisions.replaces.id', { id: ref.id }),
+        })),
       ...d.risks.map((risk) => ({ tone: 'yellow' as const, text: t('decisions.risk', { id: risk }) })),
       ...d.fixes.map((fix) => ({ tone: 'gray' as const, text: t('decisions.fix', { text: fix }) })),
     ];
+    const recheckNote =
+      d.recheck === 'running' || rechecking.includes(id)
+        ? { text: t('decisions.recheck.running'), tone: 'running' as const }
+        : d.recheck === 'failed'
+          ? { text: t('decisions.recheck.failed'), tone: 'failed' as const }
+          : null;
     return {
       id,
       question: d.question.text,
@@ -420,6 +500,9 @@ export function useDecisionsStep(
         text: d.problem.text,
         fixes: d.problem.fixes.map((fix, i) => ({ num: formatNumber(i + 1), question: fix.question, text: fix.text })),
       },
+      recheck: decisionsApprovable(state)
+        ? { disabled: lockedHere || fixing !== null || !recheckable(d.recheck), note: recheckNote }
+        : null,
       note: d.problem ? null : d.note,
       adr: d.catalogId ? t('decisions.adr.catalog', { id: d.adr, catalog: d.catalogId }) : d.adr,
       adrState: t('decisions.adr.state', { state: t(`decisions.state.${status}`) }),
@@ -438,11 +521,10 @@ export function useDecisionsStep(
       option: d.option?.id ?? null,
       open: status === 'open',
       acceptLabel: t(`decisions.accept.${status}`),
-      acceptDisabled: locked || fixing !== null || (status !== 'open' && !hasRationale(rationale)),
-      locked: locked || fixing === id,
+      acceptDisabled: lockedHere || fixing !== null || (status !== 'open' && !hasRationale(rationale)),
+      locked: lockedHere,
       error: edits.errors[id],
-      replaceDisabled: locked || fixing !== null,
-      replaceError,
+      recheckError: recheckErrors[id],
     };
   };
 
@@ -471,7 +553,7 @@ export function useDecisionsStep(
     decision: decision ? view(decision) : null,
 
     editRationale: (text) => {
-      if (!decision || locked || fixing === decision.question.id) return;
+      if (!decision || lockedNow) return;
       const id = decision.question.id;
       edits.type(id, text, savedOf(decision));
       clearTimeout(timer.current);
@@ -483,13 +565,14 @@ export function useDecisionsStep(
       }, RATIONALE_DELAY);
     },
     decide: () => {
-      if (decision && !locked && fixing !== decision.question.id && statusOf(decision) === 'open') save('draft');
+      if (decision && !lockedNow && statusOf(decision) === 'open') save('draft');
     },
     keepOpen: () => {
-      if (decision && !locked && fixing !== decision.question.id && statusOf(decision) !== 'open') save('open');
+      if (decision && !lockedNow && statusOf(decision) !== 'open') save('open');
     },
     accept,
-    replace,
+    mark,
+    recheck,
     toOptions: () => {
       if (!decision) return;
       navigate(routePath({ screen: 'step', council: councilId, stream: streamId, step: 'options' }), {
@@ -499,6 +582,7 @@ export function useDecisionsStep(
 
     approvable: decisionsApprovable(state),
     approveDisabled,
+    approveHint: anyRechecking ? t('decisions.approve.rechecking') : null,
     approve,
     approveError,
   };

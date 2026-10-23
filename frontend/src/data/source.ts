@@ -134,9 +134,10 @@ export interface DataSource {
    */
   listDecisions(id: string, streamId: string): Promise<DecisionsRound>;
   /**
-   * PATCH /api/councils/<id>/streams/<streamId>/decisions/<questionId> — «почему» и где решение (черновик,
-   * зафиксировано, открыт); ответ — решение после правки. run — номер запуска шага, решения которого на экране: шаг с
-   * тех пор запустили снова — сервер не меняет новые решения и отвечает decisions_not_ready.
+   * PATCH /api/councils/<id>/streams/<streamId>/decisions/<questionId> — «почему», где решение (черновик,
+   * зафиксировано, открыт) и отмеченные замены решений проекта («Это решение заменяет ADR-0003»); ответ — решение после
+   * правки. run — номер запуска шага, решения которого на экране: шаг с тех пор запустили снова или решение
+   * пересчитывают — сервер не меняет его и отвечает decisions_not_ready.
    */
   updateDecision(
     id: string,
@@ -146,11 +147,11 @@ export interface DataSource {
     edit: DecisionEdit,
   ): Promise<StreamDecision>;
   /**
-   * POST /api/councils/<id>/streams/<streamId>/decisions/<questionId>/replaces — «Это решение заменяет ADR-0003»: решение
-   * вопроса заменяет решение проекта adr, и модели проверяют выбор вопроса заново; ответ — поток. run — номер запуска
-   * шага, решения которого на экране: шаг с тех пор запустили снова — сервер отвечает decisions_not_ready.
+   * POST /api/councils/<id>/streams/<streamId>/decisions/<questionId>/recheck — «Пересчитать»: модели проверяют выбор
+   * вопроса заново с отмеченными заменами, остальные решения не меняются; ответ — решение. run — номер запуска шага,
+   * решения которого на экране: шаг с тех пор запустили снова — сервер отвечает decisions_not_ready.
    */
-  replaceDecision(id: string, streamId: string, run: number, questionId: string, adr: string): Promise<Stream>;
+  recheckDecision(id: string, streamId: string, run: number, questionId: string): Promise<StreamDecision>;
   /**
    * POST /api/councils/<id>/streams/<streamId>/decisions/approve — «Зафиксировать решения → к итогам» решений запуска
    * run; ответ — поток.

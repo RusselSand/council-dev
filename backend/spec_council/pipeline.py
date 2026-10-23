@@ -1102,7 +1102,10 @@ class DecisionRun(CouncilRun[DecisionAnalysis]):
     replaced — по вопросу: решения проекта, замену которых решением этого вопроса подтвердил
     человек. Для проверки этого вопроса они уже не действуют — с ними выбор не расходится, и
     модели видят, что замену подтвердили; проверка помнит, к каким заменам она
-    (QuestionAnalysis.replaced)."""
+    (QuestionAnalysis.replaced).
+
+    only — пересчёт одного вопроса («Пересчитать» на «Решениях»): проверяют только его, а
+    другие вопросы модели видят, как всегда."""
 
     what = "проверка выбора"
 
@@ -1114,7 +1117,9 @@ class DecisionRun(CouncilRun[DecisionAnalysis]):
                  design: str = design_context(None),
                  accepted: Sequence[ProjectDecision] = (),
                  carried: Mapping[str, QuestionAnalysis] | None = None,
-                 replaced: Mapping[str, Sequence[str]] | None = None) -> None:
+                 replaced: Mapping[str, Sequence[str]] | None = None,
+                 only: str | None = None) -> None:
+        self.only = only
         self.carried = dict(carried or {})
         super().__init__(council_id, participants, judge, runner, report,
                          start_analysis(participants, judge, choices, self.carried.values()))
@@ -1138,7 +1143,7 @@ class DecisionRun(CouncilRun[DecisionAnalysis]):
         failures: dict[str, list[str]] = {}
         asked = False
         for question in self.scope:
-            if question.id in self.carried:
+            if question.id in self.carried or self.only not in (None, question.id):
                 continue
             offered = self._offered(question)
             selected = self.choices.get(question.id)

@@ -422,7 +422,8 @@ def decide(council_id, group, decisions):
     path = f"/api/councils/{council_id}/streams/{group}/decisions"
     run = client.get(path).json()["run"]
     for question, proposal, rationale in decisions:
-        body = {"run": run, "rationale": rationale or "", "status": "fixed" if proposal else "open"}
+        body = {"run": run, "rationale": rationale or "", "status": "fixed" if proposal else "open",
+                "replaces": []}
         res = client.patch(f"{path}/{question}", json=body)
         assert res.status_code == 200, res.text
         assert proposal is None or res.json()["decision"]["option"]["id"] == proposal

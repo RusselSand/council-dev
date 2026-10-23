@@ -16,8 +16,8 @@ from typing import Literal
 
 from fastapi import APIRouter
 
-from ..background import launched
-from ..chain import WORKS, idea_of, replaced, retried
+from ..background import halt, launched
+from ..chain import WORKS, idea_of, recheck_runs, replaced, retried
 from ..deps import AgentsDep, LauncherDep, ProjectsDep, RepositoriesDep, StoreDep
 from ..groups import stream_group
 from ..models import Council, StepName
@@ -120,6 +120,10 @@ def retry_stream(council_id: str, stream_id: str, store: StoreDep, agents: Agent
         if started is not None:
             council = store.update_council(council_id, {
                 "streams": replaced(council, started.stream)}) or council
+    # «Решения» запустили снова — пересчёты решений, что шли, ему не нужны: он проверит сам.
+    if started is not None:
+        for run in recheck_runs(stream) - recheck_runs(started.stream):
+            halt(run)
     if started is not None and started.pipeline is not None \
             and not launched(launch, started.pipeline, started.report):
         raise ApiError(500, "internal", "Сервер останавливается — шаг не запущен снова")
