@@ -17,6 +17,11 @@
 «К потокам →» (web/research.py). На «Документации» работает только судья — переводит заметки,
 когда их язык не тот, на котором работает совет (решение q-008 бекенда): это перевод черновика
 выгрузки, его ведёт stream_notes.py, и в WORKS этого шага нет.
+
+«Пересчитать» на «Решениях» (решение владельца к задаче «…отметить замены ADR, потом пересчитать
+вопрос») — не запуск шага: модели проверяют выбор одного вопроса в своём ходе (rechecking), рядом
+с ходом шага, и остальные решения шага ни он, ни его конец не трогают. Новый запуск шага
+проверяет вопросы сам — пересчёты, что шли, ему уже не нужны.
 """
 
 from collections.abc import Callable
@@ -54,7 +59,7 @@ from .pipeline import (
 from .project import own_ids, project_catalog
 from .standing import STEP_RUNS, STEPS, Step, stream_standing
 from .store import Store
-from .stream_decisions import confirmed
+from .stream_decisions import confirmed, rechecked, with_recheck
 from .work import carried_analyses, carried_options, kept_outcomes, last_used
 
 # Ход шага потока, где работают модели.
@@ -195,7 +200,9 @@ def launch_of(council: Council, stream: Stream, step: Step, runner: Runner, stor
               notes: str | None, repositories: Path | None, *, again: bool) -> Launch:
     """Ход шага: запуск — следующий за прежним ходом шага, если тот был; повтор (again) берёт
     ответы прежнего хода: модели, что уже ответили, так и остаются готовыми, пока ход берёт их
-    ответы из лотка (CouncilRun.replayed)."""
+    ответы из лотка (CouncilRun.replayed). Запуск «Решений» сам проверяет вопросы с отмеченными
+    заменами — пересчёты, которые шли или остановились, снимаются (их останавливают по
+    recheck_runs)."""
     field = STEP_RUNS[step]
     before: Work | None = getattr(stream, field)
     report = reporter(store, council.id, stream_slot(stream.group, field))
@@ -205,8 +212,32 @@ def launch_of(council: Council, stream: Stream, step: Step, runner: Runner, stor
     state.reused = resumed(state, before if again else None, datetime.now(UTC), runner.identity)
     pipeline.replayed = {(part.name, run.model) for part in state.steps for run in part.runs
                          if run.state == "done"}
-    return Launch(stream.model_copy(update={field: state.model_copy(deep=True)}), pipeline,
-                  report)
+    changes: dict = {field: state.model_copy(deep=True)}
+    if step == "decisions":
+        changes["rechecks"] = {}
+    return Launch(stream.model_copy(update=changes), pipeline, report)
+
+
+def rechecking(council: Council, stream: Stream, question_id: str, runner: Runner, store: Store,
+               repositories: Path | None = None) -> Launch:
+    """«Пересчитать»: модели проверяют выбор вопроса question_id заново — с заменами решений
+    проекта, которые отметил человек, — как его проверяет шаг, но одного: другие вопросы они
+    видят, как всегда, а их проверки не трогают. Ход — у вопроса (Stream.rechecks); кончился —
+    его проверка встаёт в ход шага (stream_decisions.rechecked)."""
+    report = reporter(store, council.id, recheck_slot(stream.group, question_id))
+    pipeline = DecisionRun(council.id, idea_of(stream), stream.scope or [], stream.choices or [],
+                           stream.proposals, fragments_of(council, stream), council.participants,
+                           council.judge, runner, report, repository=repository_map(stream),
+                           design=design_map(stream), accepted=stream.project_decisions or (),
+                           replaced=confirmed(stream), only=question_id)
+    resumed(pipeline.state, None, datetime.now(UTC), runner.identity)
+    return Launch(with_recheck(stream, question_id, pipeline.state.model_copy(deep=True)),
+                  pipeline, report)
+
+
+def recheck_runs(stream: Stream) -> set[str]:
+    """Номера пересчётов, которые идут: новый запуск шага их снимает — их останавливают."""
+    return {work.run for work in stream.rechecks.values() if work.state == "running"}
 
 
 def resumed(state: Work, before: Work | None, now: datetime,
@@ -263,6 +294,21 @@ def stream_slot(stream_id: str, field: str) -> Slot:
     def put(council: Council, state) -> dict:
         stream = find_stream(council, stream_id)
         return {"streams": replaced(council, stream.model_copy(update={field: state}))}
+
+    return Slot(get, put)
+
+
+def recheck_slot(stream_id: str, question_id: str) -> Slot:
+    """Пересчёт вопроса в потоке как место хода: кончился — его проверка встаёт в ход шага
+    (stream_decisions.rechecked). Пересчёта на месте уже нет (шаг запустили снова, выбор
+    поменяли) — его отчёт не пишется."""
+    def get(council: Council):
+        stream = find_stream(council, stream_id)
+        return stream.rechecks.get(question_id) if stream else None
+
+    def put(council: Council, state) -> dict:
+        stream = find_stream(council, stream_id)
+        return {"streams": replaced(council, rechecked(stream, question_id, state))}
 
     return Slot(get, put)
 
