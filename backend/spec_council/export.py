@@ -984,14 +984,18 @@ def question_parts(question: OpenQuestion, options: list[dict[str, str]],
                    decision: Decision | None, catalog: Catalog, words: Mapping[str, str],
                    taken: set[str]) -> tuple[Part, list[Part], Part | None]:
     """Вопрос, его варианты и решение, если оно принято. Вопрос, который пересматривает
-    прошлое решение, растёт из того ADR, а не из идеи; ADR из каталога пропал — выгружать
+    прошлое решение, растёт из того ADR, а не из идеи; так же — вопрос, чьё решение заменяет
+    прошлое решение (замену подтвердил человек, Decision.replaces): решение на вопрос делает тот
+    ADR заменённым (Catalog.status). Растёт вопрос из одной заметки: пересматривает — из
+    пересматриваемого, иначе — из первого заменённого. ADR из каталога пропал — выгружать
     нельзя: вопрос и его решение молча легли бы в цепочку новой идеи."""
     key = unique(question_key(question), taken)
-    revisited = catalog.notes.get(question.revisits or "")
-    if question.revisits and (revisited is None or revisited.type != "adr"):
-        raise NotesError(f"{question.id} пересматривает {question.revisits}, а такого решения в "
-                         "каталоге заметок уже нет: верните заметку или отберите решения проекта "
-                         "заново")
+    grows = question.revisits or next(iter(decision.replaces if decision else []), None)
+    revisited = catalog.notes.get(grows or "")
+    if grows and (revisited is None or revisited.type != "adr"):
+        verb = "пересматривает" if question.revisits else "заменяет"
+        raise NotesError(f"{question.id} {verb} {grows}, а такого решения в каталоге заметок уже "
+                         "нет: верните заметку или отберите решения проекта заново")
     links = (revisited.id,) if revisited is not None else ("idea",)
     asked = Part(key, "open_question", question.note or question.text, links)
     offered: list[Part] = []

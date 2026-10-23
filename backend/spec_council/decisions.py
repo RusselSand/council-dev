@@ -3,10 +3,13 @@
 Где человек выбрал вариант, его проверяют: совместим ли с идеей, соблюдает ли ограничения, не
 расходится ли с действующими решениями проекта, от каких вопросов зависит, какие риски с ним
 связаны. Нашёл судья проблему — говорит и что поправить: в каком вопросе, что поменять и с чем это
-расходится. Где вопрос unresolved, сравнивают его варианты и, если один обоснованно лучше,
-рекомендуют его. Новых вариантов здесь нет: рекомендовать можно только из тех, что у вопроса
-есть. Выбор человека не меняется: проверка не того варианта или рекомендация вместо проверки —
-негодный ответ. Ссылки вторичны: чужой номер просто отбрасывается.
+расходится; расходится выбор только с решениями проекта — правок может и не быть: решение может их
+заменить, а подтверждает замену человек (статусы решений проекта меняет совет). Решение проекта,
+замену которого подтвердили, для проверки не действует: с ним выбор не расходится. Где вопрос
+unresolved, сравнивают его варианты и, если один обоснованно лучше, рекомендуют его. Новых
+вариантов здесь нет: рекомендовать можно только из тех, что у вопроса есть. Выбор человека не
+меняется: проверка не того варианта или рекомендация вместо проверки — негодный ответ. Ссылки
+вторичны: чужой номер просто отбрасывается.
 """
 
 from dataclasses import dataclass
@@ -128,10 +131,12 @@ def clashes_of(value: object, context: Context) -> tuple[Clash, ...]:
     return tuple(sorted(found.values(), key=lambda clash: clash.adr))
 
 
-def fixes_of(value: object, context: Context) -> tuple[Fix, ...]:
+def fixes_of(value: object, context: Context, required: bool = True) -> tuple[Fix, ...]:
     """Правки судьи: только в этом вопросе и других вопросах потока, и у каждой сказано, что
     поменять. Правка с чужим вопросом или без сути отбрасывается, как чужой номер, но хоть одна
-    должна остаться: проблема без того, что с ней делать, — негодный ответ."""
+    должна остаться: проблема без того, что с ней делать, — негодный ответ. Кроме проблемы, где
+    выбор расходится только с решениями проекта (required — нет): решение может их заменить, а
+    подтвердить замену — дело человека, не правка."""
     known = context.questions | {context.question}
     found: list[Fix] = []
     for item in value if isinstance(value, list) else []:
@@ -144,7 +149,7 @@ def fixes_of(value: object, context: Context) -> tuple[Fix, ...]:
         if len(change) + len(why) > FIX_MAX:
             raise BadAnswer(f"правка длиннее {FIX_MAX} знаков")
         found.append(Fix(question, change, why))
-    if not found:
+    if not found and required:
         raise BadAnswer("проблема без правок: не сказано, что поправить")
     return tuple(found)
 
@@ -191,7 +196,11 @@ def judged_analysis(data: dict, context: Context) -> Analysis:
         found = checked(data, context, "proposal_id")
         # Судья назвал проблему — это конфликт, даже если status «validated».
         kind = "conflict" if found.conflicts or found.clashes or kind == "conflict" else "validated"
-        fixes = fixes_of(data.get("fixes"), context) if kind == "conflict" else ()
+        # Расходится выбор только с решениями проекта — правок может не быть: это решение может
+        # их заменить, и решает человек.
+        only_project = bool(found.clashes) and not found.conflicts
+        fixes = fixes_of(data.get("fixes"), context, required=not only_project) \
+            if kind == "conflict" else ()
         return Analysis(kind, found.proposal, found.conflicts, found.risks, found.depends_on,
                         reason, rationale, fixes, found.clashes)
     if kind == "recommended":

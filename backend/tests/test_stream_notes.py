@@ -359,6 +359,46 @@ def test_a_question_that_revisits_a_past_decision_supersedes_it(store, pool, pro
     assert export_of(council_id) == export
 
 
+def test_a_decision_confirmed_to_replace_a_past_decision_supersedes_it(store, pool, projects,
+                                                                      docs):
+    """Человек подтвердил, что решение по Q1 заменяет ADR-0001 (решение владельца к задаче
+    «…подтверждение замены ADR…»): выгрузка заменяет его так же, как решение вопроса, который
+    его пересматривает, — вопрос растёт из ADR-0001."""
+    past_decision(docs)
+    council_id = assembled(store, pool)
+    put(store, council_id, decisions=[
+        decision.model_copy(update={"replaces": ["ADR-0001"]}) if decision.question_id == "Q1"
+        else decision for decision in stored(store, council_id).decisions])
+    with_project(store, projects, council_id)
+    assert approves_one(council_id, "O1").status_code == 200
+    assert approves(council_id).status_code == 200
+    export = export_of(council_id)
+    notes = {note["id"]: note for note in export["notes"]}
+    assert (notes["OQ-0002"]["revisits"], notes["ADR-0002"]["supersedes"]) == (
+        "ADR-0001", "ADR-0001")
+    assert notes["ADR-0001"]["change"] == "superseded"
+    assert [(change["id"], change["from"], change["to"], change["supersededBy"])
+            for change in export["statusChanges"]] == [
+        ("ADR-0001", "active", "superseded", "ADR-0002")]
+    assert writes(council_id).status_code == 200
+    assert Catalog.load(docs).status("ADR-0001") == ("superseded", "ADR-0002")
+    assert Catalog.load(docs).notes["OQ-0002"].links == ("ADR-0001",)
+
+
+def test_a_replaced_past_decision_gone_from_the_catalog_stops_the_export(store, pool, projects,
+                                                                         docs):
+    council_id = assembled(store, pool)
+    put(store, council_id, decisions=[
+        decision.model_copy(update={"replaces": ["ADR-0001"]}) if decision.question_id == "Q1"
+        else decision for decision in stored(store, council_id).decisions])
+    with_project(store, projects, council_id)
+    assert approves_one(council_id, "O1").status_code == 200
+    assert approves(council_id).status_code == 200
+    assert error_of(client.get(path(council_id))) == (500, "internal")
+    assert error_of(writes(council_id)) == (500, "internal")
+    assert files_in(docs) == []
+
+
 def test_a_question_left_open_puts_the_past_decision_under_review(store, pool, projects, docs):
     past_decision(docs)
     council_id = assembled(store, pool)

@@ -1,7 +1,8 @@
 """Работа по вопросам, которая переживает правку отбора и выбора.
 
 Правило одно: всё, что сделано по вопросу, живёт, пока сам вопрос тот же — тот же номер и та же
-формулировка, — а проверка выбора и решение — пока тот же и выбор по нему. Добавили к отбору
+формулировка, — а проверка выбора и решение — пока тот же и выбор по нему (проверка — и те же
+подтверждённые замены решений проекта). Добавили к отбору
 вопросы — варианты ищут только к ним, проверяют только их выбор, человек решает только их;
 остальное переносится. Иначе каждый добавленный вопрос стоил бы всей цепочки заново: поиска
 вариантов по всем вопросам, проверки всего выбора и всех решений с обоснованиями.
@@ -84,15 +85,19 @@ def kept_work(stream: Stream) -> list[QuestionWork]:
     return list(works.values())
 
 
-def carried_analyses(stream: Stream, choices: list[Choice],
-                     anew: Collection[str] = ()) -> dict[str, QuestionAnalysis]:
+def carried_analyses(stream: Stream, choices: list[Choice], anew: Collection[str] = (),
+                     replaced: Mapping[str, Collection[str]] | None = None
+                     ) -> dict[str, QuestionAnalysis]:
     """Проверка того же выбора по тем же вопросам — нынешняя или из прежней работы: её не
     повторяют, пока выбор по вопросам, от которых она зависит, тот же (holds). anew — вопросы,
-    которые человек просит перепроверить: их проверку не переносят."""
+    которые человек просит перепроверить: их проверку не переносят. replaced — по вопросу:
+    замены решений проекта, подтверждённые сейчас (stream_decisions.confirmed); проверка к другим
+    заменам — не та, и её повторяют. Вопроса там нет — замены те, к которым проверка."""
     keys = keys_of(stream.scope or [])
     analyzed = analyzed_of(stream.analysis)
     works = {work.key: work for work in stream.earlier}
     now = {choice.question_id: choice_entry(choice) for choice in choices}
+    wanted = replaced or {}
     carried = {}
     for choice in choices:
         if choice.question_id in anew:
@@ -102,7 +107,8 @@ def carried_analyses(stream: Stream, choices: list[Choice],
         work = works.get(keys.get(choice.question_id, ""))
         if found is None and work is not None and choice_entry(work.choice) == entry:
             found = work.analysis
-        if found is not None and holds(found, now):
+        if (found is not None and holds(found, now)
+                and set(wanted.get(choice.question_id, found.replaced)) == set(found.replaced)):
             carried[choice.question_id] = found
     return carried
 

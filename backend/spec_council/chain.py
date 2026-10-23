@@ -54,6 +54,7 @@ from .pipeline import (
 from .project import own_ids, project_catalog
 from .standing import STEP_RUNS, STEPS, Step, stream_standing
 from .store import Store
+from .stream_decisions import confirmed
 from .work import carried_analyses, carried_options, kept_outcomes, last_used
 
 # Ход шага потока, где работают модели.
@@ -104,13 +105,17 @@ def proposing(council: Council, stream: Stream, runner: Runner, report: Report,
 
 def checking(council: Council, stream: Stream, runner: Runner, report: Report,
              notes: str | None, repositories: Path | None) -> DecisionRun:
-    """Проверка выбора. Что уже проверено к тому же выбору, переносится: проверяют остальное."""
+    """Проверка выбора. Что уже проверено к тому же выбору и тем же подтверждённым заменам
+    решений проекта, переносится: проверяют остальное — и вопрос, где замену подтвердили только
+    что, — считая подтверждённые решения проекта не действующими."""
     choices = stream.choices or []
+    replaced = confirmed(stream)
     return DecisionRun(council.id, idea_of(stream), stream.scope or [], choices, stream.proposals,
                        fragments_of(council, stream), council.participants, council.judge,
                        runner, report, repository=repository_map(stream),
                        design=design_map(stream), accepted=stream.project_decisions or (),
-                       carried=carried_analyses(stream, choices))
+                       carried=carried_analyses(stream, choices, replaced=replaced),
+                       replaced=replaced)
 
 
 def assembling(council: Council, stream: Stream, runner: Runner, report: Report,

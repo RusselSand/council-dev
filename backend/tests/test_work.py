@@ -54,6 +54,27 @@ def test_a_check_is_carried_while_the_choice_it_rests_on_is_the_same():
     assert carried_analyses(told, other) == {}
 
 
+def test_a_check_is_carried_only_to_the_same_confirmed_replacements():
+    """Проверку делали к подтверждённым заменам решений проекта: подтверждены другие — её
+    повторяют. Замен для вопроса не назвали — те, к которым проверка. Выбор поменяли — проверки
+    прежнего выбора нет, и подтверждений к ней тоже."""
+    choices = [Choice(question_id="Q1", proposal="P1")]
+    replaced = QuestionAnalysis(question_id="Q1", verdict="validated", proposal="P1",
+                                replaced=["ADR-0005"])
+    stream = Stream(group="C", scope=[question(1)], choices=choices,
+                    analysis=DecisionAnalysis(state="done", choices=["Q1: P1"], steps=[],
+                                              analyses=[replaced]))
+    assert carried_analyses(stream, choices) == {"Q1": replaced}
+    assert carried_analyses(stream, choices, replaced={"Q1": ["ADR-0005"]}) == {"Q1": replaced}
+    assert carried_analyses(stream, choices, replaced={"Q1": []}) == {}
+    assert carried_analyses(stream, choices, replaced={"Q1": ["ADR-0005", "ADR-0007"]}) == {}
+    assert carried_analyses(stream, [Choice(question_id="Q1", proposal="P2")],
+                            replaced={"Q1": ["ADR-0005"]}) == {}
+    found = analysis_of_question(question(1), Analysis("validated", "P1"), {"Q1": "Q1: P1"},
+                                 ["ADR-0005"])
+    assert found.replaced == ["ADR-0005"]
+
+
 def test_a_check_remembers_the_choice_of_the_questions_its_fixes_name():
     verdict = Analysis("conflict", "P1", depends_on=("Q2",),
                        fixes=(Fix("Q3", "Решите Q3 раньше."), Fix("Q1", "Уберите «и в облако».")))

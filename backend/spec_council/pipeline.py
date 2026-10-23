@@ -50,7 +50,7 @@ Figma через REST API, модели читают снимок:
    одну рекомендацию, равноправные альтернативы или ничего (proposal_judge.md).
 
 Проверка выбора (DecisionRun) — по вопросу за раз; тот же выбор по тому же вопросу заново не
-проверяют — анализ переносят:
+проверяют — анализ переносят, если замены решений проекта к нему подтверждены те же:
 1. decision_analysis — каждый участник проверяет выбранный человеком вариант, а у unresolved
    сравнивает варианты вопроса и, если один обоснованно лучше, рекомендует его
    (decision_analysis.md);
@@ -1097,7 +1097,12 @@ class DecisionRun(CouncilRun[DecisionAnalysis]):
 
     carried — проверка того же выбора по тем же вопросам: её не повторяют, если выбор по
     вопросам, от которых она зависит, тот же (work.carried_analyses), — проверяют только новое.
-    Поэтому каждая проверка помнит, каким был этот выбор (QuestionAnalysis.context)."""
+    Поэтому каждая проверка помнит, каким был этот выбор (QuestionAnalysis.context).
+
+    replaced — по вопросу: решения проекта, замену которых решением этого вопроса подтвердил
+    человек. Для проверки этого вопроса они уже не действуют — с ними выбор не расходится, и
+    модели видят, что замену подтвердили; проверка помнит, к каким заменам она
+    (QuestionAnalysis.replaced)."""
 
     what = "проверка выбора"
 
@@ -1108,14 +1113,16 @@ class DecisionRun(CouncilRun[DecisionAnalysis]):
                  repository: str = context_prompt(None),
                  design: str = design_context(None),
                  accepted: Sequence[ProjectDecision] = (),
-                 carried: Mapping[str, QuestionAnalysis] | None = None) -> None:
+                 carried: Mapping[str, QuestionAnalysis] | None = None,
+                 replaced: Mapping[str, Sequence[str]] | None = None) -> None:
         self.carried = dict(carried or {})
         super().__init__(council_id, participants, judge, runner, report,
                          start_analysis(participants, judge, choices, self.carried.values()))
         self.idea = idea
         self.repository = repository
         self.design = design
-        self.accepted = accepted_prompt(accepted)
+        self.decisions = list(accepted)
+        self.replaced = {question: list(adrs) for question, adrs in (replaced or {}).items()}
         # Расходиться выбор может только с действующим решением: на пересмотре — не в силе.
         self.active = frozenset(decision.adr_id for decision in accepted
                                 if decision.status == "active")
@@ -1142,8 +1149,8 @@ class DecisionRun(CouncilRun[DecisionAnalysis]):
                 asked = True
                 verdict = self._analyze(question, offered, selected, known, limits, failures)
             with self._lock:
-                self.state.analyses.append(analysis_of_question(question, verdict,
-                                                                self.entries))
+                self.state.analyses.append(analysis_of_question(
+                    question, verdict, self.entries, self.replaced.get(question.id, ())))
                 self._publish()
         if not asked:
             self._skip(StepName.decision_analysis)
@@ -1153,12 +1160,14 @@ class DecisionRun(CouncilRun[DecisionAnalysis]):
     def _analyze(self, question: OpenQuestion, offered: list[dict], selected: str | None,
                  known: str, limits: list[LabeledFragment],
                  failures: dict[str, list[str]]) -> Analysis:
+        replaced = self.replaced.get(question.id, [])
         context = DecisionContext(
             frozenset(f.id for f in limits if f.label == "constraint"),
             frozenset(f.id for f in limits if f.label == "risk"),
             frozenset(q.id for q in self.scope if q.id != question.id),
             frozenset(proposal["id"] for proposal in offered), selected, question.id,
-            self.active)
+            self.active - frozenset(replaced))
+        accepted = accepted_prompt(self.decisions, replaced)
         values = {
             "idea": self.idea,
             "question": as_json({"id": question.id, "text": question.text}),
@@ -1173,12 +1182,12 @@ class DecisionRun(CouncilRun[DecisionAnalysis]):
         }
         answers = self._ask_all(StepName.decision_analysis,
                                 render("decision_analysis", **values,
-                                       accepted_decisions=self.accepted),
+                                       accepted_decisions=accepted),
                                 partial(analysis_of, context=context))
         self._keep_failures(StepName.decision_analysis, question.id, failures)
         distinct = {as_json(analysis_prompt(a)): analysis_prompt(a) for a in answers.values()}
         variants = shuffled(list(distinct.values()))
-        prompt = render("decision_judge", **values, accepted_adrs=self.accepted,
+        prompt = render("decision_judge", **values, accepted_adrs=accepted,
                         decision_analyses=as_json(
                             [{"analysis": n, **v} for n, v in enumerate(variants, 1)]))
         return self._ask_judge(StepName.decision_judge, prompt,
@@ -1197,10 +1206,12 @@ class DecisionRun(CouncilRun[DecisionAnalysis]):
 
 
 def analysis_of_question(question: OpenQuestion, verdict: Analysis,
-                         entries: Mapping[str, str]) -> QuestionAnalysis:
+                         entries: Mapping[str, str],
+                         replaced: Sequence[str] = ()) -> QuestionAnalysis:
     """Проверка вопроса — и выбор по вопросам, на которые она опирается, как он был при ней
     (entries — выбор по каждому вопросу потока, «Q2: P5»): от которых зависит и где судья велел
-    что-то поправить. Там выбрали другое — проверку повторяют (work.holds)."""
+    что-то поправить. Там выбрали другое — проверку повторяют (work.holds). replaced — решения
+    проекта, замену которых к ней подтвердили."""
     found = QuestionAnalysis(
         question_id=question.id, verdict=verdict.kind, proposal=verdict.proposal,
         constraint_conflicts=list(verdict.conflicts), risk_ids=list(verdict.risks),
@@ -1209,7 +1220,8 @@ def analysis_of_question(question: OpenQuestion, verdict: Analysis,
         fixes=[DecisionFix(question_id=fix.question, change=fix.change, why=fix.why)
                for fix in verdict.fixes],
         project_conflicts=[DecisionClash(adr_id=clash.adr, text=clash.text)
-                           for clash in verdict.clashes])
+                           for clash in verdict.clashes],
+        replaced=list(replaced))
     return found.model_copy(update={"context": [entries[name] for name in rests_on(found)
                                                 if name in entries]})
 
@@ -1442,14 +1454,18 @@ class CodeResearchRun(RepositoryRun):
         return super().work()
 
 
-def accepted_prompt(decisions: Sequence[ProjectDecision]) -> str:
+def accepted_prompt(decisions: Sequence[ProjectDecision],
+                    replaced: Collection[str] = ()) -> str:
     """Принятые решения проекта, отобранные человеком для потока, — для промптов вопросов,
     вариантов и решений: номер, к какой идее, вопрос, решение, действует ли оно (заменённое —
-    и каким), насколько и почему относится."""
+    и каким), насколько и почему относится. replaced — у проверки выбора: решения, замену которых
+    решением этого вопроса подтвердил человек, — с пометкой; у остальных её нет, и промпт тот же,
+    что и без неё."""
     return as_json([{"adr_id": d.adr_id, "idea": d.idea, "question": d.question,
                      "decision": d.decision, "status": d.status,
                      "superseded_by": d.superseded_by, "relevance": d.relevance,
-                     "reason": d.reason}
+                     "reason": d.reason,
+                     **({"replaced_by_this_decision": True} if d.adr_id in replaced else {})}
                     for d in decisions])
 
 
