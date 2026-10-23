@@ -422,7 +422,7 @@ export const ru = {
   'notes.group.expand': 'показать',
   'notes.change.new': 'новая',
   'notes.change.revisits': 'новая · пересматривает {id}',
-  'notes.change.supersedes': 'новая · заменяет {id}',
+  'notes.change.supersedes': 'новая · заменяет {ids}',
   'notes.change.kept': 'не менялась',
   'notes.change.rewritten': 'перепишется',
   'notes.change.manual': 'правили руками',

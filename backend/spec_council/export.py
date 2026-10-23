@@ -54,7 +54,15 @@ from .models import (
     Stream,
     VanishedNote,
 )
-from .notes import Catalog, Note, NotesError, declared_issues, path_of, rendered
+from .notes import (
+    Catalog,
+    Note,
+    NotesError,
+    declared_issues,
+    declared_replacements,
+    path_of,
+    rendered,
+)
 from .proposals import found_by_question
 from .questions import same_question
 from .repository import context_prompt
@@ -68,13 +76,13 @@ WORDS = {
                 "outcomes": "Итоги", "decisions": "Решения", "keep": "Соблюдать",
                 "risks": "Риски", "after": "После задач", "open": "Открытые вопросы",
                 "commit": "В финальном коммите укажите номер задачи — {id}.",
-                "quote": "«{}»"},
+                "replaces": "Заменяет", "quote": "«{}»"},
     "english": {"because": "because", "criteria": "Acceptance criteria", "issues": "Issues",
                 "entry": "Where to change", "now": "What is there now", "scope": "To do",
                 "outcomes": "Outcomes", "decisions": "Decisions", "keep": "Keep",
                 "risks": "Risks", "after": "After the issues", "open": "Open questions",
                 "commit": "Put the issue number {id} into the final commit.",
-                "quote": "“{}”"},
+                "replaces": "Supersedes", "quote": "“{}”"},
 }
 ALIASES = {"русский": "russian", "ru": "russian", "en": "english", "английский": "english"}
 ISSUE = re.compile(r"ISS-(\d+)")
@@ -272,6 +280,15 @@ def because(decision: str, rationale: str | None, words: Mapping[str, str]) -> s
     if reason[:1].isupper() and not reason[1:2].isupper():
         reason = reason[:1].lower() + reason[1:]
     return f"{decision.rstrip('.!')}, {words['because']} {reason}"
+
+
+def replacing(text: str, adrs: Sequence[str], words: Mapping[str, str]) -> str:
+    """ADR и его строка замен (notes.declared_replacements): решения проекта, которые оно
+    заменяет, — замену подтвердил человек; по ней каталог считает их заменёнными (решение q-011
+    бекенда). Замен нет — ADR как есть."""
+    if not adrs:
+        return text
+    return f"{text}\n\n{words['replaces']}: {', '.join(adrs)}."
 
 
 def outcome_text(title: str, behavior: str, criteria: Sequence[str],
@@ -984,18 +1001,20 @@ def question_parts(question: OpenQuestion, options: list[dict[str, str]],
                    decision: Decision | None, catalog: Catalog, words: Mapping[str, str],
                    taken: set[str]) -> tuple[Part, list[Part], Part | None]:
     """Вопрос, его варианты и решение, если оно принято. Вопрос, который пересматривает
-    прошлое решение, растёт из того ADR, а не из идеи; так же — вопрос, чьё решение заменяет
-    прошлое решение (замену подтвердил человек, Decision.replaces): решение на вопрос делает тот
-    ADR заменённым (Catalog.status). Растёт вопрос из одной заметки: пересматривает — из
-    пересматриваемого, иначе — из первого заменённого. ADR из каталога пропал — выгружать
-    нельзя: вопрос и его решение молча легли бы в цепочку новой идеи."""
+    прошлое решение, растёт из того ADR, а не из идеи. Решение, замену которым прошлых решений
+    подтвердил человек (Decision.replaces), называет их строкой замен (replacing), и они
+    становятся заменёнными (Catalog.status), а вопрос остаётся в цепочке своей идеи (решение q-011
+    бекенда). ADR из каталога пропал — выгружать нельзя: вопрос и его решение молча легли бы в
+    цепочку новой идеи, а строка замен назвала бы решение, которого нет."""
     key = unique(question_key(question), taken)
-    grows = question.revisits or next(iter(decision.replaces if decision else []), None)
-    revisited = catalog.notes.get(grows or "")
-    if grows and (revisited is None or revisited.type != "adr"):
-        verb = "пересматривает" if question.revisits else "заменяет"
-        raise NotesError(f"{question.id} {verb} {grows}, а такого решения в каталоге заметок уже "
-                         "нет: верните заметку или отберите решения проекта заново")
+    revisited = catalog.notes.get(question.revisits or "")
+    replaced = decision.replaces if decision is not None and decision.proposal is not None else []
+    for adr, verb in [*([(question.revisits, "пересматривает")] if question.revisits else []),
+                      *((adr, "заменяет") for adr in replaced)]:
+        found = catalog.notes.get(adr)
+        if found is None or found.type != "adr":
+            raise NotesError(f"{question.id} {verb} {adr}, а такого решения в каталоге заметок "
+                             "уже нет: верните заметку или отберите решения проекта заново")
     links = (revisited.id,) if revisited is not None else ("idea",)
     asked = Part(key, "open_question", question.note or question.text, links)
     offered: list[Part] = []
@@ -1007,8 +1026,9 @@ def question_parts(question: OpenQuestion, options: list[dict[str, str]],
         offered.append(Part(option_part, "proposal", option["text"], (key,), was))
         if decision is not None and decision.proposal == option["id"]:
             adr = Part(f"a:{option_part[2:]}", "adr",
-                       because(option["text"], decision.rationale, words), (option_part,),
-                       f"a:{was[2:]}" if was else None)
+                       replacing(because(option["text"], decision.rationale, words), replaced,
+                                 words),
+                       (option_part,), f"a:{was[2:]}" if was else None)
     return asked, offered, adr
 
 
@@ -1314,8 +1334,9 @@ def numbered_edits(notes: Sequence[NotePlan], edits: Mapping[str, str],
 
 def numbering_problem(source: str, text: str) -> str | None:
     """Чем текст расходится с исходным в номерах: потерян или лишний номер заметки или задачи,
-    не те строки задач итога. Номера держат граф и след в коде: ISS-… в итоге — задача, по нему
-    считают след и раздают новые номера. Те же — None."""
+    не те строки задач итога или строка замен решения. Номера держат граф и след в коде: ISS-… в
+    итоге — задача, по нему считают след и раздают новые номера; строка замен делает решения
+    заменёнными. Те же — None."""
     was, now = set(NUMBER.findall(source)), set(NUMBER.findall(text))
     if was - now:
         return f"потеряны номера {', '.join(sorted(was - now))}"
@@ -1323,6 +1344,9 @@ def numbering_problem(source: str, text: str) -> str | None:
         return f"лишние номера {', '.join(sorted(now - was))}"
     if declared_issues(source) != declared_issues(text):
         return "строки задач не те: каждая — «- ISS-…: название», как в исходном тексте"
+    if declared_replacements(source) != declared_replacements(text):
+        return ("строка замен не та: отдельным абзацем «Заменяет: ADR-…, ADR-….», как в "
+                "исходном тексте")
     return None
 
 

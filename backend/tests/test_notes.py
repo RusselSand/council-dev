@@ -9,6 +9,7 @@ from spec_council.notes import (
     Note,
     NotesError,
     declared_issues,
+    declared_replacements,
     issues_in,
     main,
     parsed,
@@ -181,6 +182,45 @@ def test_a_decision_questioned_again_is_under_review_and_then_superseded():
     another = Note("OQ-0003", "open_question", "Нужен ли деплой по merge?", ("ADR-0001",))
     catalog = Catalog({note.id: note for note in (*CHAIN, another, revisit, answer, newer)})
     assert catalog.status("ADR-0001") == ("superseded", "ADR-0002")
+
+
+def test_a_decision_named_in_the_replaces_line_of_a_newer_one_is_superseded():
+    """Новое решение называет строкой замен, какие решения оно заменяет (решение q-011
+    бекенда): они заменены, хоть вопрос нового и растёт из своей идеи."""
+    old = Note("ADR-7", "adr", "Деплой ночью.", ("PRO-0002",))
+    newer = Note("ADR-0002", "adr", "Деплой по тегу, потому что так видно, что уходит.\n\n"
+                 "Заменяет: ADR-0001, ADR-0007.", ("PRO-0001",))
+    catalog = Catalog({note.id: note for note in (*CHAIN, old, newer)})
+    assert catalog.status("ADR-0001") == ("superseded", "ADR-0002")
+    assert catalog.status("ADR-7") == ("superseded", "ADR-0002")    # ADR-7 и ADR-0007 — одно
+    assert catalog.status("ADR-0002") == ("active", None)
+    # Пересмотр уже решён — заменено им; а вопрос, что ещё идёт, строку замен не перебивает.
+    revisit = Note("OQ-0002", "open_question", "Деплоить ли ночью?", ("ADR-7",))
+    assert Catalog({note.id: note for note in (*CHAIN, old, newer, revisit)}).status(
+        "ADR-7") == ("superseded", "ADR-0002")
+
+
+@pytest.mark.parametrize(("body", "found"), [
+    ("Решение, потому что так.\n\nЗаменяет: ADR-0003, ADR-0005.", ["ADR-0003", "ADR-0005"]),
+    ("Decision, because so.\n\nSupersedes: ADR-0003.", ["ADR-0003"]),
+    ("Decisión, porque sí.\n\nReemplaza a: ADR-3", ["ADR-3"]),
+    # Ниже дописали абзац руками — строка замен та же.
+    ("Решение.\n\nЗаменяет: ADR-0003.\n\nДописали руками.", ["ADR-0003"]),
+    # Не отдельный абзац, не одни номера или не подпись — не строка замен.
+    ("Решение. Заменяет: ADR-0003.", []),
+    ("Решение.\n\nЗаменяет: ADR-0003, потому что так.", []),
+    ("Решение.\n\n- ADR-0003: ограничение", []),
+    ("Решение, потому что ADR-0003 так велит.", []),
+])
+def test_the_replaces_line_is_a_paragraph_of_a_label_and_decision_numbers(body, found):
+    assert declared_replacements(body) == found
+
+
+def test_a_replaces_line_outside_a_decision_or_naming_itself_replaces_nothing():
+    idea = Note("IDEA-0002", "idea", "Идея.\n\nЗаменяет: ADR-0001.")
+    itself = Note("ADR-0001", "adr", "Решение.\n\nЗаменяет: ADR-0001.", ("PRO-0001",))
+    catalog = Catalog({note.id: note for note in (*CHAIN, idea)} | {"ADR-0001": itself})
+    assert catalog.status("ADR-0001") == ("active", None)
 
 
 def test_issue_numbers_are_found_in_texts():

@@ -395,7 +395,7 @@ export const en = translation({
   'notes.group.expand': 'show',
   'notes.change.new': 'new',
   'notes.change.revisits': 'new · revisits {id}',
-  'notes.change.supersedes': 'new · replaces {id}',
+  'notes.change.supersedes': 'new · replaces {ids}',
   'notes.change.kept': 'unchanged',
   'notes.change.rewritten': 'will be rewritten',
   'notes.change.manual': 'edited by hand',
