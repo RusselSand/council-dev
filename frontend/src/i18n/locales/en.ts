@@ -344,6 +344,9 @@ export const en = translation({
   'decisions.context.text': '{question}: {option}: {text}',
   'decisions.conflict': 'conflicts with constraint {id}',
   'decisions.conflict.text': 'Conflicts with {id}: {text}',
+  'decisions.replace': 'This decision replaces {id}',
+  'decisions.replaces': 'Replaces {id}: {text}',
+  'decisions.replaces.id': 'Replaces {id}',
   'decisions.risk': 'risk {id}',
   'decisions.fix': 'fix: {text}',
   'decisions.clean': 'no conflicts with constraints or risks',
@@ -552,6 +555,7 @@ export const en = translation({
   'error.decisions_not_ready':
     'Decisions can’t be changed now: the step hasn’t started or it was run again. The stream and decisions are updated.',
   'error.rationale_required': 'A decision can’t be finalized without a rationale — write the “why”.',
+  'error.unknown_conflict': 'This decision no longer has that conflict. Decisions have been refreshed.',
   'error.outcomes_not_ready':
     'Outcomes can’t be approved now: the step hasn’t started or it was run again. The stream and outcomes are updated.',
   'error.outcome_blocked': 'The outcome is blocked — it lacks a decision, so there’s nothing to approve. Outcomes are updated.',

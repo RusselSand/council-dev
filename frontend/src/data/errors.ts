@@ -35,6 +35,7 @@ export const ERROR_CODES = [
   'not_own_option',
   'decisions_not_ready',
   'rationale_required',
+  'unknown_conflict',
   'outcomes_not_ready',
   'outcome_blocked',
   'notes_not_ready',

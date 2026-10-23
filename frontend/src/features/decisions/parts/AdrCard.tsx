@@ -1,4 +1,5 @@
 import { useI18n } from '../../../i18n';
+import { Button } from '../../../ui/Button';
 import { Facts, type Fact } from '../../../ui/Facts';
 import { Panel } from '../../../ui/Panel';
 import { Tag } from '../../../ui/Tag';
@@ -9,14 +10,16 @@ import styles from './AdrCard.module.css';
 interface AdrCardProps {
   decision: DecisionView;
   onRationale: (text: string) => void;
+  /** «Это решение заменяет ADR-0003» у противоречия с решением проекта. */
+  onReplace: (adr: string) => void;
 }
 
 /**
  * Решение (ADR), как в макете: номер, где решение и что о нём думает совет; ниже — контекст, решение, «почему» (поле и
- * кто его написал), в контексте, последствия. «почему» пусто, а решение не открыто, — «Без обоснования решение не
- * зафиксировать.»
+ * кто его написал), в контексте, последствия. У противоречия с решением проекта — «Это решение заменяет ADR-0003».
+ * «почему» пусто, а решение не открыто, — «Без обоснования решение не зафиксировать.»
  */
-export function AdrCard({ decision, onRationale }: AdrCardProps) {
+export function AdrCard({ decision, onRationale, onReplace }: AdrCardProps) {
   const { t } = useI18n();
   const facts: Fact[] = [
     { label: t('decisions.fact.context'), value: decision.question },
@@ -60,9 +63,20 @@ export function AdrCard({ decision, onRationale }: AdrCardProps) {
       label: t('decisions.fact.consequences'),
       value: (
         <ul className={styles.consequences}>
-          {decision.consequences.map((line, i) => (
-            <li key={i} className={styles[line.tone]}>
-              {line.text}
+          {decision.consequences.map(({ tone, text, replace }, i) => (
+            <li key={i} className={[styles.consequence, styles[tone]].join(' ')}>
+              <span>{text}</span>
+              {replace !== undefined && (
+                <Button
+                  variant="outline"
+                  tone="danger"
+                  size="sm"
+                  disabled={decision.replaceDisabled}
+                  onClick={() => onReplace(replace)}
+                >
+                  {t('decisions.replace', { id: replace })}
+                </Button>
+              )}
             </li>
           ))}
         </ul>

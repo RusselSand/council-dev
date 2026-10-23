@@ -40,13 +40,15 @@ const putDecision = (councilId: string, streamId: string, run: number, decision:
 
 /**
  * Решения сейчас не правят (шаг запустили снова в другой вкладке: модели ещё работают или решения уже другого запуска) —
- * потоки и решения на экране устарели; решения или потока уже нет, сервер не зафиксировал решение без «почему» — на
- * экране не то, что на сервере: решения устарели.
+ * потоки и решения на экране устарели; решения или потока уже нет, сервер не зафиксировал решение без «почему», у решения
+ * уже нет противоречия, замену которого подтверждают, — на экране не то, что на сервере: решения устарели.
  */
 function staleOnRefused(error: unknown) {
   if (!(error instanceof ApiError)) return;
   if (error.code === 'decisions_not_ready') markStale('streams');
-  if (['decisions_not_ready', 'not_found', 'rationale_required'].includes(error.code)) markStale('decisions');
+  if (['decisions_not_ready', 'not_found', 'rationale_required', 'unknown_conflict'].includes(error.code)) {
+    markStale('decisions');
+  }
 }
 
 /** Правки решений одного запуска шага: набранное, уходящее и не сохранившееся — по id вопроса. */
@@ -166,6 +168,33 @@ export function useDecisionEdits(councilId: string, streamId: string, run: numbe
     settle: () => settle(lane),
     latest: () => lane.state,
   };
+}
+
+/**
+ * «Это решение заменяет ADR-0003» — POST /api/councils/<id>/streams/<streamId>/decisions/<questionId>/replaces; ответ —
+ * поток: модели проверяют выбор вопроса заново, и «Решения» — «ИИ работает». Поток сразу встаёт на место прежнего;
+ * потоки, решения и список советов перезапрашиваются. run — номер запуска шага, решения которого на экране: шаг с тех
+ * пор запустили снова — сервер замену не подтвердит.
+ */
+export function useReplaceDecision(): Mutation<
+  [id: string, streamId: string, run: number, questionId: string, adr: string],
+  Stream
+> {
+  return useMutation(
+    async (id: string, streamId: string, run: number, questionId: string, adr: string) => {
+      try {
+        return await source.replaceDecision(id, streamId, run, questionId, adr);
+      } catch (error) {
+        staleOnRefused(error);
+        throw error;
+      }
+    },
+    (stream, id) => {
+      markStale('streams', replaceStream(id, stream));
+      markStale('decisions');
+      markStale('councils');
+    },
+  );
 }
 
 /**

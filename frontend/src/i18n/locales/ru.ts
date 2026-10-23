@@ -369,6 +369,9 @@ export const ru = {
   'decisions.context.text': '{question}: {option}: {text}',
   'decisions.conflict': 'противоречит ограничению {id}',
   'decisions.conflict.text': 'Противоречит {id}: {text}',
+  'decisions.replace': 'Это решение заменяет {id}',
+  'decisions.replaces': 'Заменяет {id}: {text}',
+  'decisions.replaces.id': 'Заменяет {id}',
   'decisions.risk': 'риск {id}',
   'decisions.fix': 'правка: {text}',
   'decisions.clean': 'противоречий с ограничениями и рисками нет',
@@ -595,6 +598,7 @@ export const ru = {
   'error.decisions_not_ready':
     'Решения сейчас не изменить: шаг ещё не начат или его запустили снова. Поток и решения обновлены.',
   'error.rationale_required': 'Без обоснования решение не зафиксировать — напишите «почему».',
+  'error.unknown_conflict': 'Такого противоречия у решения уже нет. Решения обновлены.',
   'error.outcomes_not_ready':
     'Итоги сейчас не утвердить: шаг ещё не начат или его запустили снова. Поток и итоги обновлены.',
   'error.outcome_blocked': 'Итог заблокирован — ему не хватает решения, утверждать нечего. Итоги обновлены.',

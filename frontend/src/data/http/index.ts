@@ -199,6 +199,11 @@ export const httpSource: DataSource = {
     const { decision } = await request<{ decision: StreamDecision }>('PATCH', path, { run, rationale, status });
     return decision;
   },
+  async replaceDecision(id, streamId, run, questionId, adr) {
+    const path = `${streamPath(id, streamId)}/decisions/${encodeURIComponent(questionId)}/replaces`;
+    const { stream } = await request<{ stream: Stream }>('POST', path, { run, adr });
+    return stream;
+  },
   async approveDecisions(id, streamId, run) {
     const path = `${streamPath(id, streamId)}/decisions/approve`;
     const { stream } = await request<{ stream: Stream }>('POST', path, { run });

@@ -62,7 +62,7 @@ export function Decisions({ councilId, streamId, state, retrying, onBusy }: Deci
           </p>
           {decision.problem && <ProblemNote problem={decision.problem} onFix={step.toOptions} />}
           {decision.note && <JudgeLine note={decision.note} />}
-          <AdrCard decision={decision} onRationale={step.editRationale} />
+          <AdrCard decision={decision} onRationale={step.editRationale} onReplace={step.replace} />
           <DecisionActions
             decision={decision}
             onDecide={step.decide}
@@ -70,6 +70,7 @@ export function Decisions({ councilId, streamId, state, retrying, onBusy }: Deci
             onAccept={step.accept}
           />
           <LoadState loading={false} error={decision.error} />
+          <LoadState loading={false} error={decision.replaceError} />
         </>
       )}
       {step.approvable && (
