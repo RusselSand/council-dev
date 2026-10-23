@@ -11,6 +11,12 @@ decisions_not_ready; так же — когда запрос к решениям
 зафиксированные — шаг готов, — и модели сразу собирают итоги (chain.begun): раньше сборку
 запускал старый фронт тем же запросом, что фиксировал решения. Шаг уже готов — ничего не
 меняется.
+
+«Это решение заменяет ADR-…» (POST …/decisions/{questionId}/replaces) у противоречия с решением
+проекта — решение владельца к задаче «…подтверждение замены ADR…»: подтверждение ложится в решение
+вопроса (stream_decisions.with_replacement), и модели сразу проверяют выбор этого вопроса заново —
+новый запуск шага (chain.begun): подтверждённое решение проекта для проверки не действует, а
+проверки других вопросов переносятся. Шаг уже готов — ничего не меняется: решения ушли в итоги.
 """
 
 from typing import Literal
@@ -28,11 +34,11 @@ from ..pipeline import rests_on
 from ..scope import Listed
 from ..standing import State, exported, stream_standing
 from ..store import council_lock
-from ..stream_decisions import Shown, approved, shown_of, with_ruling
+from ..stream_decisions import Shown, approved, shown_of, with_replacement, with_ruling
 from .councils import folders_of
 from .errors import ApiError, ContractRoute, not_found
 from .options import Option, option_of, texts_of
-from .questions import Question, questions_of
+from .questions import DecisionRef, Question, questions_of
 from .schema import Schema
 from .streams import StreamAnswer, council_of, stream_of
 from .streams import shown_of as stream_at
@@ -66,6 +72,9 @@ class DecisionContext(Schema):
 
 class DecisionConflict(Schema):
     id: str
+    # constraint — ограничение группы (фрагмент), decision — решение проекта: его замену можно
+    # подтвердить.
+    kind: Literal["constraint", "decision"]
     text: str | None
 
 
@@ -79,6 +88,7 @@ class StreamDecision(Schema):
     problem: DecisionProblem | None
     context: list[DecisionContext]
     conflicts: list[DecisionConflict]
+    replaces: list[DecisionRef]
     risks: list[str]
     fixes: list[str]
     rationale: str
@@ -108,6 +118,14 @@ class Run(Schema):
     """Тело «Зафиксировать решения»: run решений, которые были на экране."""
 
     run: int
+
+
+class Replacement(Schema):
+    """Тело «Это решение заменяет ADR-…»: run решений на экране и решение проекта, которое это
+    решение заменяет."""
+
+    run: int
+    adr: str
 
 
 @router.get("/councils/{council_id}/streams/{stream_id}/decisions")
@@ -176,6 +194,39 @@ def update_decision(council_id: str, stream_id: str, question_id: str, body: Edi
     return DecisionAnswer(decision=decision)
 
 
+@router.post("/councils/{council_id}/streams/{stream_id}/decisions/{question_id}/replaces")
+def replace(council_id: str, stream_id: str, question_id: str, body: Replacement,
+            store: StoreDep, agents: AgentsDep, launch: LauncherDep, projects: ProjectsDep,
+            repositories: RepositoriesDep) -> StreamAnswer:
+    """«Это решение заменяет ADR-…». Решение вопроса заменяет решение проекта, которому
+    противоречит его вариант, — и модели проверяют выбор этого вопроса заново, в фоне, считая это
+    решение проекта не действующим. Замену уже подтвердили или шаг уже готов — поток как есть.
+    Проверка и запуск — под замком советов: два нажатия не запустят два хода."""
+    with council_lock:
+        council = council_of(store, council_id)
+        stream = stream_at(council, stream_id)
+        folders = folders_of(council, projects, repositories)
+        state = editable(stream, folders.notes, body.run)
+        item = next((item for item in shown_of(stream) if item.question.id == question_id), None)
+        if item is None:
+            raise not_found(f"У вопроса {question_id} потока {stream.group} нет решения на "
+                            "«Решениях»")
+        clashes = {clash.adr_id for clash in item.analysis.project_conflicts}
+        known = body.adr in item.ruling.replaces
+        if not known and body.adr not in clashes:
+            raise ApiError(422, "unknown_conflict",
+                           f"Решение по {question_id} не противоречит решению проекта {body.adr}")
+        start = None
+        if state != "done" and not known:
+            start = begun(council, with_replacement(stream, question_id, body.adr), "decisions",
+                          agents, store, folders.notes, repositories)
+            council = store.update_council(council_id, {
+                "streams": replaced(council, start.stream)}) or council
+    if start is not None and not launched(launch, start.pipeline, start.report):
+        raise ApiError(500, "internal", "Сервер останавливается — выбор не начали проверять")
+    return StreamAnswer(stream=stream_of(council, stream_at(council, stream_id), folders))
+
+
 def run_of(stream: Stored) -> int:
     """Номер запуска шага «Решения»: растёт с каждым запуском моделей на шаге (chain.py)."""
     return stream.analysis.launch if stream.analysis is not None else 0
@@ -211,15 +262,18 @@ def decisions_of(council: Council, stream: Stored, notes: str | None) -> list[St
                for item in shown}
     questions = questions_of(council, stream, [Listed(item.question) for item in shown])
     refs = stream.notes.refs if stream.notes is not None and exported(stream, notes) else {}
-    return [decision_of(item, question, options, refs.get(item.adr))
+    past = {decision.adr_id: decision.decision for decision in stream.project_decisions or []}
+    return [decision_of(item, question, options, refs.get(item.adr), past)
             for item, question in zip(shown, questions, strict=True)]
 
 
 def decision_of(item: Shown, question: Question, options: dict[str, Option | None],
-                catalog_id: str | None) -> StreamDecision:
+                catalog_id: str | None, past: dict[str, str]) -> StreamDecision:
     """Что совет сказал о решении: противоречие — проблемой и что поправить, без заметки судьи;
     иначе — заметкой судьи. Противоречит вариант ограничениям группы или решениям проекта —
-    «последствия»: сначала ограничения, потом решения проекта, с тем, чем противоречит."""
+    «последствия»: сначала ограничения, потом решения проекта, с тем, чем противоречит. Решения
+    проекта, замену которых подтвердили, — с тем, что в них решено (past — прошлые решения,
+    отобранные для потока)."""
     found, ruling = item.analysis, item.ruling
     conflict = found.verdict == "conflict"
     problem = DecisionProblem(text=found.reason or "", fixes=[
@@ -232,9 +286,11 @@ def decision_of(item: Shown, question: Question, options: dict[str, Option | Non
         note=None if conflict else found.reason or None, problem=problem,
         context=[context_of(other, options) for other in rests_on(found)
                  if other != item.question.id],
-        conflicts=[*(DecisionConflict(id=f"F{n}", text=None) for n in found.constraint_conflicts),
-                   *(DecisionConflict(id=clash.adr_id, text=clash.text or None)
+        conflicts=[*(DecisionConflict(id=f"F{n}", kind="constraint", text=None)
+                     for n in found.constraint_conflicts),
+                   *(DecisionConflict(id=clash.adr_id, kind="decision", text=clash.text or None)
                      for clash in found.project_conflicts)],
+        replaces=[DecisionRef(id=adr, decision=past.get(adr, "")) for adr in ruling.replaces],
         risks=[f"F{n}" for n in found.risk_ids], fixes=[], rationale=ruling.rationale,
         rationale_by=AUTHORS[ruling.rationale_by], status=ruling.status)
 

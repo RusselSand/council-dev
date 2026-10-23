@@ -7,6 +7,7 @@ import pytest
 from spec_council.export import WORDS as LANGUAGES
 from spec_council.export import (
     Shelf,
+    because,
     cited_in,
     drafted,
     export_in,
@@ -14,6 +15,7 @@ from spec_council.export import (
     outcome_text,
     phrases_of,
     renumbered,
+    replacing,
     stream_texts,
     translations,
     untranslated,
@@ -984,6 +986,21 @@ def test_a_translation_keeps_exactly_the_numbers_of_the_source():
                           good["notes"][1]]}
     with pytest.raises(BadAnswer, match="строки задач"):
         translations(reworded, sources)
+
+
+def test_a_translation_keeps_the_replaces_line_of_a_decision():
+    """Строка замен решения (решение q-011 бекенда) по-прежнему строка замен и в переводе: по ней
+    каталог считает решения заменёнными."""
+    source = replacing(because("Откат", "так безопаснее", LANGUAGES["russian"]),
+                       ["ADR-0003", "ADR-0005"], LANGUAGES["russian"])
+    assert source == "Откат, потому что так безопаснее\n\nЗаменяет: ADR-0003, ADR-0005."
+    good = {"notes": [{"key": "a", "text": "Rollback, because it is safer\n\n"
+                                           "Supersedes: ADR-0003, ADR-0005."}]}
+    assert translations(good, {"a": source})["a"].endswith("Supersedes: ADR-0003, ADR-0005.")
+    merged = {"notes": [{"key": "a", "text": "Rollback, because it is safer; it supersedes "
+                                             "ADR-0003 and ADR-0005."}]}
+    with pytest.raises(BadAnswer, match="строка замен"):
+        translations(merged, {"a": source})
 
 
 # --- файлы задач: поток их больше не выгружает, их выгружает этап «Задачи»

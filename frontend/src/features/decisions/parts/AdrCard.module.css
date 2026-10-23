@@ -60,6 +60,14 @@
   list-style: none;
 }
 
+/* Строка последствия; у противоречия с решением проекта рядом — «Это решение заменяет …», не влезает — ниже. */
+.consequence {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-6);
+}
+
 .red {
   color: var(--state-failed-ink);
 }

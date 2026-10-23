@@ -28,7 +28,7 @@ from ..deps import AgentsDep, LauncherDep, ProjectsDep, RepositoriesDep, StoreDe
 from ..export import Shelf
 from ..models import Council, NotePlan, NotesDraft, StatusShift
 from ..models import Stream as Stored
-from ..notes import NotesError
+from ..notes import NotesError, declared_replacements
 from ..pipeline import Runner
 from ..projects import Projects
 from ..prompts import notes_language
@@ -65,7 +65,7 @@ class Note(Schema):
     title: str
     change: NoteChange
     revisits: str | None
-    supersedes: str | None
+    supersedes: list[str]
     superseded_by: str | None
 
 
@@ -194,34 +194,39 @@ def catalog_of(council: Council, projects: Projects, folders: Folders) -> Catalo
 # Выгрузка по контракту.
 
 def notes_of(draft: NotesDraft) -> list[Note]:
-    """Заметки черновика по порядку: идея, вопросы, варианты, решения, итоги; решение проекта,
-    которое новое решение потока заменяет, — сразу за ним."""
+    """Заметки черновика по порядку: идея, вопросы, варианты, решения, итоги; решения проекта,
+    которые новое решение потока заменяет, — сразу за ним, по номерам."""
     plans = {plan.id: plan for plan in draft.notes}
-    replaced_by = {shift.superseded_by: shift for shift in draft.shifts
-                   if shift.after == "superseded" and shift.superseded_by in plans}
+    replaced_by: dict[str, list[StatusShift]] = {}
+    for shift in draft.shifts:
+        if shift.after == "superseded" and shift.superseded_by in plans:
+            replaced_by.setdefault(shift.superseded_by, []).append(shift)
     found: list[Note] = []
     for plan in draft.notes:
         if plan.type in TYPES:
             found.append(note_of(plan, plans))
-        shift = replaced_by.get(plan.id)
-        if shift is not None:
-            found.append(Note(id=shift.adr_id, type="decision", title=shift.title,
-                              change="superseded", revisits=None, supersedes=None,
-                              superseded_by=plan.id))
+        found += [Note(id=shift.adr_id, type="decision", title=shift.title, change="superseded",
+                       revisits=None, supersedes=[], superseded_by=plan.id)
+                  for shift in replaced_by.get(plan.id, [])]
     return found
 
 
 def note_of(plan: NotePlan, plans: dict[str, NotePlan]) -> Note:
     """Заметка с меткой: новая, не менялась, перепишется, правили руками. У новой заметки-вопроса
-    — решение проекта, которое она пересматривает; у новой заметки-решения — которое заменяет."""
+    — решение проекта, которое она пересматривает; у новой заметки-решения — которые заменяет:
+    то, что пересматривает её вопрос, и те, что она называет строкой замен (решение q-011
+    бекенда)."""
     change = CHANGES[plan.action]
-    revisits = supersedes = None
+    revisits = None
+    supersedes: list[str] = []
     if change == "new" and plan.type == "open_question":
         revisits = revisited(plan, plans)
     if change == "new" and plan.type == "adr":
         proposal = plans.get(plan.links[0]) if plan.links else None
         question = plans.get(proposal.links[0]) if proposal and proposal.links else None
-        supersedes = revisited(question, plans) if question else None
+        grows = revisited(question, plans) if question else None
+        supersedes = list(dict.fromkeys([*([grows] if grows else []),
+                                         *declared_replacements(plan.text)]))
     return Note(id=plan.id, type=TYPES[plan.type], title=headline(plan.generated), change=change,
                 revisits=revisits, supersedes=supersedes, superseded_by=None)
 
@@ -236,7 +241,7 @@ def exported_of(stream: Stored) -> list[Note]:
     каталоге, и выгрузка их не меняет."""
     export = stream.notes
     return [Note(id=note.id, type=TYPES[note.type], title=headline(note.generated), change="kept",
-                 revisits=None, supersedes=None, superseded_by=None)
+                 revisits=None, supersedes=[], superseded_by=None)
             for note in (export.notes if export else []) if not note.kept and note.type in TYPES]
 
 

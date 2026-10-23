@@ -802,6 +802,9 @@ class QuestionAnalysis(BaseModel):
     fixes: list[DecisionFix] = []
     # Обоснование решения, предложенное советом: в ADR — только если человек его подтвердит.
     rationale: str | None = None
+    # Решения проекта, замену которых человек подтвердил к этой проверке (Ruling.replaces): для неё
+    # они уже не действуют. Подтвердили другие — проверку не переносят, а повторяют.
+    replaced: list[str] = []
 
 
 class DecisionAnalysis(BaseModel):
@@ -829,19 +832,24 @@ class Decision(BaseModel):
     rationale: str | None = None
     # ai — обоснование совета, человек подтвердил его как есть; human — своё или поправленное.
     rationale_by: Literal["ai", "human"] | None = None
+    # Решения проекта (номера в каталоге), которые это решение заменяет: замену подтвердил человек
+    # (Ruling.replaces). Выгрузка делает их заменёнными. У решений прежней версии их нет.
+    replaces: list[str] = []
 
 
 class Ruling(BaseModel):
     """Решение по вопросу на шаге «Решения», как оно на экране: какой вариант берёт (option —
     Fn или Pn; None — вопрос передан как unresolved, и варианта нет), «почему» как его прислали,
-    кто его написал (ai — совет, human — человек его поправил) и где решение: draft — черновик,
-    fixed — зафиксировано, open — вопрос оставлен открытым."""
+    кто его написал (ai — совет, human — человек его поправил), где решение: draft — черновик,
+    fixed — зафиксировано, open — вопрос оставлен открытым, — и замену каких решений проекта
+    человек подтвердил («это решение заменяет ADR-…»): для проверки выбора они не действуют."""
 
     question_id: str
     option: str | None = None
     rationale: str = ""
     rationale_by: Literal["ai", "human"] = "ai"
     status: Literal["draft", "fixed", "open"] = "draft"
+    replaces: list[str] = []
 
 
 class QuestionWork(BaseModel):

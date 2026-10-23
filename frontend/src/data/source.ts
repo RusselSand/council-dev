@@ -146,6 +146,12 @@ export interface DataSource {
     edit: DecisionEdit,
   ): Promise<StreamDecision>;
   /**
+   * POST /api/councils/<id>/streams/<streamId>/decisions/<questionId>/replaces — «Это решение заменяет ADR-0003»: решение
+   * вопроса заменяет решение проекта adr, и модели проверяют выбор вопроса заново; ответ — поток. run — номер запуска
+   * шага, решения которого на экране: шаг с тех пор запустили снова — сервер отвечает decisions_not_ready.
+   */
+  replaceDecision(id: string, streamId: string, run: number, questionId: string, adr: string): Promise<Stream>;
+  /**
    * POST /api/councils/<id>/streams/<streamId>/decisions/approve — «Зафиксировать решения → к итогам» решений запуска
    * run; ответ — поток.
    */

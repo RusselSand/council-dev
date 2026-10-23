@@ -9,7 +9,9 @@ You are given:
 - the related OPEN QUESTIONS;
 - accepted project decisions that the user selected as relevant to this IDEA (from previous
   councils), with their status (only `active` is in force: `superseded` was replaced by the
-  decision in `superseded_by`, `under_review` is being revisited), relevance and reason;
+  decision in `superseded_by`, `under_review` is being revisited), relevance and reason; a
+  decision marked `"replaced_by_this_decision": true` is one the user has confirmed the decision
+  on this OPEN QUESTION replaces — it is no longer in force for this question;
 - the results of several independent Decision Analyses.
 
 There may be only one candidate: the council has a single participant, or the others failed.
@@ -58,8 +60,18 @@ Form one canonical result of the check.
 Name every conflict by ID in `validation`: CONSTRAINTS in `constraint_conflicts`; accepted ADRs in
 `adr_conflicts` — the `adr_id` of an `active` decision from ACCEPTED ADRS and `text`, a few words
 on what in it the choice goes against. A decision that is not `active` is not in force: the choice
-cannot conflict with it. A conflict with a constraint or an accepted ADR is a problem: the status
-is `conflict`.
+cannot conflict with it. Neither can an ADR marked `replaced_by_this_decision`: going against it is
+the point of the replacement the user confirmed — if nothing else is wrong, the check succeeds. A
+conflict with a constraint or an accepted ADR is a problem: the status is `conflict`.
+
+### Statuses of accepted ADRs
+
+The statuses of accepted ADRs (`active`, `under_review`, `superseded`) and `superseded_by` are
+changed by the council, not by the user: the user cannot and must not do it. Never put into
+`fixes` or `reason` a step like "mark ADR-0047 as superseded" or "put this decision into
+superseded_by". If the choice goes against an accepted ADR and the decision may be its
+replacement, say so in `reason` ("P31 may replace ADR-0003: …") — whether it replaces the ADR is
+the user's call, and they confirm it separately.
 
 ### When there is a problem
 
@@ -79,7 +91,11 @@ one. Each fix:
   a constraint (F7), an accepted ADR.
 
 One fix — one change. Every problem in `reason` has at least one fix: a problem without
-`fixes` is an invalid answer. Wording of the chosen PROPOSAL is changed in this OPEN QUESTION:
+`fixes` is an invalid answer. The only exception: when the choice goes only against accepted ADRs
+and the decision may replace them, `fixes` may be empty if there is nothing else to change —
+replacing is the user's call, not a fix. Do not suggest explaining a replacement in the
+rationale: the rationale argues only why this option over the other answers to the question.
+Wording of the chosen PROPOSAL is changed in this OPEN QUESTION:
 the user will take their own option with the corrected text. A question you name in a fix is
 also a question the decision depends on: list it in `depends_on_question_ids` too.
 
@@ -236,6 +252,8 @@ Do not replace the chosen PROPOSAL automatically.
 - Do not invent the user's rationale.
 - Do not use model voting.
 - If there is no confident conclusion, preserve the uncertainty.
+- Never ask the user to change the status or `superseded_by` of an accepted ADR: the council does
+  that.
 
 ## IDEA
 

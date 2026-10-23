@@ -1,6 +1,6 @@
 import type { State } from './council';
 import type { Option } from './options';
-import type { Question } from './questions';
+import type { DecisionRef, Question } from './questions';
 import { stepApprovable, stepEditable } from './stream';
 
 /** Что совет думает о решении: проверено, рекомендация судьи, противоречие, заблокировано. */
@@ -24,10 +24,17 @@ export interface DecisionContext {
   text: string | null;
 }
 
+/**
+ * С чем расходится вариант: ограничение (фрагмент) или решение проекта. У противоречия с решением проекта на «Решениях» —
+ * «Это решение заменяет ADR-0003».
+ */
+export type DecisionConflictKind = 'constraint' | 'decision';
+
 /** Ограничение, которому противоречит вариант: «противоречит ограничению F8». */
 export interface DecisionConflict {
   /** id ограничения: фрагмент («F8») или решение проекта («ADR-0003»). */
   id: string;
+  kind: DecisionConflictKind;
   /** Чем противоречит — как написали модели; нет — null. */
   text: string | null;
 }
@@ -62,6 +69,11 @@ export interface StreamDecision {
   context: DecisionContext[];
   /** «последствия»: ограничения, которым вариант противоречит, его риски (id) и правки, которые предлагают модели. */
   conflicts: DecisionConflict[];
+  /**
+   * Решения проекта, замену которых человек подтвердил («Это решение заменяет ADR-0003»), по порядку подтверждения: для
+   * проверки выбора они не действуют, и противоречий с ними в conflicts нет. Нет — пусто.
+   */
+  replaces: DecisionRef[];
   risks: string[];
   fixes: string[];
   /** «почему»; пусто — ещё не написали. */

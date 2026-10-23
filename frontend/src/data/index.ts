@@ -16,6 +16,7 @@ export {
 export {
   useApproveDecisions,
   useDecisionEdits,
+  useReplaceDecision,
   useStreamDecisions,
   type DecisionEdits,
 } from './hooks/useDecisions';

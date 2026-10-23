@@ -39,6 +39,7 @@ WRITTEN = [("IDEA-0001", "idea"), ("OQ-0001", "question"), ("OQ-0002", "question
            ("ADR-0001", "decision"), ("ADR-0002", "decision"), ("OUT-0001", "outcome"),
            ("OUT-0002", "outcome")]
 PAST = "Ищем полнотекстом по всей базе."
+OTHER_PAST = "Ищем только в базе знаний."
 
 
 @pytest.fixture(name="agents", autouse=True)
@@ -172,7 +173,7 @@ def test_a_waiting_step_shows_the_draft_of_the_whole_stream(store, pool, project
         "Хочу базу знаний.", "Как искать ответы?", "Мерило идеи")
     assert titles["ADR-0001"] == ("Искать по заголовкам тредов, потому что поиск по заголовкам "
                                   "дешевле всего.")
-    assert all((note["revisits"], note["supersedes"], note["supersededBy"]) == (None, None, None)
+    assert all((note["revisits"], note["supersedes"], note["supersededBy"]) == (None, [], None)
                for note in export["notes"])
     assert export["statusChanges"] == []
     # Черновик собран, но ничего не записано: в каталоге пусто, и в потоке черновика нет.
@@ -338,9 +339,9 @@ def test_a_question_that_revisits_a_past_decision_supersedes_it(store, pool, pro
     notes = {note["id"]: note for note in export["notes"]}
     assert (notes["OQ-0002"]["revisits"], notes["OQ-0002"]["title"]) == (
         "ADR-0001", "Как искать ответы?")
-    assert notes["ADR-0002"]["supersedes"] == "ADR-0001"
+    assert notes["ADR-0002"]["supersedes"] == ["ADR-0001"]
     assert notes["ADR-0001"] == {"id": "ADR-0001", "type": "decision", "title": PAST,
-                                 "change": "superseded", "revisits": None, "supersedes": None,
+                                 "change": "superseded", "revisits": None, "supersedes": [],
                                  "supersededBy": "ADR-0002"}
     # Заменённое решение — сразу за тем, что его заменяет.
     ids = [note["id"] for note in export["notes"]]
@@ -357,6 +358,107 @@ def test_a_question_that_revisits_a_past_decision_supersedes_it(store, pool, pro
     assert Catalog.load(docs).status("ADR-0001") == ("superseded", "ADR-0002")
     # После записи — та же смена статуса: каталог её уже не помнит, а выгрузка помнит.
     assert export_of(council_id) == export
+
+
+def past_decisions(root) -> None:
+    """В каталоге — два прошлых решения проекта одной идеи: ADR-0001 и ADR-0002."""
+    past_decision(root)
+    lay(root, Note("OQ-0002", "open_question", "Где искать?", ("IDEA-0001",)),
+        Note("PRO-0002", "proposal", "В базе.", ("OQ-0002",)),
+        Note("ADR-0002", "adr", OTHER_PAST, ("PRO-0002",)))
+
+
+def replacing(store, council_id, question_id: str, *adrs: str) -> None:
+    """Человек подтвердил, что решение вопроса заменяет решения проекта adrs, — в этом порядке."""
+    put(store, council_id, decisions=[
+        decision.model_copy(update={"replaces": list(adrs)})
+        if decision.question_id == question_id else decision
+        for decision in stored(store, council_id).decisions])
+
+
+def found(export: dict, kind: str, title: str) -> dict:
+    """Заметка выгрузки этого вида, чей заголовок начинается с title."""
+    return next(note for note in export["notes"]
+                if note["type"] == kind and note["title"].startswith(title))
+
+
+def test_a_decision_confirmed_to_replace_past_decisions_supersedes_them_all(store, pool,
+                                                                           projects, docs):
+    """Человек подтвердил, что решение по Q1 заменяет ADR-0002 и ADR-0001 (решение владельца к
+    задаче «…подтверждение замены ADR…» и q-011 бекенда): заменены оба. В заметке решения —
+    строка замен, а вопрос остаётся в цепочке своей идеи, и итог стоит на этом решении."""
+    past_decisions(docs)
+    council_id = assembled(store, pool)
+    replacing(store, council_id, "Q1", "ADR-0002", "ADR-0001")
+    with_project(store, projects, council_id)
+    assert approves_one(council_id, "O1").status_code == 200
+    assert approves(council_id).status_code == 200
+    export = export_of(council_id)
+    idea, asked = found(export, "idea", ""), found(export, "question", "Как искать ответы?")
+    chosen = found(export, "option", "Искать по заголовкам тредов")
+    decided = found(export, "decision", "Искать по заголовкам тредов")
+    assert asked["revisits"] is None
+    assert decided["supersedes"] == ["ADR-0002", "ADR-0001"]
+    # Заменённые решения — сразу за тем, что их заменяет, по номерам.
+    ids = [note["id"] for note in export["notes"]]
+    at = ids.index(decided["id"])
+    assert export["notes"][at + 1:at + 3] == [
+        {"id": adr, "type": "decision", "title": title, "change": "superseded", "revisits": None,
+         "supersedes": [], "supersededBy": decided["id"]}
+        for adr, title in (("ADR-0001", PAST), ("ADR-0002", OTHER_PAST))]
+    assert [(change["id"], change["from"], change["to"], change["supersededBy"], change["chain"])
+            for change in export["statusChanges"]] == [
+        (adr, "active", "superseded", decided["id"], [asked["id"], chosen["id"], decided["id"]])
+        for adr in ("ADR-0001", "ADR-0002")]
+    assert writes(council_id).status_code == 200
+    catalog = Catalog.load(docs)
+    assert catalog.problems() == []
+    assert catalog.status("ADR-0001") == catalog.status("ADR-0002") == (
+        "superseded", decided["id"])
+    assert catalog.notes[decided["id"]].body == (
+        "Искать по заголовкам тредов, потому что поиск по заголовкам дешевле всего.\n\n"
+        "Заменяет: ADR-0002, ADR-0001.")
+    assert catalog.notes[asked["id"]].links == (idea["id"],)
+    assert decided["id"] in catalog.notes[found(export, "outcome", "Мерило идеи")["id"]].links
+    # После записи — те же метки и смены статуса.
+    assert export_of(council_id) == export
+
+
+def test_a_question_that_revisits_one_decision_and_replaces_another_supersedes_both(
+        store, pool, projects, docs):
+    """Подтвердить замену можно и у решения, которое вопрос не пересматривает: вопрос растёт из
+    пересматриваемого, как раньше, а заменённое называет строка замен."""
+    past_decisions(docs)
+    council_id = assembled(store, pool)
+    revisiting(store, council_id, "Q1")
+    replacing(store, council_id, "Q1", "ADR-0002")
+    with_project(store, projects, council_id)
+    assert approves_one(council_id, "O1").status_code == 200
+    assert approves(council_id).status_code == 200
+    export = export_of(council_id)
+    asked = found(export, "question", "Как искать ответы?")
+    decided = found(export, "decision", "Искать по заголовкам тредов")
+    assert (asked["revisits"], decided["supersedes"]) == ("ADR-0001", ["ADR-0001", "ADR-0002"])
+    assert [(change["id"], change["to"], change["supersededBy"])
+            for change in export["statusChanges"]] == [
+        ("ADR-0001", "superseded", decided["id"]), ("ADR-0002", "superseded", decided["id"])]
+    assert writes(council_id).status_code == 200
+    catalog = Catalog.load(docs)
+    assert catalog.notes[asked["id"]].links == ("ADR-0001",)
+    assert catalog.status("ADR-0001") == catalog.status("ADR-0002") == (
+        "superseded", decided["id"])
+
+
+def test_a_replaced_past_decision_gone_from_the_catalog_stops_the_export(store, pool, projects,
+                                                                         docs):
+    council_id = assembled(store, pool)
+    replacing(store, council_id, "Q1", "ADR-0001")
+    with_project(store, projects, council_id)
+    assert approves_one(council_id, "O1").status_code == 200
+    assert approves(council_id).status_code == 200
+    assert error_of(client.get(path(council_id))) == (500, "internal")
+    assert error_of(writes(council_id)) == (500, "internal")
+    assert files_in(docs) == []
 
 
 def test_a_question_left_open_puts_the_past_decision_under_review(store, pool, projects, docs):

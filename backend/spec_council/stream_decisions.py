@@ -13,6 +13,13 @@
 открытое решение, решение без варианта и без «почему» — открытый вопрос. Правка решений на
 готовом шаге зафиксированные не меняет: по ним итоги уже собирали.
 
+Противоречит вариант действующему решению проекта — человек может подтвердить, что это решение
+его заменяет (решение владельца к задаче «…подтверждение замены ADR…»): подтверждение лежит в
+решении (Ruling.replaces), и модели проверяют выбор вопроса заново, считая это решение проекта не
+действующим (chain.checking). Решение после подтверждения — черновик: «почему» человека остаётся,
+а «почему» совета — от новой проверки. Выбор по вопросу поменяли — решения на экране прежнего
+выбора уходят (options.approved), и подтверждений к новому выбору нет.
+
 Поток прежней версии решений на экране отдельно не помнит — только зафиксированные, а до них —
 решения прежней работы к тому же выбору (work.known_decisions): с них начинал и старый фронт.
 Зафиксированное с вариантом — зафиксировано, без варианта — открыто; с вариантом, которого модели
@@ -39,7 +46,9 @@ class Shown:
 
 
 def shown_of(stream: Stream) -> list[Shown]:
-    """Решения шага по порядку вопросов: у неубранных вопросов отбора, которые модели проверили."""
+    """Решения шага по порядку вопросов: у неубранных вопросов отбора, которые модели проверили.
+    «Почему» черновика, которое человек не правил, — то, что написала проверка: проверили заново
+    (после подтверждения замены) — и «почему» её."""
     analyses = {found.question_id: found
                 for found in (stream.analysis.analyses if stream.analysis else [])}
     position = {question_key(question): n for n, question in enumerate(stream.scope or [], 1)}
@@ -50,8 +59,10 @@ def shown_of(stream: Stream) -> list[Shown]:
         n = position.get(question_key(question))
         if found is None or n is None:
             continue
-        shown.append(Shown(question, adr_id(n), found,
-                           rulings.get(question.id) or first_ruling(found)))
+        ruling = rulings.get(question.id) or first_ruling(found)
+        if ruling.rationale_by == "ai" and ruling.status == "draft":
+            ruling = ruling.model_copy(update={"rationale": found.rationale or ""})
+        shown.append(Shown(question, adr_id(n), found, ruling))
     return shown
 
 
@@ -72,6 +83,26 @@ def with_ruling(stream: Stream, question_id: str, rationale: str, status: str) -
     return stream.model_copy(update={"rulings": list(rulings.values())})
 
 
+def with_replacement(stream: Stream, question_id: str, adr: str) -> Stream:
+    """Поток, где решение вопроса заменяет ещё и решение проекта adr: подтверждение — в конце
+    подтверждённых, решение — черновик. «Почему», которое написал человек, остаётся; «почему»
+    совета напишет проверка заново (shown_of), и пока она идёт, его нет."""
+    item = next(item for item in shown_of(stream) if item.question.id == question_id)
+    ruling = item.ruling.model_copy(update={"status": "draft",
+                                            "replaces": [*item.ruling.replaces, adr]})
+    if ruling.rationale_by == "ai":
+        ruling = ruling.model_copy(update={"rationale": ""})
+    rulings = {**rulings_of(stream), question_id: ruling}
+    return stream.model_copy(update={"rulings": list(rulings.values())})
+
+
+def confirmed(stream: Stream) -> dict[str, list[str]]:
+    """Подтверждённые замены решений проекта по вопросу — из решений на экране, где они
+    записаны. Вопроса без записанного решения здесь нет: у него замены те, к которым его
+    проверили (first_ruling)."""
+    return {question: ruling.replaces for question, ruling in rulings_of(stream).items()}
+
+
 def approved(stream: Stream) -> Stream:
     """Поток, где решения зафиксированы: решения шага — как они на экране, и такими же
     остаются на нём. По каждому вопросу отбора — решение: вариант с «почему» или открытый
@@ -88,23 +119,23 @@ def approved(stream: Stream) -> Stream:
 
 def decision_of(question_id: str, ruling: Ruling | None) -> Decision:
     """Решение вопроса, каким его видят модели итогов и выгрузка: «почему» — одной строкой, как
-    его фиксировал старый фронт. Без «почему» решения нет — ADR без обоснования не бывает
-    (rationale_required): черновик, где его не написали (у противоречия модели его не пишут), —
-    открытый вопрос."""
+    его фиксировал старый фронт, и решения проекта, которые оно заменяет. Без «почему» решения
+    нет — ADR без обоснования не бывает (rationale_required): черновик, где его не написали (у
+    противоречия модели его не пишут), — открытый вопрос; открытый вопрос ничего не заменяет."""
     rationale = " ".join(ruling.rationale.split()) if ruling is not None else ""
     if ruling is None or ruling.status == "open" or ruling.option is None or not rationale:
         return Decision(question_id=question_id)
     return Decision(question_id=question_id, proposal=ruling.option, rationale=rationale,
-                    rationale_by=ruling.rationale_by)
+                    rationale_by=ruling.rationale_by, replaces=ruling.replaces)
 
 
 # Как это хранится.
 
 def first_ruling(found: QuestionAnalysis) -> Ruling:
     """Решение, каким его оставили модели: вариант, который они проверили или рекомендовали,
-    «почему» совета, черновик."""
+    «почему» совета, черновик — и замены решений проекта, к которым его проверили."""
     return Ruling(question_id=found.question_id, option=found.proposal,
-                  rationale=found.rationale or "")
+                  rationale=found.rationale or "", replaces=found.replaced)
 
 
 def rulings_of(stream: Stream) -> dict[str, Ruling]:
@@ -119,11 +150,13 @@ def rulings_of(stream: Stream) -> dict[str, Ruling]:
 
 
 def prior_of(decision: Decision, found: QuestionAnalysis | None) -> Ruling:
-    """Решение потока прежней версии: с вариантом — зафиксировано, как его зафиксировал человек;
-    без варианта — открыто, с вариантом и «почему» совета: вернуть его в черновик — решение
-    моделей. Прежняя версия давала зафиксировать и вариант, которого модели не проверяли; решение
-    выбирают после проверки (решение q-007 бекенда) — такой выбор пропадает, и решение — черновик
-    моделей с их вариантом: чужая проверка к нему не встаёт."""
+    """Решение, когда на экране его ещё не записали: зафиксированное — или прежней работы к тому
+    же выбору (у потока прежней версии — его решение). С вариантом — зафиксировано, как его
+    зафиксировал человек, с теми же заменами; без варианта — открыто, с вариантом и «почему»
+    совета: вернуть его в черновик — решение моделей. Прежняя версия давала зафиксировать и
+    вариант, которого модели не проверяли; решение выбирают после проверки (решение q-007
+    бекенда) — такой выбор пропадает, и решение — черновик моделей с их вариантом: чужая проверка
+    к нему не встаёт."""
     first = first_ruling(found) if found is not None else Ruling(
         question_id=decision.question_id)
     if decision.proposal is None:
@@ -132,4 +165,5 @@ def prior_of(decision: Decision, found: QuestionAnalysis | None) -> Ruling:
         return first
     return Ruling(question_id=decision.question_id, option=decision.proposal,
                   rationale=decision.rationale or "",
-                  rationale_by=decision.rationale_by or "ai", status="fixed")
+                  rationale_by=decision.rationale_by or "ai", status="fixed",
+                  replaces=decision.replaces)

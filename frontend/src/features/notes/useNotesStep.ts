@@ -80,9 +80,11 @@ export interface NotesStep {
   approveError: ApiError | undefined;
 }
 
-/** Метка заметки: «новая», «новая · заменяет ADR-0005», «superseded → ADR-0010», «перепишется». */
+/** Метка заметки: «новая», «новая · заменяет ADR-0003, ADR-0005», «superseded → ADR-0010», «перепишется». */
 function tagLabel(note: Note, t: Translate): string {
-  if (note.change === 'new' && note.supersedes) return t('notes.change.supersedes', { id: note.supersedes });
+  if (note.change === 'new' && note.supersedes.length) {
+    return t('notes.change.supersedes', { ids: note.supersedes.join(', ') });
+  }
   if (note.change === 'new' && note.revisits) return t('notes.change.revisits', { id: note.revisits });
   if (note.change === 'superseded') {
     return note.supersededBy ? t('notes.change.superseded', { id: note.supersededBy }) : t('notes.status.superseded');

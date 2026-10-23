@@ -16,7 +16,7 @@ const note = (id: string, type: NoteType, title: string, extra: Partial<Note> = 
   title,
   change: 'new',
   revisits: null,
-  supersedes: null,
+  supersedes: [],
   supersededBy: null,
   ...extra,
 });
@@ -227,7 +227,7 @@ const PROTO_NOTES: Note[] = [
   note('OQ-0011', 'question', 'Как разрешать конфликт правок'),
   note('OQ-0012', 'question', 'Может ли офлайн-правка мастера менять статус', { revisits: 'ADR-0005' }),
   note('ADR-0007', 'decision', 'Очередь хранится в Room'),
-  note('ADR-0010', 'decision', 'Статус меняет сервер, правка мастера — предложение', { supersedes: 'ADR-0005' }),
+  note('ADR-0010', 'decision', 'Статус меняет сервер, правка мастера — предложение', { supersedes: ['ADR-0005'] }),
   note('ADR-0005', 'decision', 'Сервер — источник истины для статуса заявки', {
     change: 'superseded',
     supersededBy: 'ADR-0010',

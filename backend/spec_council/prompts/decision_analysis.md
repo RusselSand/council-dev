@@ -8,7 +8,9 @@ You are given:
 - the related OPEN QUESTIONS;
 - accepted project decisions that the user selected as relevant to this IDEA (from previous
   councils), with their status (only `active` is in force: `superseded` was replaced by the
-  decision in `superseded_by`, `under_review` is being revisited), relevance and reason;
+  decision in `superseded_by`, `under_review` is being revisited), relevance and reason; a
+  decision marked `"replaced_by_this_decision": true` is one the user has confirmed the decision
+  on this OPEN QUESTION replaces — it is no longer in force for this question;
 - the user's preliminary choice, if there is one.
 
 ## What an ADR is
@@ -42,14 +44,22 @@ Name every conflict by ID in `validation`: constraints in `constraint_conflicts`
 decisions in `adr_conflicts` — the `adr_id` of an `active` decision from ACCEPTED DECISIONS and
 `text`, a few words on what in it the choice goes against, for example
 `{"adr_id": "ADR-0003", "text": "background tasks are deferred"}`. A decision that is not
-`active` is not in force: the choice cannot conflict with it.
+`active` is not in force: the choice cannot conflict with it. Neither can a decision marked
+`replaced_by_this_decision`: going against it is the point of the replacement the user confirmed.
+
+The statuses of accepted decisions (`active`, `under_review`, `superseded`, `superseded_by`) are
+changed by the council, not by the user. Never ask the user to change them. If the choice goes
+against an accepted decision and the new decision may be its replacement, say so in `summary` —
+whether it replaces it is the user's call.
 
 If the choice is correct, prepare a draft ADR.
 
 Use the user's rationale if it is given.
 
 If the user's rationale is missing, you may propose a rationale — one or two sentences, without
-restating the decision — but mark it as proposed by AI.
+restating the decision — but mark it as proposed by AI. The rationale argues only why this
+option over the other answers to the question: it does not say that the decision replaces an
+accepted decision.
 Such an ADR remains a draft and cannot be saved as accepted
 until the user explicitly confirms the rationale.
 
@@ -145,6 +155,8 @@ If there is no confident recommendation:
 - An `ai_suggested` rationale requires separate acceptance by the user.
 - Do not create new PROPOSALS at this stage.
 - Do not reopen decisions that are already accepted unless a conflict has been found.
+- Never ask the user to change the status or `superseded_by` of an accepted decision: the council
+  does that.
 
 ## IDEA
 

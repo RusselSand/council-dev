@@ -27,6 +27,7 @@ const decision = (
   problem: null,
   dependsOn: [],
   conflicts: [],
+  replaces: [],
   risks: [],
   fixes: [],
   rationale,
@@ -167,7 +168,7 @@ const proto = (status: (question: string) => DecisionState): Record<string, Mock
         },
       ],
     },
-    conflicts: [{ id: 'ADR-0003', text: 'фоновые задачи ограничены' }],
+    conflicts: [{ id: 'ADR-0003', kind: 'decision', text: 'фоновые задачи ограничены' }],
   }),
   Q5: decision(
     'ADR-4',

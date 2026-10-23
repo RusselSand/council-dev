@@ -108,6 +108,31 @@ def test_a_problem_the_judge_names_is_a_conflict_whatever_the_status():
     assert (found.kind, found.clashes) == ("conflict", (Clash("ADR-0005", "статус ведёт сервер"),))
 
 
+def test_a_choice_only_against_project_decisions_may_have_nothing_to_fix():
+    """Выбор расходится только с решениями проекта — решение может их заменить, а подтверждает
+    замену человек: правок может не быть. Есть и ограничение — без правок ответ негодный."""
+    clash = {"adr_conflicts": [{"adr_id": "ADR-0005", "text": "статус ведёт сервер"}]}
+    found = judged_analysis({"status": "conflict", "proposal_id": "P2",
+                             "reason": "P2 может заменить ADR-0005.", "validation": clash},
+                            CHOSEN)
+    assert (found.kind, found.clashes, found.fixes) == (
+        "conflict", (Clash("ADR-0005", "статус ведёт сервер"),), ())
+    with pytest.raises(BadAnswer, match="без правок"):
+        judged_analysis({"status": "conflict", "proposal_id": "P2",
+                         "validation": {**clash, "constraint_conflicts": ["F4"]}}, CHOSEN)
+
+
+def test_a_replaced_project_decision_is_not_in_force_for_the_check():
+    """Замену решения проекта подтвердили — для проверки оно не действует (Context.decisions его
+    нет): расхождение с ним отбрасывается, как с решением не в силе."""
+    replaced = Context(constraints=frozenset({4}), risks=frozenset(), questions=frozenset(),
+                       proposals=frozenset({"P2"}), selected="P2", decisions=frozenset())
+    found = judged_analysis({"status": "validated", "proposal_id": "P2",
+                             "validation": {"adr_conflicts": [{"adr_id": "ADR-0005",
+                                                               "text": "статус"}]}}, replaced)
+    assert (found.kind, found.clashes) == ("validated", ())
+
+
 @pytest.mark.parametrize(("answer", "where", "problem"), [
     ({"status": "validated", "proposal_id": "F3"}, CHOSEN, "проверен F3, а выбран P2"),
     ({"status": "recommended", "proposal_id": "P1"}, CHOSEN, "вместо проверки"),

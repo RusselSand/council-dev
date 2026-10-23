@@ -19,7 +19,10 @@ final commit. The user has already approved their meaning: your job is the langu
 - Keep every issue line in the form "- ISS-0001: <title>": the same ID, then a colon, then the
   translated title. A list item that starts with another ID ("- ADR-0001: …",
   "- OUT-0001: …") keeps that ID and the colon the same way.
-- An ADR reads "<decision>, because <rationale>": keep that form in {{language}}.
+- An ADR reads "<decision>, because <rationale>": keep that form in {{language}}. An ADR may end
+  with a separate line "Supersedes: ADR-0003, ADR-0005." — the decisions it replaces: keep it a
+  separate line after a blank line, translate only the label, keep the colon, the IDs, the commas
+  between them and the final period.
 - Write simply and directly: clear, short, with one obvious meaning, in words a developer
   understands at a glance.
 

@@ -38,6 +38,7 @@ import { noSlicing, SLICINGS, startedSlicing } from './slicings';
 import {
   decisionsApproved,
   decisionsNote,
+  decisionsRechecked,
   decisionsStepApproved,
   newDecisions,
   newStreams,
@@ -988,6 +989,36 @@ export const mockSource: DataSource = {
     // Шаги потока правка не меняет, как в макете; меняются строка «Решений» в цепочке и совет.
     decisionsChanged(index, id, streamId);
     return copy(decisionListOf(id, streamId).find((d) => d.question.id === questionId) as StreamDecision);
+  },
+  async replaceDecision(id, streamId, run, questionId, adr) {
+    const index = councilAt(id);
+    const at = streamAt(id, streamId);
+    checkDecisionsReady(id, streamId, at, run);
+    if (!decisionListOf(id, streamId).some((d) => d.question.id === questionId)) {
+      throw new ApiError('not_found', `Решения по вопросу ${questionId} у потока ${streamId} нет`, 404);
+    }
+    const stored = storedDecisions(id, streamId)[questionId];
+    const list = streams.get(id) ?? [];
+    // Замена уже подтверждена или шаг уже готов — ничего не меняем, отвечаем потоком как есть.
+    if (stored.replaces.some((ref) => ref.id === adr)) return copy(list[at]);
+    if (!stored.conflicts.some((c) => c.kind === 'decision' && c.id === adr)) {
+      throw new ApiError('unknown_conflict', `Решение по ${questionId} не противоречит ${adr}`, 422);
+    }
+    if (stepOf(list[at], 'decisions').state === 'done') return copy(list[at]);
+    // Для проверки заново подтверждённый ADR не действует: противоречия с ним нет. Решение — черновик; «почему» ИИ напишет
+    // новая проверка, своё «почему» человека остаётся.
+    const past = decisionsOf(id, streamId).decisions.find((d) => d.id === adr);
+    stored.replaces = [...stored.replaces, { id: adr, decision: past?.decision ?? '' }];
+    stored.conflicts = stored.conflicts.filter((c) => c.id !== adr);
+    stored.status = 'draft';
+    if (stored.rationaleBy === 'ai') stored.rationale = '';
+    // Модели проверяют выбор вопроса заново — новый запуск «Решений»; решения других вопросов остаются.
+    decisionRuns.set(streamKey(id, streamId), decisionsRun(id, streamId) + 1);
+    const now = new Date().toISOString();
+    const { participants, judge } = councils[index];
+    list[at] = decisionsRechecked(list[at], participants, judge, now);
+    councils[index] = streamsChanged(councils[index], list, streamId, now);
+    return copy(list[at]);
   },
   async approveDecisions(id, streamId, run) {
     const index = councilAt(id);

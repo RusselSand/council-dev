@@ -10,6 +10,10 @@
 - OUTCOME — на один или несколько ADR одной и той же корневой IDEA;
 - у каждой заметки одна корневая IDEA.
 
+ADR заменён, когда из него вырос вопрос и на вопрос есть новое ADR, — или когда новое ADR называет
+его своей строкой замен: «Заменяет: ADR-0003, ADR-0005.» (так совет пишет решение, замену которым
+подтвердил человек, — решение q-011 бекенда; вопрос этого решения остаётся в цепочке своей идеи).
+
 Номера — общие на весь каталог: следующий свободный номер типа, с нулями до четырёх знаков.
 
 Команда для агентов — только чтение, ответ в JSON:
@@ -27,6 +31,7 @@ import re
 import sys
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field
+from functools import cached_property
 from pathlib import Path
 
 TYPES = ("idea", "open_question", "proposal", "adr", "outcome")
@@ -43,6 +48,11 @@ ISSUE_LINE = re.compile(r"- (ISS-\d+):")
 # Подписи критериев готовности в итоге (export.WORDS): список под ними — критерии, пусть и из
 # строк «- ISS-…:».
 CRITERIA = frozenset({"критерии готовности", "acceptance criteria"})
+# Строка замен в теле ADR — отдельный абзац: подпись на языке заметок («Заменяет», «Supersedes»),
+# двоеточие и только номера решений через запятую.
+REPLACES_LINE = re.compile(r"[^\W\d_]+(?:[ \t-][^\W\d_]+)*[ \t]*:[ \t]*"
+                           r"(ADR-\d+(?:[ \t]*,[ \t]*ADR-\d+)*)[ \t]*\.?")
+ADR_ID = re.compile(r"ADR-\d+")
 NUMBERED = re.compile(r"([A-Z]+)-(\d+)")
 FRONTMATTER = re.compile(r"\A---\r?\n(.*?)\r?\n---\r?\n?(.*)\Z", re.DOTALL)
 
@@ -235,7 +245,8 @@ class Catalog:
     def status(self, adr_id: str) -> tuple[str, str | None]:
         """Действует ли решение: из ADR вырос вопрос (его пересматривают) — under_review, пока
         на вопрос нет нового ADR, и superseded, когда он есть (и каким). Пересмотров несколько
-        и хоть один уже решён — заменено, сколько бы других ещё ни шло."""
+        и хоть один уже решён — заменено, сколько бы других ещё ни шло. Новое ADR называет его
+        своей строкой замен (replacements) — тоже заменено, этим ADR."""
         replaced = None
         pending = False
         for question in self.children(adr_id):
@@ -247,9 +258,23 @@ class Catalog:
                 replaced = replaced or answers[-1].id
             else:
                 pending = True
+        replaced = replaced or self.replacements.get(number_of(adr_id))
         if replaced:
             return "superseded", replaced
         return ("under_review", None) if pending else ("active", None)
+
+    @cached_property
+    def replacements(self) -> dict[tuple[str, int], str]:
+        """Решения, которые ADR каталога называют своей строкой замен (declared_replacements), —
+        по номеру (ADR-7 и ADR-0007 — одно решение): каким ADR заменено. Называют несколько —
+        первым по номеру (ADR-2 раньше ADR-10); себя ADR не заменяет."""
+        found: dict[tuple[str, int], str] = {}
+        adrs = [note for note in self.notes.values() if note.type == "adr"]
+        for note in sorted(adrs, key=lambda note: (number_of(note.id), note.id)):
+            for adr in declared_replacements(note.body):
+                if number_of(adr) != number_of(note.id):
+                    found.setdefault(number_of(adr), note.id)
+        return found
 
 
 def order(note: Note) -> tuple[int, str]:
@@ -310,6 +335,17 @@ def issue_list(block: str) -> list[str] | None:
     if not all(found):
         return None
     return list(dict.fromkeys(issue_key(match.group(1)) for match in found if match))
+
+
+def declared_replacements(text: str) -> list[str]:
+    """Решения, которые заменяет ADR, — его строка замен: абзац из одной строки «Заменяет:
+    ADR-0003, ADR-0005.» (подпись на любом языке — её переводят, как подписи итога); таких
+    несколько — последний (ниже могли дописать абзац руками). Номера — как написаны."""
+    for block in reversed(re.split(r"\n\s*\n", text.strip())):
+        found = REPLACES_LINE.fullmatch(block.strip())
+        if found is not None:
+            return list(dict.fromkeys(ADR_ID.findall(found.group(1))))
+    return []
 
 
 def number_of(note_id: str) -> tuple[str, int]:
