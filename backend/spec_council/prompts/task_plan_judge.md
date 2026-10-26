@@ -72,9 +72,13 @@ answer them yourself.
 
 ## IDs in the text
 
-In every free-text field refer to OUTCOMES and decisions only by their note IDs and to other
-ISSUES of the plan by their IDs (`I2`). Remove fragment numbers (`F3`), question numbers and any
-other internal number: the coding agent will not find them.
+In every free-text field, `main_entry_points` included, refer to OUTCOMES and decisions only by
+their note IDs and to other ISSUES only by their IDs in your final plan (`I2`) — the sequential
+IDs you give them in your answer. Every candidate plan numbers its ISSUES on its own, from I1:
+when you take text from a candidate, or merge, reorder or drop ISSUES, rewrite each ISSUE ID in
+the text to the ID that ISSUE has in your plan. An ISSUE ID that is not in your plan makes the
+answer invalid. Remove fragment numbers (`F3`), question numbers and any other internal number:
+the coding agent will not find them.
 
 ## Language
 
@@ -121,7 +125,7 @@ Before answering, check that:
 - `depends_on` names only earlier ISSUES;
 - `scope` describes behavior and contract, with explicit boundaries, and no tests;
 - no implementation is decided that the human has not set and the code does not already have;
-- the free text names only note IDs and ISSUE IDs;
+- the free text names only note IDs and the IDs of the ISSUES of your plan;
 - the result is not based on model voting.
 
 ## IDEAS

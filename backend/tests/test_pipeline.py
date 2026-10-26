@@ -1278,6 +1278,60 @@ def test_a_multiline_task_item_is_flattened_before_task_ids_are_renumbered():
     assert found[1].scope == ["Пример: wait for I1"]
 
 
+def test_task_ids_in_the_entry_points_are_renumbered_like_the_rest_of_the_text():
+    # «Где менять» — как остальной текст задачи (решение владельца к задаче «Бекенд · Задачи:
+    # номера задач в тексте»): I2 — первая задача плана; номер в коде — как есть.
+    found = plan_of({"issues": [task("I2", "Индекс"),
+                                task("I1", "Выдача", main_entry_points=[
+                                    "api/deps.py: правки из I2", "`I2` в коде"])]},
+                    PLAN_CONTEXT)
+    assert found[1].main_entry_points == ["api/deps.py: правки из I1", "`I2` в коде"]
+
+
+def test_a_judge_naming_a_task_its_plan_has_not_got_is_a_bad_answer():
+    """Судья нумерует задачи заново: ссылка с номером плана модели (I3, а задач две) в любом поле
+    текста — негодный ответ (решение владельца к задаче «Бекенд · Задачи: номера задач в
+    тексте»). План участника так не проверяется: его сводит судья."""
+    fields = {"title": "Выдача после I3", "user_story": "As a member, I want I3 first.",
+              "main_entry_points": ["api/deps.py: правки из I3"],
+              "current_state": "I3 ещё не сделана.", "scope": ["Как в I3."],
+              "open_questions": ["Готова ли I3?"]}
+    for field, value in fields.items():
+        answer = {"issues": [task("I1", "Индекс"), task("I2", "Выдача") | {field: value}]}
+        with pytest.raises(BadAnswer, match="в тексте I2 — I3: таких задач в плане нет"):
+            plan_of(answer, PLAN_CONTEXT, judged=True)
+        assert len(plan_of(answer, PLAN_CONTEXT)) == 2
+    # Задача чужого итога отброшена: ссылка на неё — тоже на задачу, которой в плане нет.
+    with pytest.raises(BadAnswer, match="в тексте I2 — I1"):
+        plan_of({"issues": [task("I1", "Чужая", outcome="OUT-0099"),
+                            task("I2", "Выдача", scope=["После I1."])]}, PLAN_CONTEXT,
+                judged=True)
+
+
+def test_a_judge_may_name_its_own_tasks_and_a_number_in_code_or_a_source_term_is_no_name():
+    context = Context(PLAN_CONTEXT.outcomes, {"OUT-0001": frozenset({"I9 cache"})})
+    found = plan_of({"issues": [task("I1", "Индекс"),
+                                task("I2", "Выдача", scope=["Греть I9 cache, как `I9`, после I1."],
+                                     main_entry_points=["рядом с правкой из I1"])]},
+                    context, judged=True)
+    assert found[1].scope == ["Греть I9 cache, как `I9`, после I1."]
+    assert found[1].main_entry_points == ["рядом с правкой из I1"]
+
+
+def test_a_judge_naming_a_task_not_in_its_plan_stops_the_plan_and_is_asked_again():
+    judge = {"issues": [task("I1", "Индекс"), task("I2", "Выдача", scope=["После I16."])]}
+    result, runner = plans({("task_plan", "sol"): {"issues": [task("I1", "Поиск")]},
+                            ("task_plan", "fable"): {"issues": [task("I1", "Индекс")]},
+                            ("task_plan_judge", "fable"): judge})
+    assert result.state == "failed" and result.issues == []
+    [run] = next(s for s in result.steps if s.name.value == "task_plan_judge").runs
+    assert run.state == "failed"
+    assert run.error == "негодный ответ: в тексте I2 — I16: таких задач в плане нет"
+    # Ответ судьи — из лотка вон: повтор спросит его заново.
+    assert [key for key in runner.keys if "-task_plan_judge-" in key] == [
+        key for key in runner.forgotten if "-task_plan_judge-" in key]
+
+
 def test_a_task_refers_only_to_what_its_own_outcome_has():
     """ADR-0003, F5 и F7 — у OUT-0001; задача OUT-0002 сослаться на них не может."""
     [other] = plan_of({"issues": [task("A1", "Хранение", outcome="OUT-0002", constraint_ids=[5],

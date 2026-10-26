@@ -76,6 +76,21 @@ def test_an_issue_file_names_other_issues_by_their_project_numbers():
     assert "- Готова ли ISS-0007?" in text
 
 
+def test_where_to_change_names_issues_and_stream_parts_like_the_rest_of_the_file():
+    """«Где менять» — через ту же перенумерацию, что остальные разделы (решение владельца к задаче
+    «Бекенд · Задачи: номера задач в тексте»): задачи плана — номерами на весь проект, номера
+    потока — номерами заметок; код — как есть."""
+    issue = Issue(id="I2", title="Правка", user_story="As a team, I want answers.",
+                  outcome_id="OUT-0001",
+                  main_entry_points=["серверные операции правки из I1", "по Q1: `I1`",
+                                     "мутирующие операции\n  из I1 и I2"])
+    words = words_for("Russian")
+    text = issue_text(issue, "ISS-0008", ("OUT-0001", "Итог"), [], [], [], [], words,
+                      {"I1": "ISS-0007", "I2": "ISS-0008"}, Names({"Q1": "OQ-0001"}, {}))
+    assert (f"## {words['entry']}\n- серверные операции правки из ISS-0007\n"
+            "- по OQ-0001: `I1`\n- мутирующие операции из ISS-0007 и ISS-0008\n") in text
+
+
 def test_stream_numbers_in_issue_files_and_plan_inputs_become_note_numbers():
     names = Names({"Q1": "OQ-0001", "P2": "PRO-0002", "ADR-1": "ADR-0001"},
                   {"F4": "Секреты не уходят в репозиторий."})
