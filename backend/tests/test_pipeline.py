@@ -775,6 +775,70 @@ def test_a_choice_is_checked_and_an_unresolved_question_gets_a_recommendation():
     assert '"recommendation"' in judge_prompt
 
 
+def test_the_other_questions_come_with_the_adr_their_choice_becomes():
+    """«Почему» называет другие решения потока номерами ADR, а не вопросы и варианты: у другого
+    вопроса — номер решения, которым станет выбор по нему (ADR-n по порядку отбора); у unresolved
+    решения ещё нет. Участники и судья видят одно и то же."""
+    analysis = by_question(checked_by("P1"), recommends("P2"))
+    judge = by_question({"status": "validated", "proposal_id": "P1"},
+                        {"status": "no_recommendation", "reason": "мало данных"})
+    _, runner, _ = check({("decision_analysis", "sol"): analysis,
+                          ("decision_analysis", "fable"): analysis,
+                          ("decision_judge", "fable"): judge})
+    for step in ("decision_analysis", "decision_judge"):
+        related = json.loads(section(runner.asked[step, "fable"], "RELATED QUESTIONS"))  # про Q2
+        assert [(q["id"], q["status"], q["adr_id"]) for q in related] == [
+            ("Q1", "selected", "ADR-1")]
+    analysis = by_question(recommends("P1"), checked_by("P2"))
+    judge = by_question({"status": "no_recommendation", "reason": "мало данных"},
+                        {"status": "validated", "proposal_id": "P2"})
+    _, runner, _ = check({("decision_analysis", "sol"): analysis,
+                          ("decision_analysis", "fable"): analysis,
+                          ("decision_judge", "fable"): judge},
+                         choices=[("Q1", None), ("Q2", "P2")])
+    related = json.loads(section(runner.asked["decision_judge", "fable"], "RELATED QUESTIONS"))
+    assert [(q["id"], q["status"], q["adr_id"]) for q in related] == [("Q1", "unresolved", None)]
+
+
+def test_a_check_remembers_the_questions_of_the_decisions_its_rationale_names():
+    """Номер ADR-n сдвигается с отбором, вопрос — нет: проверка помнит, по какому вопросу каждое
+    решение потока, которое называет её «почему». Свой номер и решение проекта — не такие."""
+    analysis = by_question(checked_by("P1"), checked_by("P2"))
+    judge = by_question(
+        {"status": "validated", "proposal_id": "P1", "validation": {},
+         "rationale": {"text": "Как решает ADR-2, а не ADR-0002.", "source": "ai"}},
+        {"status": "validated", "proposal_id": "P2", "validation": {},
+         "rationale": {"text": "ADR-1 ищет на сервере; ADR-2 и ADR-7 — не о том.",
+                       "source": "ai"}})
+    result, _, _ = check({("decision_analysis", "sol"): analysis,
+                          ("decision_analysis", "fable"): analysis,
+                          ("decision_judge", "fable"): judge},
+                         choices=[("Q1", "P1"), ("Q2", "P2")])
+    assert {found.question_id: found.adrs for found in result.analyses} == {
+        "Q1": {"ADR-2": "Q2"}, "Q2": {"ADR-1": "Q1"}}
+
+
+def test_a_judge_rewrites_a_false_rationale_and_it_is_no_problem():
+    """Судья нашёл неправду в «почему» участников и написал исправленное сам: решение проверено,
+    без проблемы и правок, а «почему» — судьи. Участники и судья видят карту кода — по ней и
+    проверяют."""
+    told = {**checked_by("P1"), "adr_draft": {"rationale": "В панели уже есть готовый Spinner.",
+                                              "rationale_source": "ai_suggested"}}
+    true = "Поиск остаётся в одном месте, как решает ADR-0005."
+    judge = {"status": "validated", "proposal_id": "P1", "validation": {},
+             "rationale": {"text": true, "source": "ai"}}
+    result, runner, _ = check({("decision_analysis", "sol"): told,
+                               ("decision_analysis", "fable"): told,
+                               ("decision_judge", "fable"): judge},
+                              choices=[("Q1", "P1")], scope=[SEARCH])
+    [found] = result.analyses
+    assert (found.verdict, found.reason, found.fixes, found.rationale) == (
+        "validated", None, [], true)
+    judge_prompt = runner.asked["decision_judge", "fable"]
+    assert "готовый Spinner" in section(judge_prompt, "INDEPENDENT DECISION ANALYSES")
+    assert "## REPOSITORY CONTEXT" in judge_prompt and "Rationale written by AI" in judge_prompt
+
+
 def test_the_options_of_a_question_are_its_group_proposals_and_what_the_council_found():
     analysis = checked_by("P1")
     judge = {"status": "validated", "proposal_id": "P1", "validation": {}}
