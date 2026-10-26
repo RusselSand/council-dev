@@ -55,6 +55,24 @@ def test_a_choice_against_a_project_decision_in_force_is_a_conflict():
         analysis_of(checked(clashes=[{"adr_id": "ADR-0005", "text": "x" * 501}]), CHOSEN)
 
 
+def test_a_stream_decision_the_models_see_is_not_a_project_decision():
+    """Модели видят у другого вопроса его решение ADR-5: «ADR-5» в расхождении — это оно, а не
+    решение проекта ADR-0005; само ADR-0005 — расхождение, как всегда. Решение проекта, которое
+    и в каталоге зовётся «ADR-5», — расхождение и так."""
+    seen = Context(constraints=frozenset(), risks=frozenset(), questions=frozenset({"Q5"}),
+                   proposals=frozenset({"P2"}), selected="P2", decisions=frozenset({"ADR-0005"}),
+                   adrs=frozenset({"ADR-5"}))
+    found = analysis_of(checked(clashes=[{"adr_id": " adr-5 ", "text": "решение потока"}]), seen)
+    assert (found.kind, found.clashes) == ("validated", ())
+    found = analysis_of(checked(clashes=[{"adr_id": "ADR-0005", "text": "сервер"}]), seen)
+    assert found.clashes == (Clash("ADR-0005", "сервер"),)
+    short = Context(constraints=frozenset(), risks=frozenset(), questions=frozenset({"Q5"}),
+                    proposals=frozenset({"P2"}), selected="P2", decisions=frozenset({"ADR-5"}),
+                    adrs=frozenset({"ADR-5"}))
+    found = analysis_of(checked(clashes=[{"adr_id": "ADR-5", "text": "сервер"}]), short)
+    assert found.clashes == (Clash("ADR-5", "сервер"),)
+
+
 def test_a_participant_recommends_one_of_the_options_or_nothing():
     pick = {"status": "unresolved", "recommendation": {"proposal_id": "p1", "reason": "дешевле"}}
     assert analysis_of(pick, OPEN) == Analysis("recommended", "P1", reason="дешевле")

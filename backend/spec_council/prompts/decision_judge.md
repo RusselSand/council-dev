@@ -6,7 +6,9 @@ You are given:
 - the related PROPOSALS;
 - the user's preliminary choice, if there is one;
 - the applicable CONSTRAINTS and RISKS;
-- the related OPEN QUESTIONS;
+- the related OPEN QUESTIONS — the other questions of this IDEA, what the user chose on each and
+  `adr_id`, the ID of the ADR that choice becomes (`null` — the question is unresolved and has no
+  decision yet);
 - accepted project decisions that the user selected as relevant to this IDEA (from previous
   councils), with their status (only `active` is in force: `superseded` was replaced by the
   decision in `superseded_by`, `under_review` is being revisited), relevance and reason; a
@@ -61,8 +63,10 @@ Name every conflict by ID in `validation`: CONSTRAINTS in `constraint_conflicts`
 `adr_conflicts` — the `adr_id` of an `active` decision from ACCEPTED ADRS and `text`, a few words
 on what in it the choice goes against. A decision that is not `active` is not in force: the choice
 cannot conflict with it. Neither can an ADR marked `replaced_by_this_decision`: going against it is
-the point of the replacement the user confirmed — if nothing else is wrong, the check succeeds. A
-conflict with a constraint or an accepted ADR is a problem: the status is `conflict`.
+the point of the replacement the user confirmed — if nothing else is wrong, the check succeeds. The
+ADR of a related question (its `adr_id` in RELATED QUESTIONS) is not a project decision: never put
+it into `adr_conflicts`. A conflict with a constraint or an accepted ADR is a problem: the status
+is `conflict`.
 
 ### Statuses of accepted ADRs
 
@@ -104,10 +108,11 @@ also a question the decision depends on: list it in `depends_on_question_ids` to
 If the user has already given a rationale, keep it unchanged.
 
 If the rationale is missing, you may formulate one recommended rationale
-based on the IDEA, CONSTRAINTS, RISKS and the context of the decision. The rationale says why
-this decision: plain words, one or two sentences, without restating the decision itself — in the
-ADR it follows "because". Analysis of options and trade-offs goes into `reason`, not into the
-rationale.
+based on the IDEA, CONSTRAINTS, RISKS and the context of the decision — take the best-grounded
+draft of the analyses or word your own, by the rules of "Rationale written by AI" below. The
+rationale says why this decision: plain words, one or two sentences, without restating the
+decision itself — in the ADR it follows "because". Analysis of options and trade-offs goes into
+`reason`, not into the rationale.
 
 Such a rationale has `source = "ai"` and requires the user's explicit confirmation.
 
@@ -137,6 +142,44 @@ do not pick an artificial winner.
 Return `no_recommendation`.
 
 Do not create a new PROPOSAL at this stage.
+
+## Rationale written by AI
+
+A rationale with `source = "ai"` goes into the ADR as you give it, and the ADR goes into the
+project notes. The drafts of the analyses are written by AI too, and they may state what is not
+true. Before giving the rationale, check every statement in it:
+
+- a statement about the code or about how the system works now must be confirmed by REPOSITORY
+  CONTEXT (`verified` or `inferred`) for the very place it names. A component, a check or a
+  behavior the map does not show is not there; a frontend mock, a test or a fixture does not show
+  what the server does; `unknown`, `remaining_follow_up` and what was not in the snapshot are not
+  established; the DESIGN CONTEXT is the designer's intent, not the existing system. Without a
+  repository context the rationale says nothing about the existing code;
+- the rationale must not argue against other decisions: the choices on RELATED QUESTIONS (their
+  ADRs) and the `active` ACCEPTED ADRS. It must not claim the opposite of what they decide, nor
+  call something unnecessary or impossible when another decision provides for it.
+
+Found a statement that is not true by these sources — write the corrected rationale yourself:
+drop the statement or say it the way the sources show it, and keep what is grounded; if nothing
+grounded is left, write the rationale anew from the sources. This is not a problem of the
+decision, and the user has no way to fix it — you fix it. Do not set `conflict` because of it, do
+not put it into `reason` or `fixes`, and do not report what you changed: the user fixes the
+decision with the corrected rationale as usual, or does not.
+
+A rationale the user wrote is never checked or rewritten here.
+
+### References in the rationale
+
+A rationale rests on decisions, not on questions and proposals. Refer to another decision only by
+its ADR ID, exactly as given: a decision of this IDEA by the `adr_id` of its question in RELATED
+QUESTIONS ("ADR-3"), an accepted project decision by its `adr_id` ("ADR-0003"). Never name OPEN
+QUESTIONS or PROPOSALS by their IDs in the rationale (Q13, P25, or the F-ID of a proposal from the
+group text): name the ADR that decided it or say it in words — the same when a draft of the
+analyses names them. A question without `adr_id` has no decision yet: the rationale does not lean
+on it.
+
+Bad: "Q13 (P25) already rejects a second run."
+Good: "ADR-13 already rejects a second run on the server."
 
 ## Agent disagreements
 
@@ -249,7 +292,9 @@ Do not replace the chosen PROPOSAL automatically.
 - Do not change the user's choice.
 - Do not treat an AI recommendation as a decision.
 - Do not treat the absence of alternatives as a decision.
-- Do not invent the user's rationale.
+- Do not invent the user's rationale, and never rewrite it.
+- A false statement in an AI rationale is not a problem: correct the rationale yourself.
+- In the rationale, refer to decisions by ADR IDs, never to questions and proposals.
 - Do not use model voting.
 - If there is no confident conclusion, preserve the uncertainty.
 - Never ask the user to change the status or `superseded_by` of an accepted ADR: the council does

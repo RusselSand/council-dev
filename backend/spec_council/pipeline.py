@@ -54,8 +54,9 @@ Figma через REST API, модели читают снимок:
 1. decision_analysis — каждый участник проверяет выбранный человеком вариант, а у unresolved
    сравнивает варианты вопроса и, если один обоснованно лучше, рекомендует его
    (decision_analysis.md);
-2. decision_judge — судья сводит их анализы в один итог (decision_judge.md). У unresolved
-   вопроса без вариантов сравнивать нечего — модели его не видят.
+2. decision_judge — судья сводит их анализы в один итог (decision_judge.md); неправду в
+   «почему» участников он исправляет сам. У unresolved вопроса без вариантов сравнивать
+   нечего — модели его не видят.
 
 Итоги потока (OutcomeRun) — из зафиксированных решений:
 1. outcome_discovery — каждый участник собирает решения в законченные изменения системы,
@@ -1095,8 +1096,13 @@ class DecisionRun(CouncilRun[DecisionAnalysis]):
     Готовый вопрос сразу в отчёте.
 
     Модели видят и другие вопросы потока — что по ним выбрано и какие unresolved: без этого не
-    сказать, от какого нерешённого вопроса зависит выбор. Одинаковые анализы судья видит
-    одним: число согласных — не довод.
+    сказать, от какого нерешённого вопроса зависит выбор. У выбранного — и номер решения, которым
+    выбор станет (ADR-n, как у решения на «Решениях»): «почему» называет другие решения только
+    номерами ADR, а не вопросы и варианты (решение владельца к задаче «…«почему» ссылается на
+    ADR…»); выгрузка ставит на их место номера заметок. Судья проверяет «почему» участников по
+    карте кода и по другим решениям потока и проекта и, где нашёл неправду, пишет исправленное
+    сам: проблемой решения это не становится. Одинаковые анализы судья видит одним: число
+    согласных — не довод.
 
     carried — проверка того же выбора по тем же вопросам: её не повторяют, если выбор по
     вопросам, от которых она зависит, тот же (work.carried_analyses), — проверяют только новое.
@@ -1135,6 +1141,8 @@ class DecisionRun(CouncilRun[DecisionAnalysis]):
         self.active = frozenset(decision.adr_id for decision in accepted
                                 if decision.status == "active")
         self.scope = scope
+        # Решение по n-му вопросу отбора — ADR-n.
+        self.adrs = {question.id: adr_id(n) for n, question in enumerate(scope, 1)}
         self.choices = {choice.question_id: choice.proposal for choice in choices}
         self.entries = {choice.question_id: choice_entry(choice) for choice in choices}
         self.found = found_by_question(proposals, choices)
@@ -1169,12 +1177,14 @@ class DecisionRun(CouncilRun[DecisionAnalysis]):
                  known: str, limits: list[LabeledFragment],
                  failures: dict[str, list[str]]) -> Analysis:
         replaced = self.replaced.get(question.id, [])
+        related = [self._related(q) for q in self.scope if q.id != question.id]
         context = DecisionContext(
             frozenset(f.id for f in limits if f.label == "constraint"),
             frozenset(f.id for f in limits if f.label == "risk"),
             frozenset(q.id for q in self.scope if q.id != question.id),
             frozenset(proposal["id"] for proposal in offered), selected, question.id,
-            self.active - frozenset(replaced))
+            self.active - frozenset(replaced),
+            frozenset(q["adr_id"] for q in related if q["adr_id"] is not None))
         accepted = accepted_prompt(self.decisions, replaced)
         values = {
             "idea": self.idea,
@@ -1183,8 +1193,7 @@ class DecisionRun(CouncilRun[DecisionAnalysis]):
             "user_selection": as_json(
                 None if selected is None else {"proposal_id": selected, "rationale": None}),
             "constraints_and_risks": known,
-            "related_questions": as_json([self._related(q) for q in self.scope
-                                          if q.id != question.id]),
+            "related_questions": as_json(related),
             "repository": self.repository,
             "design": self.design,
         }
@@ -1205,11 +1214,13 @@ class DecisionRun(CouncilRun[DecisionAnalysis]):
         return offered(question, self.fragments, self.found)
 
     def _related(self, question: OpenQuestion) -> dict:
-        """Другой вопрос потока и что по нему выбрал человек."""
+        """Другой вопрос потока, что по нему выбрал человек и номер решения, которым выбор станет:
+        на него «почему» и ссылается. У unresolved решения пока нет — и номера."""
         selected = self.choices.get(question.id)
         text = next((p["text"] for p in self._offered(question) if p["id"] == selected), None)
         return {"id": question.id, "text": question.text,
                 "status": "unresolved" if selected is None else "selected",
+                "adr_id": None if selected is None else self.adrs[question.id],
                 "selected_proposal": None if selected is None else {"id": selected, "text": text}}
 
 

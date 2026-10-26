@@ -10,6 +10,12 @@ unresolved, сравнивают его варианты и, если один �
 вариантов здесь нет: рекомендовать можно только из тех, что у вопроса есть. Выбор человека не
 меняется: проверка не того варианта или рекомендация вместо проверки — негодный ответ. Ссылки
 вторичны: чужой номер просто отбрасывается.
+
+«Почему» пишут модели, и судья его проверяет: что сказано о коде — по карте кода, и не спорит ли
+оно с другими решениями потока и проекта. Нашёл неправду — пишет исправленное «почему» сам:
+это не проблема решения, и фиксировать его она не мешает (решение владельца к задаче «…«почему»
+ссылается на ADR, судья сам исправляет неправду»). Другие решения «почему» называет номерами
+ADR: решения потока — ADR-n, решения проекта — как в каталоге.
 """
 
 from dataclasses import dataclass
@@ -46,6 +52,9 @@ class Context:
     question: str = ""
     # Действующие решения проекта, отобранные для потока: с ними вариант может расходиться.
     decisions: frozenset[str] = frozenset()
+    # Номера решений потока (ADR-n), которые модели видят у других вопросов: на них ссылается
+    # «почему», а решениями проекта они не бывают.
+    adrs: frozenset[str] = frozenset()
 
 
 @dataclass(frozen=True)
@@ -116,12 +125,18 @@ def checked(data: dict, context: Context, field: str) -> Analysis:
 def clashes_of(value: object, context: Context) -> tuple[Clash, ...]:
     """Расхождения с решениями проекта: только с действующими, отобранными для потока («ADR-7» —
     то же, что «ADR-0007»), и у каждого сказано, чем. Чужой номер или расхождение без сути
-    отбрасывается, как чужой номер фрагмента; повтор — первое."""
+    отбрасывается, как чужой номер фрагмента; повтор — первое. Номер решения потока, который
+    модели видят у другого вопроса («ADR-7»), — не «ADR-0007»: такое расхождение тоже
+    отбрасывается, если только решение проекта не названо в каталоге так же."""
     found: dict[str, Clash] = {}
     for item in value if isinstance(value, list) else []:
         if not isinstance(item, dict):
             continue
-        named = project_decisions_in([item.get("adr_id")], context.decisions)
+        given = item.get("adr_id")
+        if (isinstance(given, str) and given.strip().upper() in context.adrs
+                and given.strip() not in context.decisions):
+            continue
+        named = project_decisions_in([given], context.decisions)
         text = reason_of(item.get("text"))
         if not named or not text or named[0] in found:
             continue

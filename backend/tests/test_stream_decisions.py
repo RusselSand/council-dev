@@ -61,6 +61,7 @@ client = TestClient(app)
 MINE = "Поиск по заголовкам дешевле всего."
 HEADERS = "Искать по заголовкам и первым сообщениям тредов"
 PROBLEM = "P1 ищет по всем тредам, а бюджет F3 этого не выдержит."
+CORRECTED = "Поиск остаётся в одном месте, как решает ADR-3."
 LACKING = "Не хватает данных о нагрузке."
 RESULT = "Мерило идеи"
 
@@ -292,6 +293,36 @@ def test_a_conflict_with_a_project_decision_says_what_it_goes_against(store, poo
     assert q1["conflicts"] == [{"id": "F3", "kind": "constraint", "text": None},
                                {"id": "ADR-0005", "kind": "decision",
                                 "text": "статус ведёт сервер"}]
+
+
+def judged_prompt(agents, question_id, since=0) -> str:
+    """Последний промпт судьи проверки про вопрос question_id."""
+    return [prompt for prompt in agents.prompts["decision_judge"][since:]
+            if json.loads(section(prompt, "OPEN QUESTION"))["id"] == question_id][-1]
+
+
+def related_adrs(prompt) -> list[tuple[str, str | None]]:
+    """Другие вопросы потока в промпте проверки и номера их решений."""
+    return [(q["id"], q["adr_id"]) for q in json.loads(section(prompt, "RELATED QUESTIONS"))]
+
+
+def test_the_judge_corrects_the_councils_rationale_and_it_is_no_problem(store, pool, agents):
+    """Решение владельца: судья нашёл неправду в «почему» ИИ — пишет исправленное сам, а не
+    проблему. Решение проверено, «почему» — судьи, и его фиксируют, как обычно. Другие решения
+    потока модели видят с номерами ADR — на них «почему» и ссылается; у unresolved решения ещё
+    нет."""
+    agents.judged["Q1"] = {"status": "validated", "proposal_id": "P1",
+                           "rationale": {"text": CORRECTED, "source": "ai"}}
+    council_id, _ = checked(store, pool)
+    q1 = decisions_of(council_id)["Q1"]
+    assert (q1["verdict"], q1["note"], q1["problem"], q1["conflicts"], q1["fixes"]) == (
+        "validated", None, None, [], [])
+    assert (q1["rationale"], q1["rationaleBy"], q1["status"], q1["recheck"]) == (
+        CORRECTED, "ai", "draft", None)
+    assert related_adrs(judged_prompt(agents, "Q1")) == [("Q2", None), ("Q3", "ADR-3")]
+    fixed = edits(council_id, "Q1", CORRECTED, "fixed").json()["decision"]
+    assert (fixed["rationale"], fixed["rationaleBy"], fixed["status"]) == (
+        CORRECTED, "ai", "fixed")
 
 
 def test_a_question_the_council_could_not_pick_for_is_blocked_without_an_option(store, pool,
@@ -546,6 +577,27 @@ def test_other_problems_stay_and_ones_own_rationale_too(store, pool, agents):
         "conflict", PROBLEM, [{"id": "F3", "kind": "constraint", "text": None}])
     assert (q1["rationale"], q1["rationaleBy"], q1["status"]) == (MINE, "user", "draft")
     assert (q1["replaces"], q1["recheck"]) == ([{"id": "ADR-0005", "decision": SERVER}], None)
+
+
+def test_a_recheck_corrects_the_councils_rationale_but_not_ones_own(store, pool, agents):
+    """Пересчёт — так же, как шаг: другие решения потока модели видят с номерами ADR, и судья
+    исправляет «почему» ИИ сам. «Почему», которое написал человек, он не переписывает: оно
+    остаётся, а «почему» судьи — нет."""
+    corrected = {"status": "validated", "proposal_id": "P1",
+                 "rationale": {"text": CORRECTED, "source": "ai"}}
+    for own in (None, MINE):
+        council_id, _ = clashing(store, pool, agents)
+        assert marks(council_id, "Q1", "ADR-0005", rationale=own).status_code == 200
+        asked = len(agents.prompts["decision_judge"])
+        assert rechecks(council_id, "Q1").status_code == 200
+        agents.judged["Q1"] = corrected
+        pool.run()
+        assert related_adrs(judged_prompt(agents, "Q1", asked)) == [("Q2", None),
+                                                                    ("Q3", "ADR-3")]
+        q1 = decisions_of(council_id)["Q1"]
+        assert (q1["verdict"], q1["problem"], q1["recheck"]) == ("validated", None, None)
+        assert (q1["rationale"], q1["rationaleBy"]) == (
+            (CORRECTED, "ai") if own is None else (MINE, "user"))
 
 
 def test_each_project_decision_is_marked_on_its_own(store, pool, agents):

@@ -5,7 +5,9 @@ You are given:
 - the OPEN QUESTION;
 - all of its PROPOSALS;
 - the applicable constraints and risks;
-- the related OPEN QUESTIONS;
+- the related OPEN QUESTIONS — the other questions of this IDEA, what the user chose on each and
+  `adr_id`, the ID of the ADR that choice becomes (`null` — the question is unresolved and has no
+  decision yet);
 - accepted project decisions that the user selected as relevant to this IDEA (from previous
   councils), with their status (only `active` is in force: `superseded` was replaced by the
   decision in `superseded_by`, `under_review` is being revisited), relevance and reason; a
@@ -46,6 +48,8 @@ decisions in `adr_conflicts` — the `adr_id` of an `active` decision from ACCEP
 `{"adr_id": "ADR-0003", "text": "background tasks are deferred"}`. A decision that is not
 `active` is not in force: the choice cannot conflict with it. Neither can a decision marked
 `replaced_by_this_decision`: going against it is the point of the replacement the user confirmed.
+The ADR of a related question (its `adr_id` in RELATED QUESTIONS) is not a project decision: never
+put it into `adr_conflicts`.
 
 The statuses of accepted decisions (`active`, `under_review`, `superseded`, `superseded_by`) are
 changed by the council, not by the user. Never ask the user to change them. If the choice goes
@@ -59,7 +63,7 @@ Use the user's rationale if it is given.
 If the user's rationale is missing, you may propose a rationale — one or two sentences, without
 restating the decision — but mark it as proposed by AI. The rationale argues only why this
 option over the other answers to the question: it does not say that the decision replaces an
-accepted decision.
+accepted decision. Write it by the rules of "Rationale" below.
 Such an ADR remains a draft and cannot be saved as accepted
 until the user explicitly confirms the rationale.
 
@@ -78,6 +82,30 @@ It is not an ADR and it is not the user's decision.
 
 If there are not enough grounds to choose one option, do not choose artificially.
 Leave recommendation = null and explain what is missing.
+
+## Rationale
+
+The rationale goes into the ADR, and the ADR goes into the project notes. Everything in it must be
+true by the sources:
+
+- state about the code and how the system works now only what REPOSITORY CONTEXT confirms
+  (`verified` or `inferred`) for the very place you name. What the map does not show is not
+  there; a frontend mock, a test or a fixture does not show what the server does; the DESIGN
+  CONTEXT is the designer's intent, not the existing system. Without a repository context, say
+  nothing about the existing code;
+- do not argue against other decisions: the choices on RELATED QUESTIONS and the `active`
+  ACCEPTED DECISIONS. Do not claim the opposite of what they decide, and do not call something
+  unnecessary or impossible when another decision provides for it.
+
+A rationale rests on decisions, not on questions and proposals. Refer to another decision only
+by its ADR ID, exactly as given: a decision of this IDEA by the `adr_id` of its question in
+RELATED QUESTIONS ("ADR-3"), an accepted project decision by its `adr_id` ("ADR-0003"). Never
+name OPEN QUESTIONS or PROPOSALS by their IDs in the rationale (Q13, P25, or the F-ID of a
+proposal from the group text): name the ADR that decided it or say it in words. A question
+without `adr_id` has no decision yet: the rationale does not lean on it.
+
+Bad: "Q13 (P25) already rejects a second run."
+Good: "ADR-13 already rejects a second run on the server."
 
 ## Wording
 
@@ -153,6 +181,7 @@ If there is no confident recommendation:
 - An ADR without a rationale does not exist as a saved ADR.
 - Do not invent the user's rationale.
 - An `ai_suggested` rationale requires separate acceptance by the user.
+- In the rationale, refer to decisions by ADR IDs, never to questions and proposals.
 - Do not create new PROPOSALS at this stage.
 - Do not reopen decisions that are already accepted unless a conflict has been found.
 - Never ask the user to change the status or `superseded_by` of an accepted decision: the council
