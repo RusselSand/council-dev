@@ -324,6 +324,29 @@ def test_a_selection_after_a_failed_search_again_plans_the_tasks(agents, base):
     assert tasks_of(council_id)["stages"]["tasks"] == "waiting"
 
 
+def test_a_plan_of_the_previous_version_naming_outcomes_by_notes_is_written_with_parents(
+        agents, base):
+    """Совет прежней версии: план звал итог номером его заметки (OUT-0001), а выгрузка потока его
+    помнит. Задачи видны подзадачами родительской задачи итога и пишутся с ней; номер итога в
+    тексте — номер родительской задачи."""
+    council_id = ready()
+    store = get_store()
+    found = council(council_id)
+    [stream] = found.streams
+    plan = found.tasks
+    store.update_council(council_id, {
+        "streams": [stream.model_copy(update={"notes": stream.notes.model_copy(update={
+            "refs": {**stream.notes.refs, "O1": "OUT-0001"}})})],
+        "tasks": plan.model_copy(update={"issues": [issue.model_copy(update={
+            "outcome_id": "OUT-0001", "title": f"{TASK} OUT-0001"}) for issue in plan.issues]})})
+    shown = plan_of(council_id)
+    assert [task["parent"] for task in shown["tasks"]] == ["C-O1"]
+    assert shown["parents"] == [PARENT_O1]
+    assert writes(council_id).status_code == 200
+    text = (base / "issues" / "ISS-0001.md").read_text(encoding="utf-8")
+    assert "parent: ISS-0002" in text and f"# {TASK} ISS-0002" in text
+
+
 def test_a_council_of_the_previous_version_without_a_plan_runs_it_on_retry(agents, base):
     council_id = ready()
     get_store().update_council(council_id, {"tasks": None, "tasks_draft": None})

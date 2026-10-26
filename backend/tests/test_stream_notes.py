@@ -12,7 +12,7 @@ from fastapi.testclient import TestClient
 from spec_council import stream_notes
 from spec_council.app import app
 from spec_council.deps import get_agents, get_launcher, get_projects, get_repositories, get_store
-from spec_council.models import NotesDraft, NotesExport, ProjectDraft
+from spec_council.models import ExportedNote, NotePlan, NotesDraft, NotesExport, ProjectDraft
 from spec_council.notes import Catalog, Note, path_of, rendered
 from spec_council.pipeline import ModelFailed
 from spec_council.projects import Projects
@@ -574,6 +574,28 @@ def test_a_stream_the_prior_version_wrote_shows_its_written_draft(store, pool, p
     notes = steps_of(stream_of(council_id))["notes"]
     assert (notes["state"], notes["note"]) == ("done", "выгружено заметок: 12")
     assert brief(export_of(council_id)) == [(note_id, kind, "kept") for note_id, kind in WRITTEN]
+
+
+def test_outcomes_the_prior_version_wrote_are_not_shown(store, pool, projects, docs):
+    """Поток прежней версии записал в каталог и итог: выгрузка его не показывает — итогов в
+    каталоге заметок совет больше не держит (решение владельца к задаче «Бекенд · Итоги →
+    родительские задачи…»)."""
+    council_id = outcomes_approved(store, pool, projects)
+    assert writes(council_id).status_code == 200
+    written = export_of(council_id)
+    stream = stored(store, council_id)
+    outcome = NotePlan(key="o:мерило", id="OUT-0001", type="outcome", text="Мерило",
+                       generated="Мерило", links=["ADR-0001"], action="create")
+    old = ExportedNote(key="o:мерило", id="OUT-0001", type="outcome", generated="Мерило",
+                       written="Мерило", links=["ADR-0001"], digest="")
+    put(store, council_id,
+        notes_draft=stream.notes_draft.model_copy(update={
+            "notes": [*stream.notes_draft.notes, outcome]}),
+        notes=stream.notes.model_copy(update={"notes": [*stream.notes.notes, old]}))
+    assert export_of(council_id) == written
+    # Без записанного черновика (совсем старый поток) — так же.
+    put(store, council_id, notes_draft=None)
+    assert not any(note["type"] == "outcome" for note in export_of(council_id)["notes"])
 
 
 def test_a_draft_of_the_prior_version_without_translation_does_not_hold_the_step(
