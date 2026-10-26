@@ -10,12 +10,18 @@
 Соседи у перенесённого вопроса поменялись, а его варианты и проверку искали без них: это
 осознанно — новый вопрос, в свою очередь, видит все остальные.
 
+«Почему» совета называет другие решения потока номерами ADR-n — по n-му вопросу отбора, и с
+правкой отбора номер сдвигается: в перенесённых проверке и решении номера ставят по новому отбору
+(numbered). Решения, на которое «почему» ссылается, в отборе уже нет — номера у него нет: такую
+проверку повторяют, а решение с таким «почему» не переносится — на «Решениях» черновик проверки.
+
 То же с итогами: итог, который был готов и чьи решения те же, закрепляется — его не
 пересобирают, а модели видят его данностью.
 """
 
 from collections.abc import Collection, Iterable, Mapping
 
+from .decisions import renumbered
 from .models import (
     Choice,
     Decision,
@@ -30,6 +36,7 @@ from .models import (
     Stream,
 )
 from .pipeline import (
+    adr_ids,
     choice_entry,
     decisions_key,
     project_prints,
@@ -92,8 +99,10 @@ def carried_analyses(stream: Stream, choices: list[Choice], anew: Collection[str
     повторяют, пока выбор по вопросам, от которых она зависит, тот же (holds). anew — вопросы,
     которые человек просит перепроверить: их проверку не переносят. replaced — по вопросу:
     замены решений проекта, подтверждённые сейчас (stream_decisions.confirmed); проверка к другим
-    заменам — не та, и её повторяют. Вопроса там нет — замены те, к которым проверка."""
+    заменам — не та, и её повторяют. Вопроса там нет — замены те, к которым проверка. «Почему»
+    перенесённой — с номерами решений по нынешнему отбору (numbered)."""
     keys = keys_of(stream.scope or [])
+    numbers = adr_ids(stream.scope or [])
     analyzed = analyzed_of(stream.analysis)
     works = {work.key: work for work in stream.earlier}
     now = {choice.question_id: choice_entry(choice) for choice in choices}
@@ -108,9 +117,23 @@ def carried_analyses(stream: Stream, choices: list[Choice], anew: Collection[str
         if found is None and work is not None and choice_entry(work.choice) == entry:
             found = work.analysis
         if (found is not None and holds(found, now)
-                and set(wanted.get(choice.question_id, found.replaced)) == set(found.replaced)):
-            carried[choice.question_id] = found
+                and set(wanted.get(choice.question_id, found.replaced)) == set(found.replaced)
+                and (moved := numbered(found, numbers)) is not None):
+            carried[choice.question_id] = moved
     return carried
+
+
+def numbered[T: (QuestionAnalysis, Decision)](done: T, numbers: Mapping[str, str]) -> T | None:
+    """Проверка или решение, чьё «почему» называет решения потока номерами нынешнего отбора
+    (numbers — номер решения по вопросу, pipeline.adr_ids). Решения, на которое «почему»
+    ссылается, в отборе нет — None: оно стоит на том, чего в потоке больше нет."""
+    if not done.adrs:
+        return done
+    moved = renumbered(done.rationale or "", done.adrs, numbers)
+    if moved is None:
+        return None
+    rationale, adrs = moved
+    return done.model_copy(update={"rationale": rationale, "adrs": adrs})
 
 
 def holds(found: QuestionAnalysis, now: Mapping[str, str]) -> bool:
@@ -228,11 +251,14 @@ def active_decisions(stream: Stream) -> set[str]:
 
 def known_decisions(stream: Stream) -> list[Decision]:
     """Решения, какие известны сейчас: зафиксированные, а пока их нет (после правки отбора или
-    выбора) — прежние по тем же вопросам к тому же выбору; выбор ещё не утверждали — к прежнему."""
+    выбора) — прежние по тем же вопросам к тому же выбору; выбор ещё не утверждали — к прежнему.
+    «Почему» совета в прежнем — с номерами решений по нынешнему отбору; решения, на которое оно
+    ссылается, в отборе нет — прежнее решение не известно (numbered)."""
     if stream.decisions is not None:
         return stream.decisions
     works = {work.key: work for work in stream.earlier}
     choices = {choice.question_id: choice for choice in stream.choices or []}
+    numbers = adr_ids(stream.scope or [])
     known = []
     for question in stream.scope or []:
         work = works.get(question_key(question))
@@ -242,7 +268,9 @@ def known_decisions(stream: Stream) -> list[Decision]:
         if stream.choices is not None and (
                 choice is None or choice_entry(choice) != choice_entry(work.choice)):
             continue
-        known.append(work.decision)
+        decision = numbered(work.decision, numbers)
+        if decision is not None:
+            known.append(decision)
     return known
 
 

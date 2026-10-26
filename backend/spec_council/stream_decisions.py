@@ -52,10 +52,11 @@
 не проверяли, — черновик моделей (решение q-007 бекенда). Первая правка записывает их все.
 """
 
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from typing import Literal
 
+from .decisions import adrs_named
 from .models import (
     Choice,
     Decision,
@@ -67,7 +68,7 @@ from .models import (
 )
 from .options import picked, removed_of, sets_of
 from .order import Order, ordered
-from .pipeline import adr_id, choice_entry, question_key
+from .pipeline import adr_id, choice_entry, question_key, related_adrs
 from .scope import kept_of
 from .work import known_decisions, remembered
 
@@ -348,23 +349,33 @@ def approved(stream: Stream) -> Stream:
     готовые на тех же решениях закрепятся (work.kept_outcomes). Пересчёт, который остановился,
     забыт: решения ушли в итоги."""
     shown = {item.question.id: item.ruling for item in shown_of(stream)}
-    decisions = [decision_of(question.id, shown.get(question.id))
-                 for question in stream.scope or []]
+    scope = stream.scope or []
+    selected = {choice.question_id for choice in stream.choices or [] if choice.proposal}
+    catalog = [decision.adr_id for decision in stream.project_decisions or []]
+    decisions = [decision_of(question.id, shown.get(question.id),
+                             related_adrs(scope, selected, question.id), catalog)
+                 for question in scope]
     rulings = {**rulings_of(stream), **shown}
     return stream.model_copy(update={"rulings": list(rulings.values()), "decisions": decisions,
                                      "rechecks": {}, **remembered(stream)})
 
 
-def decision_of(question_id: str, ruling: Ruling | None) -> Decision:
+def decision_of(question_id: str, ruling: Ruling | None,
+                numbers: Mapping[str, str] | None = None,
+                catalog: Sequence[str] = ()) -> Decision:
     """Решение вопроса, каким его видят модели итогов и выгрузка: «почему» — одной строкой, как
     его фиксировал старый фронт, и решения проекта, которые оно заменяет. Без «почему» решения
     нет — ADR без обоснования не бывает (rationale_required): черновик, где его не написали (у
-    противоречия модели его не пишут), — открытый вопрос; открытый вопрос ничего не заменяет."""
+    противоречия модели его не пишут), — открытый вопрос; открытый вопрос ничего не заменяет.
+    У «почему» совета — и какие решения потока оно называет (numbers — номера решений других
+    вопросов, как их видят модели; catalog — номера решений проекта): с правкой отбора их номера
+    сдвигаются (work.known_decisions)."""
     rationale = " ".join(ruling.rationale.split()) if ruling is not None else ""
     if ruling is None or ruling.status == "open" or ruling.option is None or not rationale:
         return Decision(question_id=question_id)
+    adrs = adrs_named(rationale, numbers or {}, catalog) if ruling.rationale_by == "ai" else {}
     return Decision(question_id=question_id, proposal=ruling.option, rationale=rationale,
-                    rationale_by=ruling.rationale_by, replaces=ruling.replaces)
+                    rationale_by=ruling.rationale_by, replaces=ruling.replaces, adrs=adrs)
 
 
 # Как это хранится.

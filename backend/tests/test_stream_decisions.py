@@ -323,6 +323,11 @@ def test_the_judge_corrects_the_councils_rationale_and_it_is_no_problem(store, p
     fixed = edits(council_id, "Q1", CORRECTED, "fixed").json()["decision"]
     assert (fixed["rationale"], fixed["rationaleBy"], fixed["status"]) == (
         CORRECTED, "ai", "fixed")
+    # Номер ADR-n сдвигается с отбором: и проверка, и решение помнят, по какому он вопросу.
+    analyses = stored(store, council_id).analysis.analyses
+    assert next(found.adrs for found in analyses if found.question_id == "Q1") == {"ADR-3": "Q3"}
+    assert approves(council_id).status_code == 200
+    assert stored(store, council_id).decisions[0].adrs == {"ADR-3": "Q3"}
 
 
 def test_a_question_the_council_could_not_pick_for_is_blocked_without_an_option(store, pool,

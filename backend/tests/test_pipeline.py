@@ -800,6 +800,24 @@ def test_the_other_questions_come_with_the_adr_their_choice_becomes():
     assert [(q["id"], q["status"], q["adr_id"]) for q in related] == [("Q1", "unresolved", None)]
 
 
+def test_a_check_remembers_the_questions_of_the_decisions_its_rationale_names():
+    """Номер ADR-n сдвигается с отбором, вопрос — нет: проверка помнит, по какому вопросу каждое
+    решение потока, которое называет её «почему». Свой номер и решение проекта — не такие."""
+    analysis = by_question(checked_by("P1"), checked_by("P2"))
+    judge = by_question(
+        {"status": "validated", "proposal_id": "P1", "validation": {},
+         "rationale": {"text": "Как решает ADR-2, а не ADR-0002.", "source": "ai"}},
+        {"status": "validated", "proposal_id": "P2", "validation": {},
+         "rationale": {"text": "ADR-1 ищет на сервере; ADR-2 и ADR-7 — не о том.",
+                       "source": "ai"}})
+    result, _, _ = check({("decision_analysis", "sol"): analysis,
+                          ("decision_analysis", "fable"): analysis,
+                          ("decision_judge", "fable"): judge},
+                         choices=[("Q1", "P1"), ("Q2", "P2")])
+    assert {found.question_id: found.adrs for found in result.analyses} == {
+        "Q1": {"ADR-2": "Q2"}, "Q2": {"ADR-1": "Q1"}}
+
+
 def test_a_judge_rewrites_a_false_rationale_and_it_is_no_problem():
     """Судья нашёл неправду в «почему» участников и написал исправленное сам: решение проверено,
     без проблемы и правок, а «почему» — судьи. Участники и судья видят карту кода — по ней и

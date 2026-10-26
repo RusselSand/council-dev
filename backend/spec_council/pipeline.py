@@ -90,7 +90,7 @@ from threading import Event, Lock
 from typing import Any, Protocol
 from uuid import uuid4
 
-from .decisions import Analysis, analysis_of, judged_analysis
+from .decisions import Analysis, adrs_named, analysis_of, judged_analysis
 from .decisions import Context as DecisionContext
 from .decisions import as_prompt as analysis_prompt
 from .design import Context as DesignContext
@@ -1106,7 +1106,9 @@ class DecisionRun(CouncilRun[DecisionAnalysis]):
 
     carried — проверка того же выбора по тем же вопросам: её не повторяют, если выбор по
     вопросам, от которых она зависит, тот же (work.carried_analyses), — проверяют только новое.
-    Поэтому каждая проверка помнит, каким был этот выбор (QuestionAnalysis.context).
+    Поэтому каждая проверка помнит, каким был этот выбор (QuestionAnalysis.context), и по каким
+    вопросам решения, которые называет её «почему» (QuestionAnalysis.adrs): номера ADR в
+    перенесённой проверке ставят по новому отбору.
 
     replaced — по вопросу: решения проекта, замену которых решением этого вопроса подтвердил
     человек. Для проверки этого вопроса они уже не действуют — с ними выбор не расходится, и
@@ -1142,7 +1144,7 @@ class DecisionRun(CouncilRun[DecisionAnalysis]):
                                 if decision.status == "active")
         self.scope = scope
         # Решение по n-му вопросу отбора — ADR-n.
-        self.adrs = {question.id: adr_id(n) for n, question in enumerate(scope, 1)}
+        self.adrs = adr_ids(scope)
         self.choices = {choice.question_id: choice.proposal for choice in choices}
         self.entries = {choice.question_id: choice_entry(choice) for choice in choices}
         self.found = found_by_question(proposals, choices)
@@ -1164,9 +1166,11 @@ class DecisionRun(CouncilRun[DecisionAnalysis]):
             else:
                 asked = True
                 verdict = self._analyze(question, offered, selected, known, limits, failures)
+            named = adrs_named(verdict.rationale, self._related_adrs(question),
+                               [decision.adr_id for decision in self.decisions])
             with self._lock:
                 self.state.analyses.append(analysis_of_question(
-                    question, verdict, self.entries, self.replaced.get(question.id, ())))
+                    question, verdict, self.entries, self.replaced.get(question.id, ()), named))
                 self._publish()
         if not asked:
             self._skip(StepName.decision_analysis)
@@ -1183,8 +1187,7 @@ class DecisionRun(CouncilRun[DecisionAnalysis]):
             frozenset(f.id for f in limits if f.label == "risk"),
             frozenset(q.id for q in self.scope if q.id != question.id),
             frozenset(proposal["id"] for proposal in offered), selected, question.id,
-            self.active - frozenset(replaced),
-            frozenset(q["adr_id"] for q in related if q["adr_id"] is not None))
+            self.active - frozenset(replaced), frozenset(self._related_adrs(question).values()))
         accepted = accepted_prompt(self.decisions, replaced)
         values = {
             "idea": self.idea,
@@ -1213,6 +1216,10 @@ class DecisionRun(CouncilRun[DecisionAnalysis]):
     def _offered(self, question: OpenQuestion) -> list[dict]:
         return offered(question, self.fragments, self.found)
 
+    def _related_adrs(self, question: OpenQuestion) -> dict[str, str]:
+        selected = {name for name, proposal in self.choices.items() if proposal is not None}
+        return related_adrs(self.scope, selected, question.id)
+
     def _related(self, question: OpenQuestion) -> dict:
         """Другой вопрос потока, что по нему выбрал человек и номер решения, которым выбор станет:
         на него «почему» и ссылается. У unresolved решения пока нет — и номера."""
@@ -1225,12 +1232,13 @@ class DecisionRun(CouncilRun[DecisionAnalysis]):
 
 
 def analysis_of_question(question: OpenQuestion, verdict: Analysis,
-                         entries: Mapping[str, str],
-                         replaced: Sequence[str] = ()) -> QuestionAnalysis:
+                         entries: Mapping[str, str], replaced: Sequence[str] = (),
+                         adrs: Mapping[str, str] | None = None) -> QuestionAnalysis:
     """Проверка вопроса — и выбор по вопросам, на которые она опирается, как он был при ней
     (entries — выбор по каждому вопросу потока, «Q2: P5»): от которых зависит и где судья велел
     что-то поправить. Там выбрали другое — проверку повторяют (work.holds). replaced — решения
-    проекта, замену которых к ней подтвердили."""
+    проекта, замену которых к ней подтвердили; adrs — решения потока, которые называет её
+    «почему» (decisions.adrs_named)."""
     found = QuestionAnalysis(
         question_id=question.id, verdict=verdict.kind, proposal=verdict.proposal,
         constraint_conflicts=list(verdict.conflicts), risk_ids=list(verdict.risks),
@@ -1240,7 +1248,7 @@ def analysis_of_question(question: OpenQuestion, verdict: Analysis,
                for fix in verdict.fixes],
         project_conflicts=[DecisionClash(adr_id=clash.adr, text=clash.text)
                            for clash in verdict.clashes],
-        replaced=list(replaced))
+        replaced=list(replaced), adrs=dict(adrs or {}))
     return found.model_copy(update={"context": [entries[name] for name in rests_on(found)
                                                 if name in entries]})
 
@@ -1269,6 +1277,19 @@ def offered(question: OpenQuestion, fragments: dict[int, LabeledFragment],
 def adr_id(n: int) -> str:
     """Решение по n-му вопросу отбора: ADR-n — тот же номер, что у карточки на экране."""
     return f"ADR-{n}"
+
+
+def adr_ids(scope: Iterable[OpenQuestion]) -> dict[str, str]:
+    """Номер решения по каждому вопросу отбора: ADR-n — по n-му."""
+    return {question.id: adr_id(n) for n, question in enumerate(scope, 1)}
+
+
+def related_adrs(scope: Iterable[OpenQuestion], selected: Collection[str],
+                 question_id: str) -> dict[str, str]:
+    """Номера решений, которые модели видят у других вопросов, когда проверяют вопрос
+    question_id: у тех, где выбран вариант (selected), — у unresolved решения пока нет."""
+    return {question: number for question, number in adr_ids(scope).items()
+            if question != question_id and question in selected}
 
 
 def decided_context(scope: list[OpenQuestion], decisions: dict[str, Decision],

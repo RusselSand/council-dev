@@ -11,6 +11,7 @@ from spec_council.models import (
     OutcomeDiscovery,
     ProjectDecision,
     QuestionAnalysis,
+    QuestionWork,
     Stream,
 )
 from spec_council.pipeline import (
@@ -18,8 +19,9 @@ from spec_council.pipeline import (
     decisions_key,
     outcome_print,
     project_prints,
+    question_key,
 )
-from spec_council.work import carried_analyses, kept_outcomes
+from spec_council.work import carried_analyses, kept_outcomes, known_decisions
 
 
 def question(n):
@@ -73,6 +75,46 @@ def test_a_check_is_carried_only_to_the_same_confirmed_replacements():
     found = analysis_of_question(question(1), Analysis("validated", "P1"), {"Q1": "Q1: P1"},
                                  ["ADR-0005"])
     assert found.replaced == ["ADR-0005"]
+
+
+def test_a_carried_check_names_decisions_by_the_new_scope():
+    """«Почему» проверки Q2 называет решение по Q3 номером ADR-3; убрали Q1 — то же решение
+    теперь ADR-2, и в перенесённой проверке тоже. Убрали Q3 — номера у его решения нет, и
+    проверку Q2 повторяют."""
+    choices = [Choice(question_id=f"Q{n}", proposal=f"P{n}") for n in (2, 3)]
+    leaning = QuestionAnalysis(question_id="Q2", verdict="validated", proposal="P2",
+                               rationale="ADR-3 уже ищет на сервере, как ADR-0003.",
+                               adrs={"ADR-3": "Q3"})
+    earlier = [QuestionWork(key=question_key(question(2)), choice=choices[0], analysis=leaning)]
+    stream = Stream(group="C", scope=[question(2), question(3)], choices=choices, earlier=earlier)
+    assert carried_analyses(stream, choices) == {"Q2": leaning.model_copy(update={
+        "rationale": "ADR-2 уже ищет на сервере, как ADR-0003.", "adrs": {"ADR-2": "Q3"}})}
+    alone = stream.model_copy(update={"scope": [question(2)], "choices": choices[:1]})
+    assert carried_analyses(alone, choices[:1]) == {}
+    # «Почему», которое решений потока не называет (и у проверок прежней версии), — как есть.
+    plain = leaning.model_copy(update={"rationale": "Так проще.", "adrs": {}})
+    alone = alone.model_copy(update={"earlier": [earlier[0].model_copy(
+        update={"analysis": plain})]})
+    assert carried_analyses(alone, choices[:1]) == {"Q2": plain}
+
+
+def test_a_decision_of_earlier_work_names_decisions_by_the_new_scope():
+    """Решение прежней работы с «почему» совета — с номерами решений по новому отбору; решения,
+    на которое оно ссылается, в отборе нет — прежнее решение не известно. «Почему» человека —
+    его слова: номера в нём не трогают."""
+    choices = [Choice(question_id=f"Q{n}", proposal=f"P{n}") for n in (2, 3)]
+    council = Decision(question_id="Q2", proposal="P2", rationale="Как решает ADR-3.",
+                       rationale_by="ai", adrs={"ADR-3": "Q3"})
+    own = Decision(question_id="Q3", proposal="P3", rationale="Как в ADR-1.",
+                   rationale_by="human")
+    earlier = [QuestionWork(key=question_key(question(2)), choice=choices[0], decision=council),
+               QuestionWork(key=question_key(question(3)), choice=choices[1], decision=own)]
+    stream = Stream(group="C", scope=[question(2), question(3)], choices=choices, earlier=earlier)
+    assert known_decisions(stream) == [
+        council.model_copy(update={"rationale": "Как решает ADR-2.", "adrs": {"ADR-2": "Q3"}}),
+        own]
+    alone = stream.model_copy(update={"scope": [question(2)], "choices": choices[:1]})
+    assert known_decisions(alone) == []
 
 
 def test_a_check_remembers_the_choice_of_the_questions_its_fixes_name():

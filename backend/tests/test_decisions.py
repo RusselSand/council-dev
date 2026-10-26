@@ -7,9 +7,11 @@ from spec_council.decisions import (
     Clash,
     Context,
     Fix,
+    adrs_named,
     analysis_of,
     as_prompt,
     judged_analysis,
+    renumbered,
 )
 from spec_council.slicing import BadAnswer
 
@@ -58,7 +60,7 @@ def test_a_choice_against_a_project_decision_in_force_is_a_conflict():
 def test_a_stream_decision_the_models_see_is_not_a_project_decision():
     """Модели видят у другого вопроса его решение ADR-5: «ADR-5» в расхождении — это оно, а не
     решение проекта ADR-0005; само ADR-0005 — расхождение, как всегда. Решение проекта, которое
-    и в каталоге зовётся «ADR-5», — расхождение и так."""
+    и в каталоге зовётся «ADR-5», — расхождение и так, в каком регистре его ни назови."""
     seen = Context(constraints=frozenset(), risks=frozenset(), questions=frozenset({"Q5"}),
                    proposals=frozenset({"P2"}), selected="P2", decisions=frozenset({"ADR-0005"}),
                    adrs=frozenset({"ADR-5"}))
@@ -71,6 +73,29 @@ def test_a_stream_decision_the_models_see_is_not_a_project_decision():
                     adrs=frozenset({"ADR-5"}))
     found = analysis_of(checked(clashes=[{"adr_id": "ADR-5", "text": "сервер"}]), short)
     assert found.clashes == (Clash("ADR-5", "сервер"),)
+    found = analysis_of(checked(clashes=[{"adr_id": " adr-5 ", "text": "сервер"}]), short)
+    assert found.clashes == (Clash("ADR-5", "сервер"),)
+
+
+def test_a_rationale_remembers_the_questions_of_the_decisions_it_names():
+    """«Почему» называет решения потока номерами ADR-n — по n-му вопросу отбора. Помнит оно, по
+    какому вопросу каждое: номер, которого модели не видели, решение проекта («ADR-0003») и
+    решение проекта, которое и в каталоге зовётся «ADR-2», — не решения потока."""
+    numbers = {"Q1": "ADR-1", "Q2": "ADR-2", "Q3": "ADR-3"}
+    text = "ADR-3 уже держит поиск, как ADR-0003 и ADR-2; ADR-30 и ADR-7 — не о том."
+    assert adrs_named(text, numbers, ["ADR-0003", "adr-2"]) == {"ADR-3": "Q3"}
+    assert adrs_named(None, numbers) == {}
+
+
+def test_a_carried_rationale_names_decisions_by_the_new_scope():
+    """Вопросы отбора сдвинулись — номера в «почему» тоже, все сразу: решение по Q3 было ADR-3, а
+    по Q2 — ADR-2. Номер решения проекта не трогают. Вопроса, на чьё решение «почему» ссылается,
+    в отборе нет — номера нет."""
+    text = "Как ADR-3, а не ADR-2 и не ADR-0003."
+    named = {"ADR-3": "Q3", "ADR-2": "Q2"}
+    assert renumbered(text, named, {"Q2": "ADR-3", "Q3": "ADR-2"}) == (
+        "Как ADR-2, а не ADR-3 и не ADR-0003.", {"ADR-2": "Q3", "ADR-3": "Q2"})
+    assert renumbered(text, named, {"Q2": "ADR-1"}) is None
 
 
 def test_a_participant_recommends_one_of_the_options_or_nothing():

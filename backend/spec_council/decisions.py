@@ -15,9 +15,14 @@ unresolved, сравнивают его варианты и, если один �
 оно с другими решениями потока и проекта. Нашёл неправду — пишет исправленное «почему» сам:
 это не проблема решения, и фиксировать его она не мешает (решение владельца к задаче «…«почему»
 ссылается на ADR, судья сам исправляет неправду»). Другие решения «почему» называет номерами
-ADR: решения потока — ADR-n, решения проекта — как в каталоге.
+ADR: решения потока — ADR-n, решения проекта — как в каталоге. ADR-n — решение по n-му вопросу
+отбора: убрали или добавили вопрос — номер сдвигается, поэтому «почему» помнит, по какому вопросу
+каждое решение, которое оно называет (adrs_named), и в перенесённом «почему» номера ставят по
+новому отбору (renumbered).
 """
 
+import re
+from collections.abc import Collection, Mapping
 from dataclasses import dataclass
 
 from .ideas import reason_of
@@ -30,6 +35,8 @@ RATIONALE_MAX = 2000
 FIX_MAX = 1000
 # Сколько знаков в том, чем вариант расходится с решением проекта.
 CLASH_MAX = 500
+# Номер решения потока в тексте: «ADR-3» — не «ADR-30» и не «ADR-0003».
+ADR_REF = re.compile(r"(?<![\w-])ADR-[1-9]\d*(?![\w-])")
 
 # Ответы участника и судьи — в своих словах (decision_analysis.md, decision_judge.md).
 JUDGED = {"validated": "validated", "conflict": "conflict", "recommended": "recommended",
@@ -127,14 +134,14 @@ def clashes_of(value: object, context: Context) -> tuple[Clash, ...]:
     то же, что «ADR-0007»), и у каждого сказано, чем. Чужой номер или расхождение без сути
     отбрасывается, как чужой номер фрагмента; повтор — первое. Номер решения потока, который
     модели видят у другого вопроса («ADR-7»), — не «ADR-0007»: такое расхождение тоже
-    отбрасывается, если только решение проекта не названо в каталоге так же."""
+    отбрасывается, если только решение проекта не названо в каталоге так же (in_catalog)."""
     found: dict[str, Clash] = {}
     for item in value if isinstance(value, list) else []:
         if not isinstance(item, dict):
             continue
         given = item.get("adr_id")
         if (isinstance(given, str) and given.strip().upper() in context.adrs
-                and given.strip() not in context.decisions):
+                and not in_catalog(given, context.decisions)):
             continue
         named = project_decisions_in([given], context.decisions)
         text = reason_of(item.get("text"))
@@ -144,6 +151,38 @@ def clashes_of(value: object, context: Context) -> tuple[Clash, ...]:
             raise BadAnswer(f"расхождение с {named[0]} длиннее {CLASH_MAX} знаков")
         found[named[0]] = Clash(named[0], text)
     return tuple(sorted(found.values(), key=lambda clash: clash.adr))
+
+
+def in_catalog(name: str, decisions: Collection[str]) -> bool:
+    """Решение проекта названо в каталоге этим номером — без оглядки на регистр: «adr-5» — это
+    «ADR-5», но не «ADR-0005»."""
+    return name.strip().upper() in {decision.upper() for decision in decisions}
+
+
+def adrs_named(text: str | None, numbers: Mapping[str, str],
+               catalog: Collection[str] = ()) -> dict[str, str]:
+    """Решения потока, которые называет «почему»: номер — вопрос, по которому решение принято.
+    numbers — номер решения по вопросу, как его видели модели, когда «почему» писали. Номер,
+    которым в каталоге названо решение проекта (catalog), — его, а не потока."""
+    questions = {number: question for question, number in numbers.items()}
+    return {name: questions[name] for name in ADR_REF.findall(text or "")
+            if name in questions and not in_catalog(name, catalog)}
+
+
+def renumbered(text: str, named: Mapping[str, str],
+               numbers: Mapping[str, str]) -> tuple[str, dict[str, str]] | None:
+    """«Почему» по нынешнему отбору: решения потока, которые оно называет (named, adrs_named), —
+    их нынешними номерами (numbers — номер решения по вопросу), и что оно называет теперь.
+    Вопроса, на чьё решение «почему» ссылается, в отборе нет — номера у решения нет: None."""
+    if any(question not in numbers for question in named.values()):
+        return None
+
+    def number(found: re.Match[str]) -> str:
+        name = found.group(0)
+        return numbers[named[name]] if name in named else name
+
+    return (ADR_REF.sub(number, text),
+            {numbers[question]: question for question in named.values()})
 
 
 def fixes_of(value: object, context: Context, required: bool = True) -> tuple[Fix, ...]:
