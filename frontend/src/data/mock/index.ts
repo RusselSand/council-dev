@@ -874,17 +874,17 @@ export const mockSource: DataSource = {
     councilAt(id);
     return copy(streams.get(id) ?? []);
   },
-  async retryStream(id, streamId) {
+  async retryStream(id, streamId, step) {
     const index = councilAt(id);
     const at = streamAt(id, streamId);
     const list = streams.get(id) ?? [];
     // Шаг не останавливался — не перезапускаем, отвечаем потоком как есть.
-    if (list[at].steps.some((step) => step.state === 'failed')) {
+    if (stepOf(list[at], step).state === 'failed') {
       const now = new Date().toISOString();
-      if (stepOf(list[at], 'options').state === 'failed') optionsStarted(id, streamId);
-      if (stepOf(list[at], 'decisions').state === 'failed') decisionsStarted(id, streamId);
-      if (stepOf(list[at], 'outcomes').state === 'failed') outcomesStarted(id, streamId);
-      list[at] = streamRetried(list[at], now);
+      if (step === 'options') optionsStarted(id, streamId);
+      if (step === 'decisions') decisionsStarted(id, streamId);
+      if (step === 'outcomes') outcomesStarted(id, streamId);
+      list[at] = streamRetried(list[at], step, now);
       councils[index] = streamsChanged(councils[index], list, streamId, now);
     }
     return copy(list[at]);

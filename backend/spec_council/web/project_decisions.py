@@ -23,14 +23,15 @@ from fastapi import APIRouter
 
 from ..background import launched
 from ..chain import begun, replaced, searched
+from ..council_tasks import go, plan_begun, plan_later
 from ..deps import AgentsDep, LauncherDep, ProjectsDep, RepositoriesDep, StoreDep
 from ..models import Council, ProjectDecision
 from ..models import Stream as Stored
-from ..project import catalog_at, catalog_print, checked, own_ids, past_of, records
+from ..project import catalog_at, catalog_print, checked, own_ids, past_of, records, search_of
 from ..projects import Projects
 from ..standing import Folders, passed, stream_standing
 from ..store import council_lock
-from .councils import folders_of
+from .councils import context_of, folders_of
 from .errors import ApiError, ContractRoute
 from .schema import Empty, Schema
 from .streams import StreamAnswer, council_of, shown_of, stream_of
@@ -102,19 +103,30 @@ def search(council_id: str, stream_id: str, store: StoreDep, agents: AgentsDep,
            body: Empty | None = None) -> StreamAnswer:
     """«Искать прошлые решения» и «Искать заново»: модели ищут их заново, в фоне, по каталогу,
     какой он сейчас, — ответов прежних поисков не берут. Модели уже ищут — project_not_ready.
-    Проверка и запуск — под замком советов: два нажатия не запустят два поиска."""
+    Поиск на готовом шаге кончился или, остановившись, сменился поиском, где искать нечего, —
+    шаг снова готов, а с ним могли стать готовыми все потоки: модели строят план задач (решение
+    q-009 бекенда). Проверка и запуск — под замком советов: два нажатия не запустят два
+    поиска."""
+    context = context_of(store, agents, launch, projects, repositories)
+    planned = None
     with council_lock:
         council = council_of(store, council_id)
         stream = shown_of(council, stream_id)
         folders = folders_of(council, projects, repositories)
-        if stream_standing(stream, folders.notes).steps["project"] == "running":
+        state = stream_standing(stream, folders.notes).steps["project"]
+        if state == "running":
             raise not_ready(stream_id)
-        start = searched(council, stream, agents, store, folders.notes, repositories)
+        start = searched(council, stream, agents, store, folders.notes, repositories,
+                         finished=lambda: plan_later(council_id, context))
         council = store.update_council(council_id, {"streams": replaced(council, start.stream)}) \
             or council
+        if start.pipeline is None and state == "failed":
+            council, planned = plan_begun(council, context)
     if start.pipeline is not None and not launched(launch, start.pipeline, start.report):
         raise ApiError(500, "internal",
                        "Сервер останавливается — прошлые решения не начали искать")
+    # Не отдался план — записан упавшим: его запускают снова на «Задачах».
+    go(launch, planned)
     return StreamAnswer(stream=stream_of(council, shown_of(council, stream_id), folders))
 
 
@@ -124,13 +136,16 @@ def approve(council_id: str, stream_id: str, body: Selection, store: StoreDep,
             repositories: RepositoriesDep) -> StreamAnswer:
     """Отбор прошлых решений. Шаг ещё не пройден (ждал вас или остановился) — он готов, и модели
     начинают собирать вопросы, в фоне; уже пройден — меняется только отбор, и шаг снова готов,
-    если поиск на нём остановился. Модели ещё ищут решения — project_not_ready. Проверка и
+    если поиск на нём остановился: с ним могли стать готовыми все потоки, и модели строят план
+    задач (решение q-009 бекенда). Модели ещё ищут решения — project_not_ready. Проверка и
     запуск — под замком советов: два нажатия не запустят два хода."""
+    start = planned = None
     with council_lock:
         council = council_of(store, council_id)
         stream = shown_of(council, stream_id)
         folders = folders_of(council, projects, repositories)
-        if stream_standing(stream, folders.notes).steps["project"] == "running":
+        state = stream_standing(stream, folders.notes).steps["project"]
+        if state == "running":
             raise not_ready(stream_id)
         changes: dict = {"project_decisions": chosen_of(stream, body.selected)}
         if stream.decisions_search is not None:
@@ -138,15 +153,19 @@ def approve(council_id: str, stream_id: str, body: Selection, store: StoreDep,
             changes["decisions_search"] = stream.decisions_search.model_copy(
                 update={"checks": None, "reopened": False})
         ready = stream.model_copy(update=changes)
-        start = None
         if not passed(stream):
             start = begun(council, ready, "questions", agents, store, folders.notes,
                           repositories)
             ready = start.stream
         council = store.update_council(council_id, {"streams": replaced(council, ready)}) \
             or council
+        if passed(stream) and state == "failed":
+            council, planned = plan_begun(
+                council, context_of(store, agents, launch, projects, repositories))
     if start is not None and not launched(launch, start.pipeline, start.report):
         raise ApiError(500, "internal", "Сервер останавливается — вопросы не начали собирать")
+    # Не отдался план — записан упавшим: его запускают снова на «Задачах».
+    go(launch, planned)
     return StreamAnswer(stream=stream_of(council, shown_of(council, stream_id), folders))
 
 
@@ -174,7 +193,7 @@ def decisions_of(council: Council, stream: Stored, projects: Projects,
     """Каталог решений проекта, прошлые решения с галочками (project.checked), искали ли их и
     что учитывается. Каталога нет — нет и решений."""
     taken = [decision.adr_id for decision in stream.project_decisions or []]
-    searched_before = stream.decisions_search is not None
+    searched_before = search_of(stream) is not None
     catalog = catalog_of(council, stream, projects, folders)
     if catalog is None:
         return ProjectDecisions(catalog=None, decisions=[], searched=searched_before,
@@ -189,9 +208,10 @@ def catalog_of(council: Council, stream: Stored, projects: Projects,
                folders: Folders) -> DecisionCatalog | None:
     """Папка документации проекта, как её вписали в проект, и сколько в ней решений. Совет без
     проекта, у проекта нет папки или она больше не годится — каталога нет. Сколько решений и со
-    следом в коде — как их видел поиск моделей; поиска не было, он идёт или остановился —
-    сколько прошлых решений в каталоге сейчас, след ищет только поиск. Сколько их сейчас — всегда
-    по каталогу; поиск видел его не таким (отпечаток не тот) — каталог изменился."""
+    следом в коде — как их видел поиск моделей; поиска не было (или искать было нечего), он идёт
+    или остановился — сколько прошлых решений в каталоге сейчас, след ищет только поиск. Сколько
+    их сейчас — всегда по каталогу; поиск видел его не таким (отпечаток не тот) — каталог
+    изменился."""
     project = projects.get_project(council.project) if council.project else None
     if project is None or not project.notes or folders.notes is None:
         return None
@@ -199,7 +219,7 @@ def catalog_of(council: Council, stream: Stored, projects: Projects,
     found = catalog_at(notes)
     own = own_ids(stream, notes)
     current = len(records(found, {}, own)) if found is not None else 0
-    search = stream.decisions_search
+    search = search_of(stream)
     if search is None or search.state != "done":
         return DecisionCatalog(path=project.notes, total=current, traced=0, current=current,
                                changed=False)

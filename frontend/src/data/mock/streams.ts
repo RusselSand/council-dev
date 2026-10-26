@@ -585,13 +585,14 @@ export const notesApproved = (stream: Stream, count: number | null, now: string)
  * «Запустить снова» — шаг, который остановился, запускается снова: модели, которые уже ответили, заново не работают —
  * их ответы сохранены и второй раз не оплачиваются, как в макете. Шаг идёт снова с первой части, где ответили не все
  * (модели совета или судья): её модели работают заново, модели следующих частей ждут своей очереди; пересчёты решений,
- * что шли, снимаются — их работу делает этот запуск. В моках шаг не кончается. Шага с ошибкой нет — поток как есть.
+ * что шли, снимаются — их работу делает этот запуск. В моках шаг не кончается. Шаг retried не остановился — поток как
+ * есть.
  */
-export function streamRetried(stream: Stream, now: string): Stream {
+export function streamRetried(stream: Stream, retried: Step, now: string): Stream {
   return {
     ...stream,
     steps: stream.steps.map((step): StreamStep => {
-      if (step.state !== 'failed') return step;
+      if (step.step !== retried || step.state !== 'failed') return step;
       const answered = (run: Run) => run.state === 'done' || run.state === 'skipped';
       const from = step.progress.findIndex((phase) => !phase.runs.every(answered));
       const progressNow = step.progress.map((phase, i) => ({

@@ -224,6 +224,12 @@ def searches(council_id, stream_id="A", body=None):
                        json={} if body is None else body)
 
 
+def retries(council_id, step=None, stream_id="A"):
+    """«Запустить снова» у шага step; без него — тело пустое."""
+    return client.post(f"/api/councils/{council_id}/streams/{stream_id}/retry",
+                       json={} if step is None else {"step": step})
+
+
 def approves(council_id, selected, stream_id="A"):
     return client.post(f"/api/councils/{council_id}/streams/{stream_id}/project-decisions/approve",
                        json={"selected": list(selected)})
@@ -588,6 +594,61 @@ def test_a_failed_search_on_a_done_step_stops_only_the_step(store, projects, rep
     steps = steps_of(approves(council_id, []).json()["stream"])
     assert (steps["project"]["state"], steps["project"]["note"]) == ("done", "без прошлых решений")
     assert steps["questions"]["state"] == "waiting" and pool.jobs == []
+
+
+def test_a_search_while_the_catalog_is_empty_keeps_the_search_number_and_the_checks(
+        store, projects, repos, pool, agents):
+    """Каталог на время опустел, а искали заново — искать нечего: поиска для человека нет, а
+    номер поиска и галочки поток помнит. Каталог вернулся — новый поиск не берёт ответов первого,
+    и у решений, что нашлись снова, галочки те же."""
+    council_id = at_questions(store, projects, repos, pool, agents, selected=["ADR-0002"])
+    first = list(agents.keys)
+    for note in PAST:
+        path_of(repos / DOCS, note).unlink()
+    project = steps_of(searches(council_id).json()["stream"])["project"]
+    assert (project["state"], project["note"], project["progress"]) == (
+        "done", "учтено ADR-0002", [])
+    assert pool.jobs == []
+    found = decisions_of(council_id)
+    assert (found["catalog"], found["searched"], found["taken"], found["decisions"]) == (
+        catalog(0), False, ["ADR-0002"], [])
+
+    for note in PAST:                                            # каталог вернулся
+        put(repos, note)
+    assert searches(council_id).status_code == 200
+    pool.run()
+    assert not set(agents.keys[len(first):]) & set(first)
+    assert stored(store, council_id).decisions_search.search == 2
+    assert checks_of(council_id) == [("ADR-0001", False), ("ADR-0002", True)]
+
+
+def test_with_two_failed_steps_the_retry_runs_the_step_it_names(store, projects, repos, pool,
+                                                                agents):
+    """Вопросы остановились, и поиск заново на готовом шаге — тоже: «Запустить снова» запускает
+    тот шаг, у которого его нажали, а шаг, который не остановился, — не запускает."""
+    council_id = streaming(store, project=documented(projects, repos, PAST))
+    searches(council_id)
+    pool.run()
+    agents.failing = {"sol", "fable"}
+    approves(council_id, ["ADR-0001"])
+    pool.run()                                                   # вопросы остановились
+    searches(council_id)
+    pool.run()                                                   # и поиск заново — тоже
+    steps = steps_of(stream_of(council_id))
+    assert (steps["project"]["state"], steps["questions"]["state"]) == ("failed", "failed")
+
+    agents.failing = set()
+    steps = steps_of(retries(council_id, "questions").json()["stream"])
+    assert (steps["project"]["state"], steps["questions"]["state"]) == ("failed", "running")
+    pool.run()
+    steps = steps_of(retries(council_id, "project").json()["stream"])
+    assert (steps["project"]["state"], steps["questions"]["state"]) == ("running", "waiting")
+    pool.run()
+    steps = steps_of(stream_of(council_id))
+    assert (steps["project"]["state"], steps["questions"]["state"]) == ("done", "waiting")
+    assert steps_of(retries(council_id, "options").json()["stream"]) == steps
+    assert pool.jobs == []
+    assert error_of(retries(council_id, "nope")) == (400, "bad_request")
 
 
 def test_a_council_of_the_old_version_can_search_again(store, projects, repos, pool, agents):

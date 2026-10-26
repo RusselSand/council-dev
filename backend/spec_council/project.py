@@ -16,7 +16,7 @@ from collections.abc import Collection, Iterable, Mapping, Sequence
 from pathlib import Path
 
 from .export import export_in
-from .models import CodeTrail, ProjectDecision, RepositoryScan, Stream
+from .models import CodeTrail, DecisionsSearch, ProjectDecision, RepositoryScan, Stream
 from .notes import Catalog, NotesError, declared_issues, issues_in
 from .repository import RepositoryError, git_bytes, has_commit
 from .repository import text_of as reason_text
@@ -261,6 +261,13 @@ def catalog_prompt(catalog: Sequence[ProjectDecision]) -> list[dict]:
 
 
 # Отбор на «Решениях проекта»: прошлые решения из поиска моделей и галочки у них.
+
+def search_of(stream: Stream) -> DecisionsSearch | None:
+    """Поиск прошлых решений, где работали модели. Не искали или искать было нечего
+    (DecisionsSearch.empty) — None: для человека поиска не было."""
+    search = stream.decisions_search
+    return search if search is not None and not search.empty else None
+
 
 def past_of(stream: Stream) -> list[ProjectDecision]:
     """Прошлые решения, которые совет счёл относящимися к идее, — из готового поиска моделей;

@@ -1,5 +1,5 @@
 import type { Brief } from '../domain/brief';
-import type { CouncilFields, CouncilSummary } from '../domain/council';
+import type { CouncilFields, CouncilSummary, Step } from '../domain/council';
 import type { DecisionEdit, DecisionsRound, StreamDecision } from '../domain/decisions';
 import type { Model } from '../domain/model';
 import type { NotesExport } from '../domain/notes';
@@ -66,8 +66,11 @@ export interface DataSource {
   approveResearch(id: string): Promise<CouncilSummary>;
   /** GET /api/councils/<id>/streams — потоки совета с шагами; до «Потоков» — пусто. */
   listStreams(id: string): Promise<Stream[]>;
-  /** POST /api/councils/<id>/streams/<streamId>/retry — «Запустить снова» шаг, который остановился; ответ — поток. */
-  retryStream(id: string, streamId: string): Promise<Stream>;
+  /**
+   * POST /api/councils/<id>/streams/<streamId>/retry — «Запустить снова» шаг step, который остановился (шагов с ошибкой
+   * у потока бывает два); ответ — поток.
+   */
+  retryStream(id: string, streamId: string, step: Step): Promise<Stream>;
   /** GET /api/councils/<id>/streams/<streamId>/project-decisions — каталог и прошлые решения потока. */
   getProjectDecisions(id: string, streamId: string): Promise<ProjectDecisions>;
   /**

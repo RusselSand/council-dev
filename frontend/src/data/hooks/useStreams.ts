@@ -1,4 +1,4 @@
-import type { State } from '../../domain/council';
+import type { State, Step } from '../../domain/council';
 import type { Stream } from '../../domain/stream';
 import { source } from '../config';
 import { ApiError } from '../errors';
@@ -42,15 +42,15 @@ function staleOnMissing(error: unknown) {
 }
 
 /**
- * «Запустить снова» — POST /api/councils/<id>/streams/<streamId>/retry: шаг, который остановился, запускается снова;
- * ответ — поток. Он сразу встаёт на место прежнего в потоках совета; потоки и список советов перезапрашиваются: у шага
- * и совета новое состояние.
+ * «Запустить снова» — POST /api/councils/<id>/streams/<streamId>/retry: шаг step, который остановился, запускается
+ * снова; ответ — поток. Он сразу встаёт на место прежнего в потоках совета; потоки и список советов перезапрашиваются: у
+ * шага и совета новое состояние.
  */
-export function useRetryStream(): Mutation<[id: string, streamId: string], Stream> {
+export function useRetryStream(): Mutation<[id: string, streamId: string, step: Step], Stream> {
   return useMutation(
-    async (id: string, streamId: string) => {
+    async (id: string, streamId: string, step: Step) => {
       try {
-        return await source.retryStream(id, streamId);
+        return await source.retryStream(id, streamId, step);
       } catch (error) {
         staleOnMissing(error);
         throw error;

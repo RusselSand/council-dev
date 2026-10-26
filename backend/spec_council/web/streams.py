@@ -20,6 +20,7 @@ from fastapi import APIRouter
 
 from ..background import halt, launched
 from ..chain import WORKS, idea_of, recheck_runs, replaced, retried
+from ..council_tasks import go, plan_begun, plan_later
 from ..deps import AgentsDep, LauncherDep, ProjectsDep, RepositoriesDep, StoreDep
 from ..groups import stream_group
 from ..models import Council, StepName
@@ -27,7 +28,7 @@ from ..models import Stream as Stored
 from ..notes import NotesError
 from ..options import counted
 from ..order import placed
-from ..project import decisions_in
+from ..project import decisions_in, search_of
 from ..standing import (
     STEP_RUNS,
     STEP_STOPPED,
@@ -51,10 +52,10 @@ from ..stream_decisions import order_of, rechecking_questions
 from ..stream_notes import retried as retranslated
 from ..stream_notes import written_draft
 from ..stream_outcomes import counted as approved_outcomes
-from .councils import folders_of, missing
+from .councils import context_of, folders_of, missing
 from .errors import ApiError, ContractRoute, not_found
 from .runs import StepRun, judge_of, step_runs_of
-from .schema import Empty, Schema
+from .schema import Schema
 
 router = APIRouter(route_class=ContractRoute, tags=["streams"])
 
@@ -102,6 +103,13 @@ class StreamAnswer(Schema):
     stream: Stream
 
 
+class Retry(Schema):
+    """Какой шаг запустить снова — тот, у которого нажали «Запустить снова»; не назван — первый
+    шаг с ошибкой."""
+
+    step: Step | None = None
+
+
 @router.get("/councils/{council_id}/streams")
 def list_streams(council_id: str, store: StoreDep, projects: ProjectsDep,
                  repositories: RepositoriesDep) -> StreamList:
@@ -115,16 +123,23 @@ def list_streams(council_id: str, store: StoreDep, projects: ProjectsDep,
 @router.post("/councils/{council_id}/streams/{stream_id}/retry")
 def retry_stream(council_id: str, stream_id: str, store: StoreDep, agents: AgentsDep,
                  launch: LauncherDep, projects: ProjectsDep, repositories: RepositoriesDep,
-                 body: Empty | None = None) -> StreamAnswer:
+                 body: Retry | None = None) -> StreamAnswer:
     """Шаг потока, который остановился, — заново, в фоне: модели, которые уже ответили, заново
-    не работают; у «Документации» — перевод заметок. Шага с ошибкой нет — в ответ поток как есть.
-    Проверка и запуск — под замком советов: два нажатия не запустят два хода."""
+    не работают; у «Документации» — перевод заметок. Шаг называет тело: шагов с ошибкой бывает
+    два (chain.retried). Шаг не остановился — в ответ поток как есть. Работать моделям нечего, и
+    шаг снова готов («Решения проекта», где искали заново) — с ним могли стать готовыми все
+    потоки: модели строят план задач (решение q-009 бекенда). Проверка и запуск — под замком
+    советов: два нажатия не запустят два хода."""
+    step = body.step if body is not None else None
+    context = context_of(store, agents, launch, projects, repositories)
+    planned = None
     with council_lock:
         council = council_of(store, council_id)
         stream = shown_of(council, stream_id)
         folders = folders_of(council, projects, repositories)
-        started = retried(council, stream, agents, store, folders.notes, repositories)
-        if started is None:
+        started = retried(council, stream, agents, store, folders.notes, repositories, step=step,
+                          finished=lambda: plan_later(council_id, context))
+        if started is None and step in (None, "notes"):
             try:
                 started = retranslated(council, stream, folders.notes, agents, store)
             except NotesError as exc:
@@ -133,6 +148,8 @@ def retry_stream(council_id: str, stream_id: str, store: StoreDep, agents: Agent
         if started is not None:
             council = store.update_council(council_id, {
                 "streams": replaced(council, started.stream)}) or council
+            if started.pipeline is None:
+                council, planned = plan_begun(council, context)
     # «Решения» запустили снова — пересчёты решений, что шли, ему не нужны: он проверит сам.
     if started is not None:
         for run in recheck_runs(stream) - recheck_runs(started.stream):
@@ -140,6 +157,8 @@ def retry_stream(council_id: str, stream_id: str, store: StoreDep, agents: Agent
     if started is not None and started.pipeline is not None \
             and not launched(launch, started.pipeline, started.report):
         raise ApiError(500, "internal", "Сервер останавливается — шаг не запущен снова")
+    # Не отдался план — записан упавшим: его запускают снова на «Задачах».
+    go(launch, planned)
     return StreamAnswer(stream=stream_of(council, shown_of(council, stream_id), folders))
 
 
@@ -276,9 +295,9 @@ def note_of(stream: Stored, step: Step, state: State, notes: str | None) -> str:
 
 
 def project_note(stream: Stored, done: bool, notes: str | None) -> str:
-    """Готовы — что учтено; ждут вас — что нашли модели в каталоге решений проекта. Поиска нет —
-    прошлые решения ищут по кнопке: сколько их в каталоге; нет — искать нечего (решение q-005
-    бекенда)."""
+    """Готовы — что учтено; ждут вас — что нашли модели в каталоге решений проекта. Поиска нет
+    (или искать было нечего) — прошлые решения ищут по кнопке: сколько их в каталоге; нет —
+    искать нечего (решение q-005 бекенда)."""
     if done:
         chosen = [decision.adr_id for decision in stream.project_decisions or []]
         if not chosen:
@@ -286,7 +305,7 @@ def project_note(stream: Stored, done: bool, notes: str | None) -> str:
         return f"{'учтено' if len(chosen) == 1 else 'учтены'} {', '.join(chosen)}"
     if notes is None:
         return "у проекта нет папки документации"
-    search = stream.decisions_search
+    search = search_of(stream)
     if search is None:
         count = decisions_in(Path(notes), stream)
         return f"в каталоге решений: {count}" if count else "решений в каталоге нет"

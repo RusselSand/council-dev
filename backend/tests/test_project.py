@@ -369,12 +369,13 @@ def test_past_decisions_are_selected_by_the_button_on_the_step(agents, projects)
     assert '"status": "under_review"' in accepted                  # статус — и дальше
 
 
-@pytest.mark.parametrize(("other", "searched"), [(True, 2), (False, None)])
+@pytest.mark.parametrize(("other", "searched"), [(True, (2, False)), (False, (0, True))])
 def test_only_an_export_to_this_catalog_makes_its_decisions_the_streams_own(
         agents, projects, repos, other, searched):
     council_id = at_project(projects, offline=agents)          # отбор упал: моделей нет
     # Поток выгружал ADR-0001 и ADR-0002. В этот каталог — они его, прошлых решений нет; в
-    # другой (папку документации сменили) — здесь под теми номерами чужие решения, и их отбирают.
+    # другой (папку документации сменили) — здесь под теми номерами чужие решения, и их отбирают;
+    # отбирать нечего — поиск пустой (DecisionsSearch.empty).
     root = repos / "old" if other else (repos / NOTES).resolve()
     record = NotesExport(run="n1", outcomes="o1", language="Russian", root=str(root),
                          notes=[ExportedNote(key=f"a:{n}", id=f"ADR-000{n}", type="adr",
@@ -386,7 +387,7 @@ def test_only_an_export_to_this_catalog_makes_its_decisions_the_streams_own(
         for s in store.get_council(council_id).streams]})
     assert retries(council_id).status_code == 200
     search = streams_of(council_id)["C"].decisions_search
-    assert (search.catalog if search else None) == searched
+    assert (search.catalog, search.empty) == searched
 
 
 def test_the_questions_remember_the_catalog_they_were_asked_with(agents, projects, repos):
