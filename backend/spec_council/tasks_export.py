@@ -1,17 +1,25 @@
 """Выгрузка плана задач совета в папку задач проекта: файл на задачу (issue_files.py) с номером
-на весь проект (ISS-0012) — его пишут в финальный коммит задачи. Во frontmatter — итог задачи,
-её решения и задачи, после которых её делать (номерами заметок и задач), в теле — кому и зачем,
-где менять и что там сейчас, что сделать, итог и решения с их текстом, что соблюдать, риски, что
-неясно в реализации, задачи до неё и строка о номере для коммита.
+на весь проект (ISS-0012) — его пишут в финальный коммит задачи.
 
-Связь с итогами односторонняя: файл задачи называет свой итог, а заметка итога задач не
-перечисляет. Выгрузка — как у потока (export.py): черновик, перевод, если язык заметок другой,
-и запись подтверждённого одной сделкой. Повторная выгрузка узнаёт свои задачи по названию и
-сути: прежняя задача — прежний номер и файл, новая — следующий номер после самого большого,
-какой есть в каталоге заметок, прежней выгрузке и папке задач.
+На каждый утверждённый итог — родительская задача (решение владельца к задаче «Бекенд · Итоги →
+родительские задачи…»): в теле — название, поведение и критерии готовности итога, во
+frontmatter — решения, которые итог реализует. Задачи плана этого итога — её подзадачи: во
+frontmatter — родитель, решения и задачи, после которых её делать, в теле — кому и зачем, где
+менять и что там сейчас, что сделать, что соблюдать, риски, что неясно в реализации, задачи до
+неё и строка о номере для коммита. Решения и родитель — только номерами: в репозиторий уходят
+последние тексты ADR, а копия в задаче устарела бы после правки ADR. Проверить, что всё целостно,
+когда подзадачи сделаны, — работа ведущего проекта, а не совета: строки о коммите у родительской
+задачи нет.
+
+Связь односторонняя: подзадача называет родителя, а родительская задача подзадач не перечисляет.
+Выгрузка — как у потока (export.py): черновик, перевод, если язык заметок другой, и запись
+подтверждённого одной сделкой. Повторная выгрузка узнаёт свои задачи по названию и сути (у
+родительской — итога): прежняя задача — прежний номер и файл, новая — следующий номер после
+самого большого, какой есть в каталоге заметок, прежней выгрузке и папке задач.
 
 Задачу везде зовут одним названием — заголовком её файла, и после перевода тоже (aligned).
-Номера потока (Q1, F3…) в тексте задачи — номерами заметок, как и в самих заметках.
+Номера потока (Q1, F3…) в тексте задачи — номерами заметок, как и в самих заметках; задачи плана
+(I1) и итоги плана (A-O1) — номерами задач.
 """
 
 import re
@@ -36,13 +44,14 @@ from .models import (
     IssueNumber,
     LabeledFragment,
     NotePlan,
+    Outcome,
     TaskPlan,
     TasksExport,
     VanishedNote,
 )
 from .notes import Catalog, NotesError, issues_in
 from .questions import same_question
-from .tasks import Names, line, relabeled
+from .tasks import Names, Parent, line, parent_by_name, relabeled
 
 # Название задачи — заголовок её файла: первая строка «# …» (без закрывающих «#»). Первая
 # строка не заголовок (файл правили руками) — названия нет.
@@ -56,13 +65,17 @@ AFTER = re.compile(r"^([ \t]*[-*+][ \t]+(ISS-\d+)[ \t]*:[ \t]*).*$")
 
 def numbered(issues: Sequence[Issue], catalog: Catalog, previous: TasksExport | None,
              reserved: Collection[str] = (), files: Collection[str] = (),
-             occupied: Collection[str] = ()) -> list[IssueNumber]:
-    """Номера задач на весь проект: прежняя задача (по названию и сути) — прежний номер, новая —
-    следующий после самого большого в каталоге заметок, прежней выгрузке и папке задач (files —
-    номера её файлов: новая задача не ляжет в чужой файл). Прежний номер, который занял другой
-    совет (reserved), под ним в папке лежит файл другой задачи (occupied) или его упоминает
-    каталог, хотя прежняя выгрузка его не раздавала, — уже не наш: тогда новый. Свой номер,
-    упомянутый в заметке, — всё ещё свой: заметка на эту задачу и ссылается."""
+             occupied: Collection[str] = (), parents: Sequence[Parent] = ()
+             ) -> list[IssueNumber]:
+    """Номера задач на весь проект — задач плана и родительских (parents: по итогу, их issue_id —
+    имя итога в плане), в этом порядке: так номера задач, записанных, когда родительских ещё не
+    было, не сдвигаются. Прежняя задача (по названию и сути — у родительской это название и
+    поведение итога) — прежний номер, новая — следующий после самого большого в каталоге заметок,
+    прежней выгрузке и папке задач (files — номера её файлов: новая задача не ляжет в чужой файл).
+    Прежний номер, который занял другой совет (reserved), под ним в папке лежит файл другой задачи
+    (occupied) или его упоминает каталог, хотя прежняя выгрузка его не раздавала, — уже не наш:
+    тогда новый. Свой номер, упомянутый в заметке, — всё ещё свой: заметка на эту задачу и
+    ссылается."""
     known = {number.key: number.id for number in previous.numbers} if previous else {}
     ours = set(known.values())
     foreign = {issue for note in catalog.notes.values() for issue in issues_in(note.body)}
@@ -72,19 +85,23 @@ def numbered(issues: Sequence[Issue], catalog: Catalog, previous: TasksExport | 
     used += [int(found.group(1)) for number in (*known.values(), *reserved, *files, *occupied)
              if (found := ISSUE.fullmatch(number))]
     top = max(used, default=0)
-    keys = keyed([f"i:{same_question(issue.title)}" for issue in issues],
-                 [same_question(issue.user_story) for issue in issues], set())
+    tasks = [*((issue.id, issue.title, issue.user_story, issue.outcome_id, "i")
+               for issue in issues),
+             *((parent.name, parent.outcome.title, parent.outcome.behavior, parent.name, "o")
+               for parent in parents)]
+    keys = keyed([f"{kind}:{same_question(title)}" for _, title, _, _, kind in tasks],
+                 [same_question(detail) for _, _, detail, _, _ in tasks], set())
     alias = matched(keys, known)
     numbers: list[IssueNumber] = []
-    for issue, key in zip(issues, keys, strict=True):
+    for (name, title, _, outcome, _), key in zip(tasks, keys, strict=True):
         was = alias.get(key)
         if was is not None and known[was] not in foreign:
             identifier = known[was]
         else:
             top += 1
             identifier = f"ISS-{top:04d}"
-        numbers.append(IssueNumber(key=key, id=identifier, issue_id=issue.id, title=issue.title,
-                                   outcome_ids=[issue.outcome_id]))
+        numbers.append(IssueNumber(key=key, id=identifier, issue_id=name, title=title,
+                                   outcome_ids=[outcome]))
     return numbers
 
 
@@ -96,17 +113,17 @@ def issue_title(issue: Issue, names: Mapping[str, str],
     return renumber(title) if renumber else title
 
 
-def issue_text(issue: Issue, number: str, outcome: tuple[str, str],
-               adrs: Sequence[tuple[str, str]], after: Sequence[tuple[str, str]],
+def issue_text(issue: Issue, number: str, after: Sequence[tuple[str, str]],
                keep: Sequence[str], risks: Sequence[str], words: Mapping[str, str],
                names: Mapping[str, str] | None = None,
                renumber: Callable[[str], str] | None = None,
                phrases: Collection[str] = ()) -> str:
-    """Задача для coding agent: кому и зачем, где менять и что там сейчас, что сделать, на чём
-    стоит, что соблюдать, что неясно и после каких задач (after — с названиями из issue_title), —
-    и номер для финального коммита. Задачи плана текст называет I-n, а агент найдёт их по
+    """Задача для coding agent: кому и зачем, где менять и что там сейчас, что сделать, что
+    соблюдать, что неясно и после каких задач (after — с названиями из issue_title), — и номер
+    для финального коммита. Задачи и итоги плана текст называет I-n и A-O1, а агент найдёт их по
     номерам на весь проект: names, кроме сочетаний phrases («I1 cache»). Номера потока своего
-    итога в тексте модели — номерами заметок: renumber. Итог и решения — как в каталоге."""
+    итога в тексте модели — номерами заметок: renumber. Родитель и решения — только номерами, во
+    frontmatter: текстов решений в задаче нет."""
     names = names or {}
 
     def fixed(value: str) -> str:
@@ -129,8 +146,6 @@ def issue_text(issue: Issue, number: str, outcome: tuple[str, str],
     # Пункт ляжет одной строкой — номера в нём ищут уже в ней: «Пример:\n\n    Q1» станет
     # прозой, а не блоком кода.
     section(words["scope"], (f"- {named(line(item))}" for item in issue.scope))
-    section(words["outcomes"], [f"- {outcome[0]}: {line(outcome[1])}"])
-    section(words["decisions"], (f"- {name}: {line(text)}" for name, text in adrs))
     section(words["keep"], (f"- {line(text)}" for text in keep))
     section(words["risks"], (f"- {line(text)}" for text in risks))
     section(words["open"], (f"- {named(line(item))}" for item in issue.open_questions))
@@ -139,31 +154,55 @@ def issue_text(issue: Issue, number: str, outcome: tuple[str, str],
     return "\n".join(lines)
 
 
+def parent_text(outcome: Outcome, words: Mapping[str, str],
+                renumber: Callable[[str], str] | None = None) -> str:
+    """Родительская задача — итог: название, что меняется и критерии готовности, как их собрали
+    модели; номера потока в них — номерами заметок (renumber). Решения — только номерами, во
+    frontmatter."""
+    def fixed(value: str) -> str:
+        return renumber(value) if renumber else value
 
-def title_of(catalog: Catalog, note_id: str) -> str:
-    """Заметка коротко — её первая строка: у итога это название."""
-    note = catalog.notes.get(note_id)
-    return note.body.strip().split("\n", 1)[0] if note is not None else ""
+    lines = [f"# {fixed(line(outcome.title))}", "", fixed(outcome.behavior.strip())]
+    if outcome.acceptance_criteria:
+        lines += ["", f"## {words['criteria']}",
+                  *(f"- {fixed(line(item))}" for item in outcome.acceptance_criteria)]
+    return "\n".join(lines)
+
+
+def parent_decisions(parent: Parent) -> list[str]:
+    """Решения, которые итог реализует, — номерами заметок, как их записала выгрузка потока."""
+    refs = parent.stream.notes.refs if parent.stream.notes else {}
+    return [refs[name] for name in parent.outcome.adr_ids if name in refs]
 
 
 def drafted_tasks(plan: TaskPlan, fragments: Mapping[int, LabeledFragment], shelf: Shelf,
                   previous: TasksExport | None, words: Mapping[str, str], language: str,
-                  reserved: Collection[str] = (), streams: Mapping[str, Names] | None = None
+                  reserved: Collection[str] = (), streams: Mapping[str, Names] | None = None,
+                  parents: Sequence[Parent] = ()
                   ) -> tuple[list[NotePlan], list[VanishedNote], list[IssueNumber]]:
-    """Черновик выгрузки плана: файл на каждую задачу с номером, текстом и тем, что с ним будет;
-    исчезнувшие файлы прежней выгрузки; номера задач. language — язык заметок: не тот, что у
-    прошлой выгрузки, — прежние тексты не берутся, их напишет перевод заново (файлы, правленные
-    руками, — нет). streams — номера потока у каждого итога (по номеру заметки итога): ими
-    файл задачи называет части потока своего итога."""
+    """Черновик выгрузки плана: файл на каждую задачу плана и на каждую родительскую задачу
+    (parents — утверждённые итоги) с номером, текстом и тем, что с ним будет; исчезнувшие файлы
+    прежней выгрузки; номера задач. language — язык заметок: не тот, что у прошлой выгрузки, —
+    прежние тексты не берутся, их напишет перевод заново (файлы, правленные руками, — нет).
+    streams — номера потока у каждого итога (по имени итога в плане): ими файл задачи называет
+    части потока своего итога. Задача, чьего итога среди утверждённых нет, — NotesError: план
+    устарел."""
     catalog = shelf.catalog
+    by_name = parent_by_name(parents)
+    orphans = sorted({issue.outcome_id for issue in plan.issues if issue.outcome_id not in by_name})
+    if orphans:
+        raise NotesError(f"План стоит на итогах {', '.join(orphans)}, а среди утверждённых их "
+                         "нет: спланируйте снова")
     numbers = numbered(plan.issues, catalog, previous, reserved, shelf.files,
-                       issue_files.occupied(shelf.files))
+                       issue_files.occupied(shelf.files), parents)
     by_issue = {number.issue_id: number for number in numbers}
     filed = {note.id: note for note in previous.notes} if previous else {}
     reuse = previous is not None and previous.language == language
-    # Итог и решения задачи — заметки каталога: какую с тех пор удалили, на ту файл задачи
-    # сослался бы впустую.
-    gone = sorted({name for issue in plan.issues for name in (issue.outcome_id, *issue.adr_ids)
+    # Решения задач — заметки каталога: какую с тех пор удалили, на ту файл задачи сослался бы
+    # впустую.
+    gone = sorted({name for name in [*(adr for issue in plan.issues for adr in issue.adr_ids),
+                                     *(adr for parent in parents
+                                       for adr in parent_decisions(parent))]
                    if name not in catalog.notes})
     if gone:
         raise NotesError(f"В каталоге заметок больше нет {', '.join(gone)}, а план на них стоит: "
@@ -172,83 +211,98 @@ def drafted_tasks(plan: TaskPlan, fragments: Mapping[int, LabeledFragment], shel
     # ту задача сослалась бы впустую. Номер с нулями или без — одна заметка.
     known = {note_key(note_id) for note_id in catalog.notes}
 
-    def names_of(issue: Issue) -> Names | None:
-        names = (streams or {}).get(issue.outcome_id)
-        return names.within(catalog.notes) if names is not None else None
+    def names_of(outcome: str, own: bool = False) -> Names | None:
+        """Номера потока итога. Текст задачи плана писали модели, что читали исследование совета;
+        текст итога (own) — модели потока по его скану: R1 в нём — находка скана потока."""
+        names = (streams or {}).get(outcome)
+        if names is None:
+            return None
+        names = names.within(catalog.notes)
+        return names.own() if own else names
 
-    def renumber(issue: Issue) -> Callable[[str], str] | None:
-        names = names_of(issue)
+    def renumber(outcome: str, own: bool = False) -> Callable[[str], str] | None:
+        names = names_of(outcome, own)
         return (lambda text: names(text, words["quote"])) if names else None
 
-    def kept(issue: Issue) -> frozenset[str]:
-        names = names_of(issue)
+    def kept(outcome: str) -> frozenset[str]:
+        names = names_of(outcome)
         return names.phrases if names is not None else frozenset()
 
-    labels = {name: number.id for name, number in by_issue.items()}
+    def dead_in(text: str, outcome: str) -> set[str]:
+        """Номера заметок, которых в каталоге нет, а файл их называет. Номер в сочетании из
+        исходных текстов потока («ADR-9999 fixture») — их слово, не ссылка."""
+        return {found for found in numbers_in_prose(text, kept(outcome))
+                if not found.startswith("ISS-") and note_key(found) not in known}
 
-    titles = {issue.id: issue_title(issue, labels, renumber(issue), kept(issue))
+    # Задачи и итоги плана тексты называют I-n и A-O1 (план прежней версии — номером заметки
+    # итога), а в файлах — номерами задач.
+    labels = {number.issue_id: number.id for number in numbers}
+    labels |= {name: by_issue[parent.name].id for parent in parents for name in parent.names}
+
+    titles = {issue.id: issue_title(issue, labels, renumber(issue.outcome_id),
+                                    kept(issue.outcome_id))
               for issue in plan.issues}
     notes: list[NotePlan] = []
     dead: set[str] = set()
+
+    def place(number: IssueNumber, text: str, links: Sequence[str],
+              fix: Callable[[str], str] | None) -> None:
+        old = filed.get(number.id)
+        notes.append(planned(Part(number.key, "issue", text, tuple(dict.fromkeys(links))),
+                             {number.key: number.id},
+                             migrated(old, text, fix), old.key if old else None,
+                             shelf, reuse))
+
     for issue in plan.issues:
         number = by_issue[issue.id]
-        # Итог и решения — как в каталоге: номера потока в них ушли при выгрузке, а правку
-        # человека в заметке пересчитывать нельзя. Кроме заметок потока, чья запись — до
-        # номеров заметок (Names.settled): там номера потока остались.
-        names = names_of(issue)
-
-        def settled(note_id: str, text: str, names: Names | None = names) -> str:
-            return names.settled(note_id, text, words["quote"]) if names else text
-
-        outcome = (issue.outcome_id,
-                   settled(issue.outcome_id, title_of(catalog, issue.outcome_id)))
-        adrs = [(name, settled(name, catalog.notes[name].body.strip()))
-                for name in issue.adr_ids if name in catalog.notes]
         after = [(by_issue[name].id, titles[name]) for name in issue.depends_on
                  if name in by_issue]
-        text = issue_text(issue, number.id, outcome, adrs, after,
+        text = issue_text(issue, number.id, after,
                           [fragments[i].text for i in issue.constraint_ids if i in fragments],
                           [fragments[i].text for i in issue.risk_ids if i in fragments], words,
-                          labels, renumber(issue), kept(issue))
-        # Файл задачи — весь, как он ляжет: что написал план (и что встало на место номера без
-        # заметки), ограничения и риски, итог и решения из каталога. Номер в сочетании из
-        # исходных текстов потока («ADR-9999 fixture») — их слово, не ссылка; но только в том,
-        # что из них и из плана: в тексте каталога те же слова — ссылка.
+                          labels, renumber(issue.outcome_id), kept(issue.outcome_id))
         # Названия задач, после которых делать эту, проверяют в их собственных файлах — с
         # сочетаниями их потоков.
-        planned_text = issue_text(issue, number.id, (outcome[0], ""),
-                                  [(name, "") for name, _ in adrs],
-                                  [(name, "") for name, _ in after],
-                                  [fragments[i].text for i in issue.constraint_ids
-                                   if i in fragments],
-                                  [fragments[i].text for i in issue.risk_ids if i in fragments],
-                                  words, labels, renumber(issue), kept(issue))
-        catalog_texts = [outcome[1], *(body for _, body in adrs)]
-        dead |= {found for found in [*numbers_in_prose(planned_text, kept(issue)),
-                                     *(found for body in catalog_texts
-                                       for found in numbers_in_prose(body))]
-                 if not found.startswith("ISS-") and note_key(found) not in known}
-        links = tuple(dict.fromkeys(name for name, _ in (outcome, *adrs, *after)))
-        old = filed.get(number.id)
-        notes.append(planned(Part(number.key, "issue", text, links), {number.key: number.id},
-                             migrated(old, text, renumber(issue)), old.key if old else None,
-                             shelf, reuse))
+        dead |= dead_in(issue_text(issue, number.id, [(name, "") for name, _ in after],
+                                   [fragments[i].text for i in issue.constraint_ids
+                                    if i in fragments],
+                                   [fragments[i].text for i in issue.risk_ids if i in fragments],
+                                   words, labels, renumber(issue.outcome_id),
+                                   kept(issue.outcome_id)), issue.outcome_id)
+        parent = by_issue[by_name[issue.outcome_id].name].id
+        place(number, text, [issue_files.parent_link(parent),
+                             *(name for name in issue.adr_ids if name in catalog.notes),
+                             *(name for name, _ in after)], renumber(issue.outcome_id))
+    for parent in parents:
+        own = renumber(parent.name, own=True)
+        text = parent_text(parent.outcome, words, own)
+        dead |= dead_in(text, parent.name)
+        place(by_issue[parent.name], text, parent_decisions(parent), own)
     if dead:
         raise NotesError(f"В каталоге заметок больше нет {', '.join(sorted(dead))}, а задачи "
                          "плана их называют: верните заметки или выгрузите потоки заново и "
                          "спланируйте снова")
     current = {number.id for number in numbers}
+    gone = [old.id for old in filed.values()
+            if old.id not in current and old.id in shelf.files and old.id not in reserved]
+    edited = {plan_note.id for plan_note in notes if plan_note.action == "edited"}
     # Файлы, что останутся в папке как есть: не из плана или правленные руками. Исчезнувшую
-    # задачу, на которую они ссылаются, удалить нельзя.
-    staying = [note for note in shelf.files.values()
-               if note.id not in current
-               or any(plan_note.id == note.id and plan_note.action == "edited"
-                      for plan_note in notes)]
-    vanished = [VanishedNote(id=old.id, type="issue", text=shelf.files[old.id].body,
-                             linked_from=sorted(note.id for note in staying
-                                                if old.id in note.links and note.id != old.id))
-                for old in filed.values()
-                if old.id not in current and old.id in shelf.files and old.id not in reserved]
+    # задачу, на которую они ссылаются (и как на родителя), удалить нельзя — и она тоже
+    # остаётся. Исчезнувшая подзадача, которую удалят, своего родителя не держит.
+    staying = {note.id for note in shelf.files.values()
+               if (note.id not in current and note.id not in gone) or note.id in edited}
+
+    def linked_from(note_id: str) -> list[str]:
+        return sorted(other for other in staying if other != note_id
+                      and note_id in issue_files.targets(shelf.files[other].links))
+
+    held = [note_id for note_id in gone if note_id not in staying and linked_from(note_id)]
+    while held:
+        staying |= set(held)
+        held = [note_id for note_id in gone if note_id not in staying and linked_from(note_id)]
+    vanished = [VanishedNote(id=note_id, type="issue", text=shelf.files[note_id].body,
+                             linked_from=linked_from(note_id))
+                for note_id in gone]
     return notes, vanished, numbers
 
 

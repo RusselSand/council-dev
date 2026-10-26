@@ -15,6 +15,7 @@ from spec_council.deps import (
     get_repositories,
     get_store,
 )
+from spec_council.issue_files import rendered as issue_rendered
 from spec_council.models import (
     Evidence,
     ExportedNote,
@@ -32,7 +33,7 @@ from spec_council.project import (
     FILES_MAX,
     catalog_print,
     evidence_files,
-    issue_outcomes,
+    issue_decisions,
     records,
     same_selection,
     scanned_commits,
@@ -60,13 +61,16 @@ PAST = [Note("IDEA-0001", "idea", "Ответы находятся без пом
         Note("PRO-0001", "proposal", "Ищем в базе знаний.", ("OQ-0001",)),
         Note("ADR-0001", "adr", "Ищем в базе знаний, потому что там проверенные ответы.",
              ("PRO-0001",)),
-        Note("OUT-0001", "outcome", "Поиск\n\nЗадачи:\n- ISS-0003: Поиск по базе",
-             ("ADR-0001",)),
         Note("OQ-0002", "open_question", "Нужен ли поиск по чату?", ("ADR-0001",)),
         Note("IDEA-0002", "idea", "Счета приходят вовремя."),
         Note("OQ-0003", "open_question", "Кто шлёт счета?", ("IDEA-0002",)),
         Note("PRO-0002", "proposal", "Счета шлёт бот.", ("OQ-0003",)),
         Note("ADR-0002", "adr", "Счета шлёт бот.", ("PRO-0002",))]
+# Задача, что стоит на ADR-0001: её файл — в папке задач проекта, решения — во frontmatter.
+TASKS = [Note("ISS-0003", "issue", "# Поиск по базе", ("parent:ISS-0002", "ADR-0001"))]
+# Итог прежней версии в каталоге — с той же задачей: его совет больше не читает.
+PAST_OUTCOME = ("---\nid: OUT-0001\ntype: outcome\nlinks:\n- ADR-0001\n---\n\n"
+                "Поиск\n\nЗадачи:\n- ISS-0004: Поиск по чату\n")
 
 
 def put(root, notes=PAST):
@@ -74,6 +78,16 @@ def put(root, notes=PAST):
         path = path_of(root, note)
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(rendered(note), encoding="utf-8")
+    (root / "outcomes").mkdir(exist_ok=True)
+    (root / "outcomes" / "OUT-0001.md").write_text(PAST_OUTCOME, encoding="utf-8")
+    return root
+
+
+def tasks(root, notes=TASKS):
+    """Файлы задач — в папку задач root."""
+    root.mkdir(parents=True, exist_ok=True)
+    for note in notes:
+        (root / f"{note.id}.md").write_text(issue_rendered(note), encoding="utf-8")
     return root
 
 
@@ -88,7 +102,10 @@ def test_the_catalog_tells_each_decision_with_its_idea_question_and_status(tmp_p
     assert [(r.adr_id, r.idea, r.question, r.status) for r in found] == [
         ("ADR-0001", "Ответы находятся без помощи людей.", "Где искать ответы?",
          "under_review")]
-    assert issue_outcomes(catalog) == {"ISS-0003": [("OUT-0001", ("ADR-0001",))]}
+    # Решения задачи — из её файла в папке задач; итог прежней версии с задачей ISS-0004 в
+    # каталоге совет не читает.
+    assert issue_decisions(tasks(tmp_path / "issues")) == {"ISS-0003": ("ADR-0001",)}
+    assert issue_decisions(None) == issue_decisions(tmp_path / "нет") == {}
 
 
 def scan_of(*repos, paths=("app.py",)):
@@ -113,24 +130,26 @@ def project_with(tmp_path, *message):
 def test_the_trail_follows_commits_with_issue_numbers_to_the_decisions(tmp_path):
     repo = project_with(tmp_path, "Поиск по базе", "Closes ISS-0003")
     (repo / "app.py").write_text("def find(): return []\n", encoding="utf-8")
-    git(repo, "commit", "-q", "-am", "Мелочь без номера и ISS-0999 чужая")
+    git(repo, "commit", "-q", "-am", "Мелочь без номера, ISS-0999 чужая и ISS-0004 итога")
     catalog = Catalog.load(put(tmp_path / "notes"))
+    decisions = issue_decisions(tasks(tmp_path / "issues"))
     files = evidence_files(scan_of(("", repo)))
     assert files == [(repo, "app.py", "app.py")]
-    trails = trails_of(files, issue_outcomes(catalog))
+    trails = trails_of(files, decisions)
     [trail] = trails["ADR-0001"]
-    assert (trail.issue, trail.outcome, trail.file) == ("ISS-0003", "OUT-0001", "app.py")
+    assert (trail.issue, trail.file) == ("ISS-0003", "app.py")
     assert records(catalog, trails)[0].found_in_code == [trail]
-    assert trails_of([(tmp_path / "нет", "app.py", "app.py")], issue_outcomes(catalog)) == {}
+    assert trails_of([(tmp_path / "нет", "app.py", "app.py")], decisions) == {}
 
 
 def test_an_issue_number_without_zeros_is_the_same_issue(tmp_path):
-    # В итоге руками — «ISS-3», в коммите — «ISS-0003»: одна задача.
+    # В файле задачи руками — «ISS-3», в коммите — «ISS-0003»: одна задача.
     repo = project_with(tmp_path, "Поиск по базе ISS-0003")
-    outcome = Note("OUT-0001", "outcome", "Поиск\n\nЗадачи:\n- ISS-3: Поиск по базе",
-                   ("ADR-0001",))
-    catalog = Catalog.load(put(tmp_path / "notes", [*PAST[:4], outcome]))
-    trails = trails_of(evidence_files(scan_of(("", repo))), issue_outcomes(catalog))
+    issues = tmp_path / "issues"
+    issues.mkdir()
+    (issues / "ISS-3.md").write_text("---\nid: ISS-3\nadrs: [ADR-0001]\n---\n\n# Поиск",
+                                     encoding="utf-8")
+    trails = trails_of(evidence_files(scan_of(("", repo))), issue_decisions(issues))
     assert [trail.issue for trail in trails["ADR-0001"]] == ["ISS-0003"]
 
 
@@ -156,10 +175,10 @@ def test_the_trail_is_read_from_the_scanned_commit(tmp_path):
     scanned = head(repo)
     (repo / "app.py").write_text("def find(): return []\n", encoding="utf-8")
     git(repo, "commit", "-q", "-am", "Поиск по базе ISS-0003")    # уже после скана
-    catalog = Catalog.load(put(tmp_path / "notes"))
+    decisions = issue_decisions(tasks(tmp_path / "issues"))
     files = evidence_files(scan_of(("", repo)))
-    assert trails_of(files, issue_outcomes(catalog), {repo: scanned}) == {}
-    assert "ADR-0001" in trails_of(files, issue_outcomes(catalog))   # с нынешнего — есть
+    assert trails_of(files, decisions, {repo: scanned}) == {}
+    assert "ADR-0001" in trails_of(files, decisions)   # с нынешнего — есть
 
 
 def test_stale_working_copies_do_not_eat_the_file_limit(tmp_path):
@@ -169,47 +188,54 @@ def test_stale_working_copies_do_not_eat_the_file_limit(tmp_path):
     assert evidence_files(scan, {good}) == [(good, "app.py", "good/app.py")]
 
 
-def test_the_search_print_follows_the_issues_that_lead_to_decisions(tmp_path):
+def test_the_search_print_follows_the_decisions_of_the_catalog(tmp_path):
     catalog = Catalog.load(put(tmp_path / "notes"))
     before = catalog_print(catalog)
     assert catalog_print(Catalog.load(put(tmp_path / "notes"))) == before
-    # Новая задача у итога ADR-0001: след в коде к нему теперь другой — отбор устарел.
-    outcome = Note("OUT-0001", "outcome", "Поиск\n\nЗадачи:\n- ISS-0003: Поиск по базе\n"
-                   "- ISS-0004: Поиск по чату", ("ADR-0001",))
-    assert catalog_print(Catalog.load(put(tmp_path / "notes", [*PAST[:4], outcome]))) != before
+    # Итог прежней версии с другими задачами — не каталог решений: отбор не устарел.
+    (tmp_path / "notes" / "outcomes" / "OUT-0001.md").write_text(
+        PAST_OUTCOME.replace("ISS-0004", "ISS-0005"), encoding="utf-8")
+    assert catalog_print(Catalog.load(tmp_path / "notes")) == before
+    # Решение поправили — устарел.
+    edited = [Note(note.id, note.type, f"{note.body} Иначе.", note.links)
+              if note.id == "ADR-0001" else note for note in PAST]
+    assert catalog_print(Catalog.load(put(tmp_path / "notes", edited))) != before
     assert catalog_print(None) == ""
 
 
-def test_only_the_issue_lines_of_an_outcome_declare_its_issues(tmp_path):
-    body = "Поиск, без регресса ISS-0042\n\nЗадачи:\n- ISS-0010: Поправить регресс из ISS-0042"
-    outcome = Note("OUT-0001", "outcome", body, ("ADR-0001",))
-    catalog = Catalog.load(put(tmp_path / "notes", [*PAST[:4], outcome]))
-    assert issue_outcomes(catalog) == {"ISS-0010": [("OUT-0001", ("ADR-0001",))]}
+def test_a_trail_of_the_previous_version_with_its_outcome_still_opens():
+    # След прежней версии помнил ещё итог задачи — совет его больше не читает.
+    found = ProjectDecision.model_validate({"adr_id": "ADR-0001", "found_in_code": [
+        {"issue": "ISS-0003", "outcome": "OUT-0001", "commit": "a91c3e2", "file": "app.py"}]})
+    assert found.found_in_code[0].model_dump() == {"issue": "ISS-0003", "commit": "a91c3e2",
+                                                   "file": "app.py"}
+
+
+def test_only_the_frontmatter_of_a_task_declares_its_decisions(tmp_path):
+    # Текст задачи называет ADR-0002, а стоит она на ADR-0001: решения задачи — во frontmatter.
+    found = [Note("ISS-0010", "issue", "# Поиск\n\nНе как в ADR-0002.", ("ADR-0001",))]
+    assert issue_decisions(tasks(tmp_path / "issues", found)) == {"ISS-0010": ("ADR-0001",)}
 
 
 def test_the_trail_follows_a_file_through_its_renames(tmp_path):
     repo = project_with(tmp_path, "Поиск по базе", "ISS-0003")
     git(repo, "mv", "app.py", "search.py")
     git(repo, "commit", "-q", "-m", "Переименовали")
-    catalog = Catalog.load(put(tmp_path / "notes"))
-    trails = trails_of([(repo, "search.py", "search.py")], issue_outcomes(catalog))
+    trails = trails_of([(repo, "search.py", "search.py")],
+                       issue_decisions(tasks(tmp_path / "issues")))
     assert [(t.issue, t.file) for t in trails.get("ADR-0001", [])] == [("ISS-0003", "search.py")]
 
 
-def test_an_issue_of_several_outcomes_leaves_its_trail_on_the_decisions_of_each(tmp_path):
-    notes = [*PAST[:5],
-             Note("OQ-0004", "open_question", "Как ранжировать ответы?", ("IDEA-0001",)),
-             Note("PRO-0004", "proposal", "Ранжируем по свежести.", ("OQ-0004",)),
-             Note("ADR-0004", "adr", "Ранжируем по свежести.", ("PRO-0004",)),
-             Note("OUT-0002", "outcome", "Ранжирование\n\nЗадачи:\n- ISS-0003: Поиск по базе",
-                  ("ADR-0004",))]
-    catalog = Catalog.load(put(tmp_path / "notes", notes))
-    assert issue_outcomes(catalog) == {"ISS-0003": [("OUT-0001", ("ADR-0001",)),
-                                                    ("OUT-0002", ("ADR-0004",))]}
-    repo = project_with(tmp_path, "Поиск с ранжированием", "ISS-0003")
-    trails = trails_of(evidence_files(scan_of(("", repo))), issue_outcomes(catalog))
-    assert {adr: [(t.issue, t.outcome) for t in found] for adr, found in trails.items()} == {
-        "ADR-0001": [("ISS-0003", "OUT-0001")], "ADR-0004": [("ISS-0003", "OUT-0002")]}
+def test_a_task_on_several_decisions_leaves_its_trail_on_each(tmp_path):
+    # Подзадача и её родительская задача: у каждой — свои решения во frontmatter.
+    files = [Note("ISS-0003", "issue", "# Поиск по базе", ("parent:ISS-0002", "ADR-0001",
+                                                            "ADR-0004")),
+             Note("ISS-0002", "issue", "# Поиск", ("ADR-0002",))]
+    decisions = issue_decisions(tasks(tmp_path / "issues", files))
+    repo = project_with(tmp_path, "Поиск с ранжированием", "ISS-0003, родитель ISS-0002")
+    trails = trails_of(evidence_files(scan_of(("", repo))), decisions)
+    assert {adr: [t.issue for t in found] for adr, found in trails.items()} == {
+        "ADR-0001": ["ISS-0003"], "ADR-0004": ["ISS-0003"], "ADR-0002": ["ISS-0002"]}
 
 
 def test_several_repositories_split_the_map_paths_by_folder(tmp_path):
@@ -275,6 +301,7 @@ def test_a_replaced_decision_is_never_selected_and_one_under_review_is_not_appli
 # нужные там же.
 
 NOTES = "notes"
+ISSUES = "tasks"
 
 
 @pytest.fixture(name="projects")
@@ -287,9 +314,11 @@ def fresh_projects():
 
 @pytest.fixture(name="repos")
 def repositories(tmp_path):
-    """Каталог репозиториев: в нём папка документации проекта — заметки PAST."""
+    """Каталог репозиториев: в нём папка документации проекта — заметки PAST, и папка задач — задачи
+    TASKS."""
     root = tmp_path / "repos"
     put(root / NOTES)
+    tasks(root / ISSUES)
     app.dependency_overrides[get_repositories] = lambda: root
     yield root
     app.dependency_overrides.pop(get_repositories, None)
@@ -306,9 +335,9 @@ def agents(projects, repos):
     app.dependency_overrides.pop(get_notes_of, None)
 
 
-def documented(projects, notes=NOTES, repositories=()) -> str:
-    """Проект с папкой документации notes в каталоге репозиториев."""
-    return projects.create_project(ProjectDraft(name="База знаний", notes=notes,
+def documented(projects, notes=NOTES, repositories=(), issues=ISSUES) -> str:
+    """Проект с папкой документации notes и папкой задач issues в каталоге репозиториев."""
+    return projects.create_project(ProjectDraft(name="База знаний", notes=notes, issues=issues,
                                                 repositories=list(repositories))).id
 
 
@@ -432,6 +461,22 @@ def test_the_trail_comes_from_the_approved_repository_map(agents, projects, repo
     assert search.traced == 1
     catalog = section(agents.prompts["project_decisions_discovery"], "PROJECT ADR CATALOG")
     assert '"issue": "ISS-0003"' in catalog and '"file": "app.py"' in catalog
+    assert '"outcome"' not in catalog
+    found = client.get(f"/api/councils/{council_id}/streams/C/project-decisions").json()[
+        "projectDecisions"]["decisions"]
+    [entry] = next(d["trail"] for d in found if d["id"] == "ADR-0001")
+    assert (entry["issue"], entry["path"]) == ("ISS-0003", "app.py")
+    assert head(repos / "project").startswith(entry["commit"])
+
+
+def test_without_a_task_file_there_is_no_trail(agents, projects, repos):
+    """Решения задачи — в её файле в папке задач: его нет — следа нет, хоть коммит и называет
+    задачу."""
+    (repos / ISSUES / "ISS-0003.md").unlink()
+    council_id = coded(projects, repos)
+    streams_made(council_id)
+    searches(council_id)
+    assert streams_of(council_id)["C"].decisions_search.traced == 0
 
 
 def test_the_trail_is_found_where_the_repositories_folder_is_seen_now(tmp_path):

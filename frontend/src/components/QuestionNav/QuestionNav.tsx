@@ -6,10 +6,8 @@ import styles from './QuestionNav.module.css';
 
 /** Вопрос (или итог) в ряду чипов. */
 export interface QuestionChip {
-  /** id: его получает onShow(). */
+  /** id — подпись на чипе; его получает onShow(). */
   id: string;
-  /** Подпись на чипе, если она не id: номер итога в каталоге («OUT-0024»); нет — id. */
-  label?: string;
   /** Точка перед id — что с вопросом: на «Вариантах» выбор есть — зелёная, нет — жёлтая. */
   dot: DotTone;
   /** Этот вопрос открыт. */
@@ -31,7 +29,7 @@ interface QuestionNavProps {
   disabled: boolean;
   /** Подписи для читалок; по умолчанию — про вопросы. По одному идут итоги — про итоги. */
   labels?: QuestionNavLabels;
-  /** id на чипах моноширинным: номера итогов («OUT-0024»). */
+  /** id на чипах моноширинным: номера итогов («O3»). */
   mono?: boolean;
   onShow: (id: string) => void;
   onPrev: () => void;
@@ -62,7 +60,7 @@ export function QuestionNav({ chips, done, disabled, labels, mono = false, onSho
             disabled={disabled}
             onClick={() => onShow(chip.id)}
           >
-            {chip.label ?? chip.id}
+            {chip.id}
           </Chip>
         ))}
       </div>

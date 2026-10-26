@@ -8,6 +8,7 @@ import pytest
 
 from spec_council.council_tasks import PlanRefused, research_snapshot
 from spec_council.export import Shelf, words_for
+from spec_council.issue_files import rendered as issue_rendered
 from spec_council.models import (
     ExportedNote,
     Issue,
@@ -30,22 +31,40 @@ from spec_council.models import LabeledFragment as Fragment
 from spec_council.notes import Catalog, Note, NotesError
 from spec_council.tasks import (
     Names,
+    Parent,
     adr_entry,
     ideas_text,
     names_of,
     outcome_entry,
     outcome_names,
+    parents_of,
     relabeled,
     research_cited,
     research_texts,
 )
-from spec_council.tasks_export import aligned, drafted_tasks, issue_text
+from spec_council.tasks_export import aligned, issue_text
+from spec_council.tasks_export import drafted_tasks as export_tasks
 from tests.test_council_tasks import (  # noqa: F401 — фикстуры agents и base
     council,
     models,
     ready,
     repositories,
 )
+
+# Итог, на котором стоят задачи этих тестов: поток C, итог O1 — «C-O1» в плане.
+CACHE = Outcome(id="O1", title="Кэш ответов", behavior="Ответы отдаются из кэша.")
+
+
+def parent(name="C-O1", outcome=CACHE, stream=None, names=None):
+    """Родительская задача утверждённого итога; names — как его зовёт план (и план прежней
+    версии)."""
+    return Parent(name, names or (name,), stream or Stream(group="C"), outcome)
+
+
+def drafted_tasks(*args, parents=None, **kwargs):
+    """Черновик выгрузки плана (tasks_export.drafted_tasks) — с родительской задачей итога
+    C-O1."""
+    return export_tasks(*args, **kwargs, parents=[parent()] if parents is None else parents)
 
 
 def test_the_plan_names_a_stream_by_its_title_not_by_its_edited_group(agents, base):
@@ -67,10 +86,10 @@ def test_the_plan_names_a_stream_by_its_title_not_by_its_edited_group(agents, ba
 
 def test_an_issue_file_names_other_issues_by_their_project_numbers():
     issue = Issue(id="I2", title="Выдача после I1", user_story="As a team, I want answers.",
-                  outcome_id="OUT-0001", scope=["Ждать I1, не трогая I10."],
+                  outcome_id="C-O1", scope=["Ждать I1, не трогая I10."],
                   open_questions=["Готова ли I1?"])
-    text = issue_text(issue, "ISS-0008", ("OUT-0001", "Итог"), [], [("ISS-0007", "Индекс")], [],
-                      [], words_for("Russian"), {"I1": "ISS-0007", "I2": "ISS-0008"})
+    text = issue_text(issue, "ISS-0008", [("ISS-0007", "Индекс")], [], [], words_for("Russian"),
+                      {"I1": "ISS-0007", "I2": "ISS-0008"})
     assert text.startswith("# Выдача после ISS-0007")
     assert "- Ждать ISS-0007, не трогая I10." in text
     assert "- Готова ли ISS-0007?" in text
@@ -81,11 +100,11 @@ def test_where_to_change_names_issues_and_stream_parts_like_the_rest_of_the_file
     «Бекенд · Задачи: номера задач в тексте»): задачи плана — номерами на весь проект, номера
     потока — номерами заметок; код — как есть."""
     issue = Issue(id="I2", title="Правка", user_story="As a team, I want answers.",
-                  outcome_id="OUT-0001",
+                  outcome_id="C-O1",
                   main_entry_points=["серверные операции правки из I1", "по Q1: `I1`",
                                      "мутирующие операции\n  из I1 и I2"])
     words = words_for("Russian")
-    text = issue_text(issue, "ISS-0008", ("OUT-0001", "Итог"), [], [], [], [], words,
+    text = issue_text(issue, "ISS-0008", [], [], [], words,
                       {"I1": "ISS-0007", "I2": "ISS-0008"}, Names({"Q1": "OQ-0001"}, {}))
     assert (f"## {words['entry']}\n- серверные операции правки из ISS-0007\n"
             "- по OQ-0001: `I1`\n- мутирующие операции из ISS-0007 и ISS-0008\n") in text
@@ -95,23 +114,22 @@ def test_stream_numbers_in_issue_files_and_plan_inputs_become_note_numbers():
     names = Names({"Q1": "OQ-0001", "P2": "PRO-0002", "ADR-1": "ADR-0001"},
                   {"F4": "Секреты не уходят в репозиторий."})
     issue = Issue(id="I2", title="Выдача по Q1", user_story="As a team, I want answers.",
-                  outcome_id="OUT-0001", scope=["Учесть F4 и `Q1` (F4).", "Как `I2`, но I2."],
+                  outcome_id="C-O1", scope=["Учесть F4 и `Q1` (F4).", "Как `I2`, но I2."],
                   open_questions=["Хватит ли P2?"])
-    # Итог и решения — как в каталоге: номера потока в них ушли при выгрузке, а прошлое решение
-    # проекта и правку человека пересчитывать нельзя.
-    text = issue_text(issue, "ISS-0008", ("OUT-0001", "Итог по Q1"),
-                      [("ADR-0007", "Прошлое решение по Q1")], [], [], [], words_for("Russian"),
-                      {"I2": "ISS-0008"}, names)
+    text = issue_text(issue, "ISS-0008", [], [], [], words_for("Russian"), {"I2": "ISS-0008"},
+                      names)
     assert text.startswith("# Выдача по OQ-0001")
     assert "- Учесть «Секреты не уходят в репозиторий» и `Q1`." in text    # код — как есть
     assert "- Как `I2`, но ISS-0008." in text                    # и номер задачи в коде — тоже
-    assert "- OUT-0001: Итог по Q1" in text
-    assert "- ADR-0007: Прошлое решение по Q1" in text
     assert "- Хватит ли PRO-0002?" in text
-    # Что модели прочтут, то и перепишут в задачи: им — тоже номера заметок.
+    # Итог и решения — только номерами, во frontmatter: их текстов в задаче нет.
+    assert "## Итоги" not in text and "## Решения" not in text
+    # Что модели прочтут, то и перепишут в задачи: им — тоже номера заметок, а итог — номер в
+    # совете.
     outcome = Outcome(id="O1", title="Итог по Q1", behavior="По Q1 (F4).", adr_ids=["ADR-1"],
                       adr_notes={"ADR-1": "Следует из P2"}, acceptance_criteria=["Q1 решён"])
-    entry = outcome_entry(outcome, "OUT-0001", "C", {"ADR-1": "ADR-0001"}, names)
+    entry = outcome_entry(outcome, "C-O1", "C", {"ADR-1": "ADR-0001"}, names)
+    assert (entry["id"], entry["implements"]) == ("C-O1", ["ADR-0001"])
     assert (entry["title"], entry["behavior"], entry["acceptance_criteria"], entry["follows"]) == (
         "Итог по OQ-0001", "По OQ-0001.", ["OQ-0001 решён"], {"ADR-0001": "Следует из PRO-0002"})
     # Сочетание из исходных текстов (бакет Cloudflare R2) — их слово, а R2 в другом месте —
@@ -176,42 +194,32 @@ def test_a_catalog_note_a_written_note_named_stays_a_reference():
 def test_a_note_number_in_a_copied_constraint_is_checked_too(tmp_path):
     # Ограничение из текста группы ложится в файл задачи как есть: ADR-0042 в нём удалён — файл
     # сослался бы впустую.
-    catalog = Catalog({"OUT-0001": Note("OUT-0001", "outcome", "Кэш ответов")})
     limit = Fragment(id=4, text="Следовать ADR-0042.", label="constraint", reason="",
                      council_label="constraint")
     issue = Issue(id="I1", title="Кэш", user_story="As a team, I want answers.",
-                  outcome_id="OUT-0001", constraint_ids=[4])
+                  outcome_id="C-O1", constraint_ids=[4])
     plan = TaskPlan(state="done", run="t1", steps=[], issues=[issue])
     with pytest.raises(NotesError, match="ADR-0042"):
-        drafted_tasks(plan, {4: limit}, Shelf(catalog, tmp_path, tmp_path / "issues"), None,
-                      words_for("Russian"), "Russian", (), {"OUT-0001": Names({}, {})})
+        drafted_tasks(plan, {4: limit}, Shelf(Catalog({}), tmp_path, tmp_path / "issues"), None,
+                      words_for("Russian"), "Russian", (), {"C-O1": Names({}, {})})
 
 
-def test_a_note_number_in_a_copied_decision_is_checked_too(tmp_path):
-    # Решение ложится в файл задачи текстом из каталога: ADR-0042, на который оно ссылается,
-    # удалён — файл сослался бы впустую.
-    catalog = Catalog({"OUT-0001": Note("OUT-0001", "outcome", "Кэш ответов"),
-                       "ADR-0001": Note("ADR-0001", "adr", "Кэш в Redis, как в ADR-0042")})
+def test_a_decision_is_named_only_by_its_number(tmp_path):
+    # Решения задачи — только номерами, во frontmatter (решение владельца к задаче «Бекенд ·
+    # Итоги → родительские задачи…»): текст решения в файл не копируется — после правки ADR он
+    # устарел бы, — и ссылки в этом тексте файл задачи не держат.
+    catalog = Catalog({"ADR-0001": Note("ADR-0001", "adr", "Кэш в Redis, как в ADR-0042")})
     issue = Issue(id="I1", title="Кэш", user_story="As a team, I want answers.",
-                  outcome_id="OUT-0001", adr_ids=["ADR-0001"])
+                  outcome_id="C-O1", adr_ids=["ADR-0001", "ADR-0099"])
     plan = TaskPlan(state="done", run="t1", steps=[], issues=[issue])
-    with pytest.raises(NotesError, match="ADR-0042"):
+    with pytest.raises(NotesError, match="больше нет ADR-0099, а план на них стоит"):
         drafted_tasks(plan, {}, Shelf(catalog, tmp_path, tmp_path / "issues"), None,
-                      words_for("Russian"), "Russian", (), {"OUT-0001": Names({}, {})})
-
-
-def test_source_phrases_do_not_hide_numbers_in_copied_catalog_text(tmp_path):
-    # «ADR-9999 fixture» — слово исходных текстов потока, но решение в каталоге ссылается теми же
-    # словами на ADR-9999, которого больше нет: в тексте из каталога это ссылка.
-    catalog = Catalog({"OUT-0001": Note("OUT-0001", "outcome", "Кэш ответов"),
-                       "ADR-0001": Note("ADR-0001", "adr", "Проверено на ADR-9999 fixture")})
-    issue = Issue(id="I1", title="Кэш", user_story="As a team, I want answers.",
-                  outcome_id="OUT-0001", adr_ids=["ADR-0001"])
-    plan = TaskPlan(state="done", run="t1", steps=[], issues=[issue])
-    names = Names({}, {}, phrases=frozenset({"ADR-9999 fixture"}))
-    with pytest.raises(NotesError, match="ADR-9999"):
-        drafted_tasks(plan, {}, Shelf(catalog, tmp_path, tmp_path / "issues"), None,
-                      words_for("Russian"), "Russian", (), {"OUT-0001": names})
+                      words_for("Russian"), "Russian", (), {"C-O1": Names({}, {})})
+    plan = plan.model_copy(update={"issues": [issue.model_copy(update={"adr_ids": ["ADR-0001"]})]})
+    [file, _], _, _ = drafted_tasks(plan, {}, Shelf(catalog, tmp_path, tmp_path / "issues"),
+                                    None, words_for("Russian"), "Russian", (),
+                                    {"C-O1": Names({}, {})})
+    assert "ADR-0001" in file.links and "Redis" not in file.text and "ADR-0001" not in file.text
 
 
 def test_catalog_notes_the_research_cites_are_references():
@@ -254,13 +262,13 @@ def test_the_stream_scan_maps_give_phrases_and_their_finding_numbers_are_referen
 
 
 def seen_by_plan(notes, refs):
-    """Поток, где решение ADR-0001 (ADR-1) — решение итога, что лёг в заметки (OUT-0001): его
-    текст план видит."""
+    """Поток, где решение ADR-0001 (ADR-1) — решение утверждённого итога: его текст план
+    видит."""
     return Stream(group="C", outcomes=OutcomeDiscovery(state="done", run="o1", steps=[], outcomes=[
         Outcome(id="O1", title="Итог", behavior="Работает.", adr_ids=["ADR-1"])],
         approved_ids=["O1"]),
         notes=NotesExport(run="n1", language="Russian", notes=notes,
-                          refs={**refs, "ADR-1": "ADR-0001", "O1": "OUT-0001"}))
+                          refs={**refs, "ADR-1": "ADR-0001"}))
 
 
 def test_phrases_come_only_from_note_bodies_the_planner_saw():
@@ -276,27 +284,21 @@ def test_phrases_come_only_from_note_bodies_the_planner_saw():
                         approved_ids=["O1"]),
                     notes=NotesExport(run="n1", language="Russian", notes=notes,
                                       refs={"I1": "IDEA-0001", "Q1": "OQ-0001", "P1": "PRO-0001",
-                                            "ADR-1": "ADR-0001", "O1": "OUT-0001"}))
+                                            "ADR-1": "ADR-0001"}))
     phrases = names_of(stream, {}).phrases
     assert "R5 storage" in phrases and "I1 cache" not in phrases
-    # Итог, что в заметки не лёг, в план не вошёл — и его решение план не видел.
-    skipped = ExportedNote(key="a:2", id="ADR-0002", type="adr", generated="Р",
-                           written="Прогрев I2 cache", digest="d", note_numbers=True)
+    # Итог, которого человек не утвердил, в план не вошёл — и его решение план не видел.
+    unapproved = ExportedNote(key="a:2", id="ADR-0002", type="adr", generated="Р",
+                              written="Прогрев I2 cache", digest="d", note_numbers=True)
     stream = stream.model_copy(update={
         "outcomes": stream.outcomes.model_copy(update={"outcomes": [
             *stream.outcomes.outcomes,
-            Outcome(id="O2", title="Прогрев", behavior="Тепло.", adr_ids=["ADR-2"])],
-            "approved_ids": ["O1", "O2"]}),
+            Outcome(id="O2", title="Прогрев", behavior="Тепло.", adr_ids=["ADR-2"])]}),
         "notes": stream.notes.model_copy(update={
-            "notes": [*stream.notes.notes, skipped],
+            "notes": [*stream.notes.notes, unapproved],
             "refs": {**stream.notes.refs, "ADR-2": "ADR-0002"}})})
     assert "I2 cache" not in names_of(stream, {}).phrases
-    # Итог лёг в заметки, но человек его не утвердил — так же.
-    stream = stream.model_copy(update={
-        "outcomes": stream.outcomes.model_copy(update={"approved_ids": ["O1"]}),
-        "notes": stream.notes.model_copy(update={
-            "refs": {**stream.notes.refs, "O2": "OUT-0002"}})})
-    assert "I2 cache" not in names_of(stream, {}).phrases
+    # Утвердили — вошёл: итогов в заметках нет, и в план входит каждый утверждённый.
     assert "I2 cache" in names_of(stream.model_copy(update={
         "outcomes": stream.outcomes.model_copy(update={"approved_ids": ["O1", "O2"]})}),
         {}).phrases
@@ -305,17 +307,17 @@ def test_phrases_come_only_from_note_bodies_the_planner_saw():
 def test_a_prerequisite_title_is_checked_with_its_own_phrases(tmp_path):
     # Задача другого потока зовётся «Прогнать ADR-9999 fixture» — слово её потока: в списке
     # задач, после которых делать эту, это не ссылка на удалённый ADR-9999.
-    catalog = Catalog({"OUT-0001": Note("OUT-0001", "outcome", "Прогон"),
-                       "OUT-0002": Note("OUT-0002", "outcome", "Кэш")})
     first = Issue(id="I1", title="Прогнать ADR-9999 fixture", user_story="As a team, I run.",
-                  outcome_id="OUT-0001")
+                  outcome_id="D-O1")
     second = Issue(id="I2", title="Кэш", user_story="As a team, I want answers.",
-                   outcome_id="OUT-0002", depends_on=["I1"])
+                   outcome_id="C-O1", depends_on=["I1"])
     plan = TaskPlan(state="done", run="t1", steps=[], issues=[first, second])
-    streams = {"OUT-0001": Names({}, {}, phrases=frozenset({"ADR-9999 fixture"})),
-               "OUT-0002": Names({}, {})}
-    files, _, _ = drafted_tasks(plan, {}, Shelf(catalog, tmp_path, tmp_path / "issues"), None,
-                                words_for("Russian"), "Russian", (), streams)
+    streams = {"D-O1": Names({}, {}, phrases=frozenset({"ADR-9999 fixture"})),
+               "C-O1": Names({}, {})}
+    run = Outcome(id="O1", title="Прогон", behavior="Прогоняется.")
+    files, _, _ = drafted_tasks(plan, {}, Shelf(Catalog({}), tmp_path, tmp_path / "issues"), None,
+                                words_for("Russian"), "Russian", (), streams,
+                                parents=[parent("D-O1", run, Stream(group="D")), parent()])
     assert ": Прогнать ADR-9999 fixture" in files[1].text
 
 
@@ -342,14 +344,13 @@ def test_planning_with_an_unreadable_catalog_is_refused(agents, base, tmp_path):
 def test_a_note_number_a_fallback_text_brings_is_checked_too(tmp_path):
     # Заметку вопроса Q1 удалили — встанет его текст «См. ADR-0042», а ADR-0042 тоже удалён:
     # такой файл задачи сослался бы впустую.
-    catalog = Catalog({"OUT-0001": Note("OUT-0001", "outcome", "Кэш ответов")})
-    names = Names({"Q1": "OQ-0001", "O1": "OUT-0001"}, {"Q1": "См. ADR-0042"})
+    names = Names({"Q1": "OQ-0001"}, {"Q1": "См. ADR-0042"})
     issue = Issue(id="I1", title="Кэш", user_story="As a team, I want answers.",
-                  outcome_id="OUT-0001", scope=["Решить Q1."])
+                  outcome_id="C-O1", scope=["Решить Q1."])
     plan = TaskPlan(state="done", run="t1", steps=[], issues=[issue])
     with pytest.raises(NotesError, match="ADR-0042"):
-        drafted_tasks(plan, {}, Shelf(catalog, tmp_path, tmp_path / "issues"), None,
-                      words_for("Russian"), "Russian", (), {"OUT-0001": names})
+        drafted_tasks(plan, {}, Shelf(Catalog({}), tmp_path, tmp_path / "issues"), None,
+                      words_for("Russian"), "Russian", (), {"C-O1": names})
 
 
 def test_a_dependency_list_is_found_when_text_follows_the_commit_line():
@@ -360,7 +361,7 @@ def test_a_dependency_list_is_found_when_text_follows_the_commit_line():
     draft = "# Search\n\n## After the issues\n- ISS-0001: Index v1\n\nCommit ISS-0002."
     second = NotePlan(key="i:2", id="ISS-0002", type="issue", text=draft,
                       generated="# Поиск\n\n## После задач\n- ISS-0001: Индекс\n\nКоммит ISS-0002.",
-                      links=["OUT-0001", "ISS-0001"], action="create")
+                      links=["parent:ISS-0009", "ISS-0001"], action="create")
     edited = draft + "\n\nДописал человек."
     assert aligned([first, second], {"i:1": first.text, "i:2": edited}) == {
         "i:2": edited.replace("Index v1", "Index v2")}
@@ -393,7 +394,7 @@ def test_a_dependency_is_retitled_in_its_list_not_in_another_bullet():
                               "- ISS-0001: Индекс\n\nКоммит ISS-0002.",
                   "# Search\n\n## To do\n- Search\n\n## After the issues\n- ISS-0001: Index v2\n\n"
                   "## Notes\n- ISS-0001: reuse its tokenizer\n\nCommit ISS-0002.",
-                  ["OUT-0001", "ISS-0001"])
+                  ["parent:ISS-0009", "ISS-0001"])
     assert aligned([first, second]) == {second.key: second.text.replace(
         "- ISS-0001: Index v2", "- ISS-0001: Index v1")}
 
@@ -408,7 +409,6 @@ def test_a_finding_of_the_approved_research_is_a_number_not_an_old_term():
 
 
 def test_task_files_keep_stream_terms_and_skip_deleted_notes(tmp_path):
-    catalog = Catalog({"OUT-0001": Note("OUT-0001", "outcome", "Кэш ответов")})
     # «I1 cache» — сочетание из исходных текстов потока: номером задачи плана оно не становится,
     # а ссылка на задачу I1 — становится. Q1 ведёт на OQ-0001, которой в каталоге уже нет, —
     # встаёт сам вопрос.
@@ -416,13 +416,12 @@ def test_task_files_keep_stream_terms_and_skip_deleted_notes(tmp_path):
                       reason="", council_label="constraint")
     names = names_of(Stream(group="C"), {1: bucket})
     assert {"I1 cache", "Прогрев I1"} <= names.phrases
-    names = replace(names, numbers={"Q1": "OQ-0001", "O1": "OUT-0001"},
-                    texts={"Q1": "Где хранить кэш?"})
+    names = replace(names, numbers={"Q1": "OQ-0001"}, texts={"Q1": "Где хранить кэш?"})
     issue = Issue(id="I1", title="Прогреть I1 cache", user_story="As a team, I want answers.",
-                  outcome_id="OUT-0001", scope=["Ответить на Q1.", "Сверить с I1."])
+                  outcome_id="C-O1", scope=["Ответить на Q1.", "Сверить с I1."])
     plan = TaskPlan(state="done", run="t1", steps=[], issues=[issue])
-    [file], _, _ = drafted_tasks(plan, {}, Shelf(catalog, tmp_path, tmp_path / "issues"), None,
-                                 words_for("Russian"), "Russian", (), {"OUT-0001": names})
+    [file, _], _, _ = drafted_tasks(plan, {}, Shelf(Catalog({}), tmp_path, tmp_path / "issues"),
+                                    None, words_for("Russian"), "Russian", (), {"C-O1": names})
     assert file.text.startswith("# Прогреть I1 cache\n")
     assert "- Ответить на «Где хранить кэш?»." in file.text
     assert "- Сверить с ISS-0001." in file.text
@@ -431,23 +430,22 @@ def test_task_files_keep_stream_terms_and_skip_deleted_notes(tmp_path):
 def test_a_legacy_task_file_keeps_its_human_edits_when_numbers_become_note_numbers(tmp_path):
     # Выгрузка задач до номеров заметок оставила в тексте «Q1»; правку человека повторная
     # выгрузка не теряет — номер потока в ней тоже становится номером заметки.
-    catalog = Catalog({"OUT-0001": Note("OUT-0001", "outcome", "Кэш ответов"),
-                       "OQ-0001": Note("OQ-0001", "open_question", "Где хранить кэш?")})
-    names = Names({"Q1": "OQ-0001", "O1": "OUT-0001"}, {})
+    catalog = Catalog({"OQ-0001": Note("OQ-0001", "open_question", "Где хранить кэш?")})
+    names = Names({"Q1": "OQ-0001"}, {})
     issue = Issue(id="I1", title="Кэш", user_story="As a team, I want answers.",
-                  outcome_id="OUT-0001", scope=["Ответить на Q1."])
+                  outcome_id="C-O1", scope=["Ответить на Q1."])
     plan = TaskPlan(state="done", run="t1", steps=[], issues=[issue])
     shelf = Shelf(catalog, tmp_path, tmp_path / "issues")
     words = words_for("Russian")
-    [fresh], _, numbers = drafted_tasks(plan, {}, shelf, None, words, "Russian", (),
-                                        {"OUT-0001": names})
+    [fresh, _], _, numbers = drafted_tasks(plan, {}, shelf, None, words, "Russian", (),
+                                           {"C-O1": names})
     old = fresh.generated.replace("OQ-0001", "Q1")
     previous = TasksExport(run="t0", language="Russian", numbers=numbers, notes=[ExportedNote(
         key=fresh.key, id=fresh.id, type="issue", generated=old,
         written=old + "\nДописал человек про Q1.\n", digest="d")])
     assert fresh.text == fresh.generated
-    [again], _, _ = drafted_tasks(plan, {}, shelf, previous, words, "Russian", (),
-                                  {"OUT-0001": names})
+    [again, _], _, _ = drafted_tasks(plan, {}, shelf, previous, words, "Russian", (),
+                                     {"C-O1": names})
     assert again.text == fresh.generated + "\nДописал человек про OQ-0001.\n"
     # Номер потока — только в правке, текст совета тот же: в прежней записи и он — номер
     # потока, а в нынешней (note_numbers) — слово человека.
@@ -455,29 +453,28 @@ def test_a_legacy_task_file_keeps_its_human_edits_when_numbers_become_note_numbe
         record = TasksExport(run="t0", language="Russian", numbers=numbers, notes=[ExportedNote(
             key=fresh.key, id=fresh.id, type="issue", generated=fresh.generated,
             written=fresh.generated + "\nСм. Q1.\n", digest="d", note_numbers=numbered)])
-        [again], _, _ = drafted_tasks(plan, {}, shelf, record, words, "Russian", (),
-                                      {"OUT-0001": names})
+        [again, _], _, _ = drafted_tasks(plan, {}, shelf, record, words, "Russian", (),
+                                         {"C-O1": names})
         assert again.text == fresh.generated + f"\nСм. {seen}.\n"
 
 
 def test_a_multiline_task_item_is_flattened_before_its_numbers_are_checked(tmp_path):
     # Пункт списка ляжет одной строкой: «Пример:\n\n    Q1» в нём — уже не блок кода, а проза,
     # и номер потока в нём — номер заметки; удалённая заметка так проверку не обходит.
-    catalog = Catalog({"OUT-0001": Note("OUT-0001", "outcome", "Кэш ответов"),
-                       "OQ-0001": Note("OQ-0001", "open_question", "Где хранить кэш?")})
-    names = Names({"Q1": "OQ-0001", "O1": "OUT-0001"}, {})
+    catalog = Catalog({"OQ-0001": Note("OQ-0001", "open_question", "Где хранить кэш?")})
+    names = Names({"Q1": "OQ-0001"}, {})
     shelf = Shelf(catalog, tmp_path, tmp_path / "issues")
     issue = Issue(id="I1", title="Кэш", user_story="As a team, I want answers.",
-                  outcome_id="OUT-0001", scope=["Пример:\n\n    Q1"])
+                  outcome_id="C-O1", scope=["Пример:\n\n    Q1"])
     plan = TaskPlan(state="done", run="t1", steps=[], issues=[issue])
-    [file], _, _ = drafted_tasks(plan, {}, shelf, None, words_for("Russian"), "Russian", (),
-                                 {"OUT-0001": names})
+    [file, _], _, _ = drafted_tasks(plan, {}, shelf, None, words_for("Russian"), "Russian", (),
+                                    {"C-O1": names})
     assert "- Пример: OQ-0001" in file.text
     dead = plan.model_copy(update={"issues": [issue.model_copy(
         update={"scope": ["Пример:\n\n    OQ-0099"]})]})
     with pytest.raises(NotesError, match="OQ-0099"):
         drafted_tasks(dead, {}, shelf, None, words_for("Russian"), "Russian", (),
-                      {"OUT-0001": names})
+                      {"C-O1": names})
 
 
 def test_stream_mappings_survive_another_spelling_of_the_note_number():
@@ -498,7 +495,7 @@ def test_a_dependency_list_is_found_after_its_sections_were_edited():
                               "## Решения\n- ADR-0001: Да\n\n"
                               "## После задач\n- ISS-0001: Индекс\n\nКоммит ISS-0002.",
                   "# Search\n\n## To do\n- Search\n\n## After the issues\n- ISS-0001: Index v2\n\n"
-                  "Commit ISS-0002.", ["OUT-0001", "ADR-0001", "ISS-0001"])
+                  "Commit ISS-0002.", ["parent:ISS-0009", "ADR-0001", "ISS-0001"])
     assert aligned([first, second]) == {second.key: second.text.replace(
         "- ISS-0001: Index v2", "- ISS-0001: Index v1")}
 
@@ -511,7 +508,7 @@ def test_a_title_with_note_numbers_does_not_spread_to_other_files():
     second = NotePlan(key="i:2", id="ISS-0002", type="issue",
                       text="# Поиск\n\n## После задач\n- ISS-0001: Индекс\n\nКоммит.",
                       generated="# Поиск\n\n## После задач\n- ISS-0001: Индекс\n\nКоммит.",
-                      links=["OUT-0001", "ISS-0001"], action="create")
+                      links=["parent:ISS-0009", "ISS-0001"], action="create")
     assert aligned([first, second]) == {}
 
 
@@ -523,17 +520,17 @@ def test_a_task_title_is_only_its_first_line():
     second = NotePlan(key="i:2", id="ISS-0002", type="issue",
                       text="# Поиск\n\n## После задач\n- ISS-0001: Индекс\n\nКоммит.",
                       generated="# Поиск\n\n## После задач\n- ISS-0001: Индекс\n\nКоммит.",
-                      links=["OUT-0001", "ISS-0001"], action="create")
+                      links=["parent:ISS-0009", "ISS-0001"], action="create")
     assert aligned([first, second]) == {}
 
 
 def test_a_note_number_the_plan_wrote_must_still_be_in_the_catalog(tmp_path):
-    catalog = Catalog({"OUT-0001": Note("OUT-0001", "outcome", "Кэш ответов")})
+    # Итоги прежней версии в каталоге (OUT-…) совет не читает: номер итога — уже не заметка.
     issue = Issue(id="I1", title="Кэш", user_story="As a team, I want answers.",
-                  outcome_id="OUT-0001", scope=["Ответить на OQ-0009 и OUT-1."])
+                  outcome_id="C-O1", scope=["Ответить на OQ-0009 и OUT-1."])
     plan = TaskPlan(state="done", run="t1", steps=[], issues=[issue])
-    with pytest.raises(NotesError, match="больше нет OQ-0009, а задачи плана их называют"):
-        drafted_tasks(plan, {}, Shelf(catalog, tmp_path, tmp_path / "issues"), None,
+    with pytest.raises(NotesError, match="больше нет OQ-0009, OUT-1, а задачи плана их называют"):
+        drafted_tasks(plan, {}, Shelf(Catalog({}), tmp_path, tmp_path / "issues"), None,
                       words_for("Russian"), "Russian")
 
 
@@ -564,24 +561,6 @@ def test_stream_findings_and_research_findings_keep_their_own_texts():
     assert legacy.settled("OUT-0001", "по R1") == "по «Поток: ответы в кэше»"
 
 
-def test_a_legacy_note_body_is_renumbered_in_the_task_file(tmp_path):
-    # Итог и решение потока, чьи файлы правили руками до номеров заметок, в каталоге с «Q1»:
-    # в файл задачи они ложатся с номерами заметок.
-    catalog = Catalog({"OUT-0001": Note("OUT-0001", "outcome", "Кэш для Q1"),
-                       "OQ-0001": Note("OQ-0001", "open_question", "Где хранить кэш?"),
-                       "ADR-0001": Note("ADR-0001", "adr", "Кэш в Redis — ответ на Q1")})
-    names = Names({"Q1": "OQ-0001", "O1": "OUT-0001", "ADR-1": "ADR-0001"}, {},
-                  legacy=frozenset({"OUT-0001", "ADR-0001"}))
-    issue = Issue(id="I1", title="Кэш", user_story="As a team, I want answers.",
-                  outcome_id="OUT-0001", adr_ids=["ADR-0001"])
-    plan = TaskPlan(state="done", run="t1", steps=[], issues=[issue])
-    [file], _, _ = drafted_tasks(plan, {}, Shelf(catalog, tmp_path, tmp_path / "issues"), None,
-                                 words_for("Russian"), "Russian", (), {"OUT-0001": names})
-    assert "- OUT-0001: Кэш для OQ-0001" in file.text
-    assert "- ADR-0001: Кэш в Redis — ответ на OQ-0001" in file.text
-    assert "Q1" not in file.text
-
-
 def test_a_source_phrase_protects_only_itself_not_a_longer_word():
     # «I1 cache» — сочетание; «I1 cacheable» — другое слово, и I1 в нём — номер задачи.
     assert relabeled("I1 cache и I1 cacheable", {"I1": "ISS-0001"}, {"I1 cache"}) == (
@@ -589,13 +568,12 @@ def test_a_source_phrase_protects_only_itself_not_a_longer_word():
 
 
 def test_note_numbers_in_task_code_and_links_are_not_references(tmp_path):
-    catalog = Catalog({"OUT-0001": Note("OUT-0001", "outcome", "Кэш ответов")})
     issue = Issue(id="I1", title="Кэш", user_story="As a team, I want answers.",
-                  outcome_id="OUT-0001",
+                  outcome_id="C-O1",
                   scope=["Назвать фикстуру `ADR-9999`, как в [примере](/examples/ADR-9999)."])
     plan = TaskPlan(state="done", run="t1", steps=[], issues=[issue])
-    [file], _, _ = drafted_tasks(plan, {}, Shelf(catalog, tmp_path, tmp_path / "issues"), None,
-                                 words_for("Russian"), "Russian")
+    [file, _], _, _ = drafted_tasks(plan, {}, Shelf(Catalog({}), tmp_path, tmp_path / "issues"),
+                                    None, words_for("Russian"), "Russian")
     assert "`ADR-9999`" in file.text
 
 
@@ -607,7 +585,7 @@ def test_a_section_with_more_than_dependencies_is_not_their_list():
                       text="# Search\n\n## Notes\n- ISS-0001: reuse it\nKeep the old index.\n\n"
                            "Commit ISS-0002.",
                       generated="# Поиск\n\n## После задач\n- ISS-0001: Индекс\n\nКоммит ISS-0002.",
-                      links=["OUT-0001", "ISS-0001"], action="create")
+                      links=["parent:ISS-0009", "ISS-0001"], action="create")
     assert aligned([first, second]) == {}
 
 
@@ -621,7 +599,7 @@ def test_only_the_commit_line_of_the_draft_may_follow_a_dependency_list():
     # коммите в черновике другая, и раздел с этой прозой — не список зависимостей.
     first = file("ISS-0001", "# Index v1\n\nAs a team.\n\nCommit ISS-0001.")
     second = file("ISS-0002", "# Search\n\n## After\n- ISS-0001: Index\n\nCommit ISS-0002.",
-                  ["OUT-0001", "ISS-0001"])
+                  ["parent:ISS-0009", "ISS-0001"])
     edited = "# Search\n\n## Notes\n- ISS-0001: reuse it\n\nNotes for ISS-0002"
     assert aligned([first, second], {second.key: edited}) == {}
 
@@ -634,7 +612,7 @@ def test_titles_are_aligned_though_each_file_words_its_commit_line_its_own_way()
 
     first = file("ISS-0001", "# Индекс\n\nКоммит ISS-0001.")
     second = file("ISS-0002", "# Поиск\n\n## После задач\n- ISS-0001: Индекс\n\nКоммит ISS-0002.",
-                  ["OUT-0001", "ISS-0001"])
+                  ["parent:ISS-0009", "ISS-0001"])
     translated = {first.key: "# Index v1\n\nPut ISS-0001 into the commit.",
                   second.key: "# Search\n\n## After\n- ISS-0001: Index v2\n\n"
                               "Mention ISS-0002 in the final commit."}
@@ -643,15 +621,14 @@ def test_titles_are_aligned_though_each_file_words_its_commit_line_its_own_way()
 
 
 def test_a_note_number_that_is_a_stream_term_is_not_a_dead_reference(tmp_path):
-    catalog = Catalog({"OUT-0001": Note("OUT-0001", "outcome", "Кэш ответов")})
     source = Fragment(id=1, text="Прогонять на ADR-9999 fixture.", label="constraint",
                       reason="", council_label="constraint")
     names = names_of(Stream(group="C"), {1: source})
     issue = Issue(id="I1", title="Кэш", user_story="As a team, I want answers.",
-                  outcome_id="OUT-0001", scope=["Прогнать на ADR-9999 fixture."])
+                  outcome_id="C-O1", scope=["Прогнать на ADR-9999 fixture."])
     plan = TaskPlan(state="done", run="t1", steps=[], issues=[issue])
-    [file], _, _ = drafted_tasks(plan, {}, Shelf(catalog, tmp_path, tmp_path / "issues"), None,
-                                 words_for("Russian"), "Russian", (), {"OUT-0001": names})
+    [file, _], _, _ = drafted_tasks(plan, {}, Shelf(Catalog({}), tmp_path, tmp_path / "issues"),
+                                    None, words_for("Russian"), "Russian", (), {"C-O1": names})
     assert "- Прогнать на ADR-9999 fixture." in file.text
 
 
@@ -665,7 +642,7 @@ def test_dependencies_with_titles_are_aligned_even_if_another_has_none():
     third = NotePlan(key="i:3", id="ISS-0003", type="issue",
                      text="# Search\n\n## After\n- ISS-0001: Index\n- ISS-0002: Cache\n",
                      generated="# Поиск\n\n## После задач\n- ISS-0001: Индекс\n- ISS-0002: Кэш\n",
-                     links=["OUT-0001", "ISS-0001", "ISS-0002"], action="create")
+                     links=["parent:ISS-0009", "ISS-0001", "ISS-0002"], action="create")
     assert aligned([first, second, third]) == {
         third.key: third.text.replace("- ISS-0002: Cache", "- ISS-0002: Cache v2")}
 
@@ -688,7 +665,7 @@ def test_a_section_naming_only_some_prerequisites_is_not_their_list():
     second = file("ISS-0002", "# Cache\n\nAs a team.\n\nCommit ISS-0002.")
     # ISS-0003 ждёт обеих, а список зависимостей убрали: «Notes» с пунктом об одной — не он.
     third = file("ISS-0003", "# Search\n\n## Notes\n- ISS-0001: reuse its tokenizer\n\n"
-                             "Commit ISS-0003.", ["OUT-0001", "ISS-0001", "ISS-0002"])
+                             "Commit ISS-0003.", ["parent:ISS-0009", "ISS-0001", "ISS-0002"])
     assert aligned([first, second, third]) == {}
 
 
@@ -700,18 +677,17 @@ def test_a_task_title_drops_its_closing_hashes():
     second = NotePlan(key="i:2", id="ISS-0002", type="issue",
                       text="# Search\n\n## After\n- ISS-0001: Индекс\n",
                       generated="# Поиск\n\n## После задач\n- ISS-0001: Индекс\n",
-                      links=["OUT-0001", "ISS-0001"], action="create")
+                      links=["parent:ISS-0009", "ISS-0001"], action="create")
     assert aligned([first, second]) == {
         second.key: "# Search\n\n## After\n- ISS-0001: Index\n"}
 
 
 def test_a_hyphenated_word_is_not_a_dead_note_reference(tmp_path):
-    catalog = Catalog({"OUT-0001": Note("OUT-0001", "outcome", "Кэш ответов")})
     issue = Issue(id="I1", title="Кэш", user_story="As a team, I want answers.",
-                  outcome_id="OUT-0001", scope=["Следовать RFC-ADR-9999."])
+                  outcome_id="C-O1", scope=["Следовать RFC-ADR-9999."])
     plan = TaskPlan(state="done", run="t1", steps=[], issues=[issue])
-    [file], _, _ = drafted_tasks(plan, {}, Shelf(catalog, tmp_path, tmp_path / "issues"), None,
-                                 words_for("Russian"), "Russian")
+    [file, _], _, _ = drafted_tasks(plan, {}, Shelf(Catalog({}), tmp_path, tmp_path / "issues"),
+                                    None, words_for("Russian"), "Russian")
     assert "RFC-ADR-9999" in file.text
 
 
@@ -721,7 +697,7 @@ def test_a_dependency_list_under_an_indented_heading_is_found():
     second = NotePlan(key="i:2", id="ISS-0002", type="issue",
                       text="# Search\n\n  ##\tAfter the issues\n- ISS-0001: Index v2\n",
                       generated="# Поиск\n\n## После задач\n- ISS-0001: Индекс\n",
-                      links=["OUT-0001", "ISS-0001"], action="create")
+                      links=["parent:ISS-0009", "ISS-0001"], action="create")
     assert aligned([first, second]) == {second.key: second.text.replace("Index v2", "Index v1")}
 
 
@@ -742,7 +718,7 @@ def test_an_example_in_a_code_block_is_not_a_dependency_list():
     second = NotePlan(key="i:2", id="ISS-0002", type="issue",
                       text="# Search\n\n```md\n## After\n- ISS-0001: Index v2\n## End\n```\n",
                       generated="# Поиск\n\n## После задач\n- ISS-0001: Индекс\n",
-                      links=["OUT-0001", "ISS-0001"], action="create")
+                      links=["parent:ISS-0009", "ISS-0001"], action="create")
     assert aligned([first, second]) == {}
 
 
@@ -776,21 +752,20 @@ def test_a_section_repeating_a_prerequisite_is_not_the_list():
     third = NotePlan(key="i:3", id="ISS-0003", type="issue",
                      text="# Search\n\n## Notes\n- ISS-0001: a\n- ISS-0002: b\n- ISS-0001: c\n",
                      generated="# Поиск\n\n## После задач\n- ISS-0001: Индекс\n- ISS-0002: Кэш\n",
-                     links=["OUT-0001", "ISS-0001", "ISS-0002"], action="create")
+                     links=["parent:ISS-0009", "ISS-0001", "ISS-0002"], action="create")
     assert aligned([first, second, third]) == {}
 
 
 def test_a_deleted_past_decision_named_without_zeros_is_a_dead_reference(tmp_path):
     # «ADR-1» — двусмысленный номер (решение проекта ADR-0001): номером заметки потока он не
     # становится, но по каталогу проверяется, и удалённое решение не проскочит.
-    catalog = Catalog({"OUT-0001": Note("OUT-0001", "outcome", "Кэш ответов")})
     issue = Issue(id="I1", title="Кэш", user_story="As a team, I want answers.",
-                  outcome_id="OUT-0001", scope=["Следовать ADR-1."])
+                  outcome_id="C-O1", scope=["Следовать ADR-1."])
     plan = TaskPlan(state="done", run="t1", steps=[], issues=[issue])
     names = Names({}, {}, frozenset({"ADR-1"}))
     with pytest.raises(NotesError, match="больше нет ADR-1"):
-        drafted_tasks(plan, {}, Shelf(catalog, tmp_path, tmp_path / "issues"), None,
-                      words_for("Russian"), "Russian", (), {"OUT-0001": names})
+        drafted_tasks(plan, {}, Shelf(Catalog({}), tmp_path, tmp_path / "issues"), None,
+                      words_for("Russian"), "Russian", (), {"C-O1": names})
 
 
 def test_a_known_note_number_without_zeros_stays_a_reference():
@@ -807,6 +782,113 @@ def test_titles_and_sections_with_crlf_are_recognized():
     second = NotePlan(key="i:2", id="ISS-0002", type="issue",
                       text="# Search\r\n\r\n##\r\n- ISS-0001: Index v2\r\n",
                       generated="# Поиск\n\n## После задач\n- ISS-0001: Индекс\n",
-                      links=["OUT-0001", "ISS-0001"], action="create")
+                      links=["parent:ISS-0009", "ISS-0001"], action="create")
     assert aligned([first, second]) == {
         second.key: "# Search\r\n\r\n##\r\n- ISS-0001: Index v1\r\n"}
+
+
+# --- родительские задачи (решение владельца к задаче «Бекенд · Итоги → родительские задачи…»)
+
+def outcome_stream():
+    """Поток C, выгруженный в заметки: два утверждённых итога, у первого — решение ADR-1."""
+    measure = Outcome(id="O1", title="Мерило по Q1", behavior="Доля отвеченных видна по Q1.",
+                      adr_ids=["ADR-1"], relies_on_adr_ids=["ADR-2"],
+                      acceptance_criteria=["Доля видна.", "ISS-0042: не регресс."])
+    return Stream(group="C", outcomes=OutcomeDiscovery(
+        state="done", run="o1", steps=[], outcomes=[measure, CACHE.model_copy(update={"id": "O2"})],
+        approved_ids=["O1", "O2"]),
+        notes=NotesExport(run="n1", language="Russian", refs={
+            "I1": "IDEA-0001", "Q1": "OQ-0001", "ADR-1": "ADR-0001", "ADR-2": "ADR-0002"}))
+
+
+def test_each_approved_outcome_is_a_parent_task_and_its_plan_tasks_are_subtasks(tmp_path):
+    stream = outcome_stream()
+    parents = [parent(f"C-{o.id}", o, stream) for o in stream.outcomes.outcomes]
+    catalog = Catalog({note_id: Note(note_id, kind, "Текст") for note_id, kind in (
+        ("OQ-0001", "open_question"), ("ADR-0001", "adr"), ("ADR-0002", "adr"))})
+    names = Names({"Q1": "OQ-0001", "ADR-1": "ADR-0001"}, {})
+    first = Issue(id="I1", title="Считать долю", user_story="As a team, I want answers measured.",
+                  outcome_id="C-O1", scope=["Сделать то, что требует C-O1."],
+                  adr_ids=["ADR-0001", "ADR-0002"])
+    second = Issue(id="I2", title="Показать долю", user_story="As a team, I want to see it.",
+                   outcome_id="C-O1", depends_on=["I1"])
+    plan = TaskPlan(state="done", run="t1", steps=[], issues=[first, second])
+    files, _, numbers = drafted_tasks(plan, {}, Shelf(catalog, tmp_path, tmp_path / "issues"),
+                                      None, words_for("Russian"), "Russian", (),
+                                      {"C-O1": names, "C-O2": names}, parents=parents)
+    # Номера: сначала задачи плана, потом родительские — на каждый утверждённый итог, и на тот,
+    # у которого задач нет.
+    assert [(n.issue_id, n.id) for n in numbers] == [
+        ("I1", "ISS-0001"), ("I2", "ISS-0002"), ("C-O1", "ISS-0003"), ("C-O2", "ISS-0004")]
+    one, two, measure, cache = files
+    # Подзадача называет родителя; решения — только номерами, без текста; итог плана в тексте —
+    # номером родительской задачи.
+    assert one.links == ["parent:ISS-0003", "ADR-0001", "ADR-0002"]
+    assert two.links == ["parent:ISS-0003", "ISS-0001"]
+    assert "- Сделать то, что требует ISS-0003." in one.text
+    assert "Текст" not in one.text and "## Решения" not in one.text
+    # Родительская — название, поведение и критерии итога, решения, что он реализует, —
+    # номерами; строки о коммите нет: проверка целостности — работа ведущего проекта.
+    assert measure.text == ("# Мерило по OQ-0001\n\nДоля отвеченных видна по OQ-0001.\n\n"
+                            "## Критерии готовности\n- Доля видна.\n- ISS-0042: не регресс.")
+    assert measure.links == ["ADR-0001"]
+    assert cache.text.startswith("# Кэш ответов\n") and cache.links == []
+    assert "коммит" not in measure.text.lower()
+    rendered = issue_rendered(Note(one.id, "issue", one.text, tuple(one.links)))
+    assert rendered.startswith("---\nid: ISS-0001\nparent: ISS-0003\nadrs: [ADR-0001, ADR-0002]\n"
+                               "---\n")
+    assert "outcomes" not in rendered
+
+
+def test_a_parent_task_names_the_findings_of_its_streams_scan(tmp_path):
+    # Исследование прошли заново после того, как поток взял себе его копию, и R1 у них разные.
+    # Итог писали модели потока по его скану: в родительской задаче R1 — находка потока. Задачу
+    # плана писали модели, что читали исследование совета: в ней R1 — его находка.
+    names = Names({}, {"R1": "Ответы ищут в индексе."},
+                  owned={"R1": "Ответы ищут полнотекстом."})
+    outcome = Outcome(id="O1", title="Кэш", behavior="Ответы — по R1.",
+                      acceptance_criteria=["R1 соблюдена."])
+    issue = Issue(id="I1", title="Кэш", user_story="As a team, I want answers.",
+                  outcome_id="C-O1", scope=["Сделать по R1."])
+    plan = TaskPlan(state="done", run="t1", steps=[], issues=[issue])
+    [task, cache], _, _ = drafted_tasks(plan, {}, Shelf(Catalog({}), tmp_path, tmp_path / "issues"),
+                                        None, words_for("Russian"), "Russian", (),
+                                        {"C-O1": names}, parents=[parent(outcome=outcome)])
+    assert "- Сделать по «Ответы ищут в индексе»." in task.text
+    assert "Ответы — по «Ответы ищут полнотекстом»." in cache.text
+    assert "- «Ответы ищут полнотекстом» соблюдена." in cache.text
+
+
+def test_a_plan_of_the_previous_version_names_outcomes_by_note_numbers(tmp_path):
+    # План прежней версии звал итог номером его заметки (OUT-0001), пока выгрузка потока его
+    # помнит: подзадача — того же родителя, а номер итога в тексте — номер родительской задачи.
+    stream = outcome_stream()
+    stream = stream.model_copy(update={"notes": stream.notes.model_copy(update={
+        "refs": {**stream.notes.refs, "O1": "OUT-0001"}})})
+    issue = Issue(id="I1", title="Считать долю", user_story="As a team, I want answers measured.",
+                  outcome_id="OUT-0001", scope=["Сделать OUT-0001."])
+    plan = TaskPlan(state="done", run="t1", steps=[], issues=[issue])
+    measure = stream.outcomes.outcomes[0]
+    files, _, _ = drafted_tasks(plan, {}, Shelf(Catalog({"ADR-0001": Note("ADR-0001", "adr", "Р")}),
+                                                tmp_path, tmp_path / "issues"),
+                                None, words_for("Russian"), "Russian", (), {},
+                                parents=[parent("C-O1", measure, stream, ("C-O1", "OUT-0001"))])
+    [task, measured] = files
+    assert task.links == [f"parent:{measured.id}"]
+    assert f"- Сделать {measured.id}." in task.text
+
+
+def test_a_task_of_an_outcome_no_longer_approved_is_not_written(tmp_path):
+    issue = Issue(id="I1", title="Кэш", user_story="As a team, I want answers.", outcome_id="C-O9")
+    plan = TaskPlan(state="done", run="t1", steps=[], issues=[issue])
+    with pytest.raises(NotesError, match="План стоит на итогах C-O9"):
+        drafted_tasks(plan, {}, Shelf(Catalog({}), tmp_path, tmp_path / "issues"), None,
+                      words_for("Russian"), "Russian")
+
+
+def test_the_parents_of_a_council_are_its_approved_outcomes_in_stream_order(agents, base):
+    found = council(ready())
+    [stream] = found.streams
+    approved = [o.id for o in stream.outcomes.outcomes if o.id in stream.outcomes.approved_ids]
+    assert [(p.name, p.stream.group, p.outcome.id) for p in parents_of(found)] == [
+        (f"C-{outcome}", "C", outcome) for outcome in approved]

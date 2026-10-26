@@ -2,9 +2,9 @@ import { useI18n } from '../../../i18n';
 import { Caption } from '../../../ui/Caption';
 import { Highlight } from '../../../ui/Highlight';
 import { Panel } from '../../../ui/Panel';
-import { Tag } from '../../../ui/Tag';
 import type { TaskView } from '../useTasks';
 import styles from './TaskCard.module.css';
+import { TaskHead } from './TaskHead';
 
 interface TaskCardProps {
   task: TaskView;
@@ -14,23 +14,21 @@ interface TaskCardProps {
 /**
  * Задача, как в макете: серый блок — строка с номером, потоком, названием, меткой и «подробнее» (щелчок открывает или
  * сворачивает задачу); зачем; у открытой — где менять, что сейчас, что сделать и открытые вопросы для агента; внизу
- * мелко — итог и решения.
+ * мелко — решения. Итог задачи — у её родительской задачи, в которой она стоит.
  */
 export function TaskCard({ task, onToggle }: TaskCardProps) {
   const { t } = useI18n();
   return (
     <Panel variant="muted">
-      <button type="button" className={styles.head} aria-expanded={task.open} onClick={onToggle}>
-        <Tag tone="dark" size="md" shape="box" mono>
-          {task.label}
-        </Tag>
-        <span className={styles.stream}>{task.stream}</span>
-        <span className={styles.title}>{task.title}</span>
-        <Tag tone={task.tag.tone} size="md">
-          {task.tag.label}
-        </Tag>
-        <span className={styles.toggle}>{task.toggleLabel}</span>
-      </button>
+      <TaskHead
+        label={task.label}
+        stream={task.stream}
+        title={task.title}
+        tag={task.tag}
+        open={task.open}
+        toggleLabel={task.toggleLabel}
+        onToggle={onToggle}
+      />
       <p className={styles.text}>{task.story}</p>
       {task.open && (
         <>
@@ -69,7 +67,7 @@ export function TaskCard({ task, onToggle }: TaskCardProps) {
           )}
         </>
       )}
-      <span className={styles.meta}>{task.meta}</span>
+      {task.meta && <span className={styles.meta}>{task.meta}</span>}
     </Panel>
   );
 }

@@ -51,7 +51,6 @@ class OutcomeGap(Schema):
 
 class StreamOutcome(Schema):
     id: str
-    catalog_id: str | None
     title: str
     change: str
     criteria: list[str]
@@ -177,16 +176,18 @@ def outcomes_of(stream: Stored, notes: str | None) -> list[StreamOutcome]:
 
 
 def refs_of(stream: Stored, notes: str | None) -> dict[str, str]:
-    """Номера итогов и решений в каталоге — пока поток выгружен к этим итогам
-    (standing.exported, как у «Документации» и «Решений»)."""
+    """Номера решений в каталоге — пока поток выгружен к этим итогам (standing.exported, как у
+    «Документации» и «Решений»)."""
     return stream.notes.refs if stream.notes is not None and exported(stream, notes) else {}
 
 
 def outcome_of(outcome: Outcome, approved_ids: set[str], refs: dict[str, str]) -> StreamOutcome:
     """Итог, как его собрали модели: что меняется — его поведение, решения — с тем, что каждое
-    меняет в итоге (нет строки — null), ограничения — номерами фрагментов."""
+    меняет в итоге (нет строки — null), ограничения — номерами фрагментов. Номера в каталоге у
+    итога нет: итогов в каталоге заметок нет (решение владельца к задаче «Бекенд · Итоги →
+    родительские задачи…»)."""
     return StreamOutcome(
-        id=outcome.id, catalog_id=refs.get(outcome.id), title=outcome.title,
+        id=outcome.id, title=outcome.title,
         change=outcome.behavior, criteria=list(outcome.acceptance_criteria),
         decisions=[OutcomeDecision(adr=adr, catalog_id=refs.get(adr),
                                    note=outcome.adr_notes.get(adr) or None)

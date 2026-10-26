@@ -42,13 +42,15 @@ from .streams import StreamAnswer, council_of, shown_of, stream_of
 
 router = APIRouter(route_class=ContractRoute, tags=["notes"])
 
-NoteType = Literal["idea", "question", "option", "decision", "outcome"]
+NoteType = Literal["idea", "question", "option", "decision"]
 NoteChange = Literal["new", "kept", "rewritten", "manual", "superseded"]
 Status = Literal["active", "under_review", "superseded"]
 
-# Вид заметки по контракту — по типу заметки в каталоге.
+# Вид заметки по контракту — по типу заметки в каталоге. Итогов в заметках нет (решение
+# владельца к задаче «Бекенд · Итоги → родительские задачи…»): у потока прежней версии, что
+# выгружал итоги, их выгрузка не показывает.
 TYPES: dict[str, NoteType] = {"idea": "idea", "open_question": "question", "proposal": "option",
-                              "adr": "decision", "outcome": "outcome"}
+                              "adr": "decision"}
 # Что запись сделает с заметкой — по тому, что лежит в каталоге сейчас (export.settled).
 CHANGES: dict[str, NoteChange] = {"create": "new", "same": "kept", "update": "rewritten",
                                   "edited": "manual"}
@@ -194,8 +196,8 @@ def catalog_of(council: Council, projects: Projects, folders: Folders) -> Catalo
 # Выгрузка по контракту.
 
 def notes_of(draft: NotesDraft) -> list[Note]:
-    """Заметки черновика по порядку: идея, вопросы, варианты, решения, итоги; решения проекта,
-    которые новое решение потока заменяет, — сразу за ним, по номерам."""
+    """Заметки черновика по порядку: идея, вопросы, варианты, решения; решения проекта, которые
+    новое решение потока заменяет, — сразу за ним, по номерам."""
     plans = {plan.id: plan for plan in draft.notes}
     replaced_by: dict[str, list[StatusShift]] = {}
     for shift in draft.shifts:
@@ -215,7 +217,7 @@ def note_of(plan: NotePlan, plans: dict[str, NotePlan]) -> Note:
     """Заметка с меткой: новая, не менялась, перепишется, правили руками. У новой заметки-вопроса
     — решение проекта, которое она пересматривает; у новой заметки-решения — которые заменяет:
     то, что пересматривает её вопрос, и те, что она называет строкой замен (решение q-011
-    бекенда)."""
+    бекенда; пересматриваемое там тоже)."""
     change = CHANGES[plan.action]
     revisits = None
     supersedes: list[str] = []
@@ -232,8 +234,10 @@ def note_of(plan: NotePlan, plans: dict[str, NotePlan]) -> Note:
 
 
 def revisited(question: NotePlan, plans: dict[str, NotePlan]) -> str | None:
-    """Решение проекта, из которого растёт вопрос потока: ссылка вопроса не на заметку потока."""
-    return next((link for link in question.links if link not in plans), None)
+    """Решение проекта, которое пересматривает вопрос потока. У черновика прежней версии такой
+    вопрос растёт из него: ссылка вопроса не на заметку потока."""
+    return question.revisits or next((link for link in question.links if link not in plans),
+                                     None)
 
 
 def exported_of(stream: Stored) -> list[Note]:

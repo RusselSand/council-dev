@@ -1,7 +1,7 @@
 import type { Catalog } from '../../domain/notes';
-import type { AdrRef, OutcomeRef } from '../../domain/outcomes';
+import type { AdrRef, StreamOutcome } from '../../domain/outcomes';
 import type { RunState } from '../../domain/run';
-import type { Task, TaskStep, VanishedTask } from '../../domain/tasks';
+import type { ParentTask, Task, TaskStep, VanishedTask } from '../../domain/tasks';
 import { COUNCIL_LANGUAGE } from './notes';
 import { PROJECTS, type MockProject } from './projects';
 
@@ -17,13 +17,16 @@ export interface MockTasks {
   judge: RunState;
 }
 
-/** Задача без открытых вопросов и зависимостей; остальное — extra. */
+/** Родительская задача итога в плане — поток и номер итога в нём, как её зовёт сервер: «A-O5». */
+const parentId = (stream: string, outcome: string): string => `${stream}-${outcome}`;
+
+/** Задача потока A без открытых вопросов и зависимостей; остальное — extra. */
 const task = (
   id: string,
   catalogId: string,
   title: string,
   story: string,
-  outcome: OutcomeRef,
+  outcome: string,
   extra: Partial<Task> = {},
 ): Task => ({
   id,
@@ -35,22 +38,22 @@ const task = (
   current: null,
   scope: [],
   openQuestions: [],
-  outcome,
+  parent: parentId('A', outcome),
   decisions: [],
   dependsOn: [],
   ...extra,
 });
 
-/** Итог и решение потока A g1: O3 — OUT-0024, ADR-1 — ADR-0041 (streams[0].notes.refs в data-1.json). */
-const g1Outcome = (n: number): OutcomeRef => ({ id: `O${n}`, catalogId: `OUT-${String(21 + n).padStart(4, '0')}` });
+/** Итог и решение потока A g1: итог O3 — родительская задача A-O3; ADR-1 — ADR-0041 (streams[0].notes.refs). */
+const g1Outcome = (n: number): string => `O${n}`;
 const g1Adr = (n: number): AdrRef => ({ adr: `ADR-${n}`, catalogId: `ADR-${String(40 + n).padStart(4, '0')}` });
 
 /**
  * Задачи g1 — из data-1.json (tasks.issues): title, user_story — story, main_entry_points — entries, current_state —
  * current, scope, open_questions, depends_on; outcome_id и adr_ids там — номера в каталоге, номера в потоке — по
- * streams[0].notes.refs. Номера задач в каталоге — tasks_draft.numbers (I1 → ISS-0023). «Уйдут из каталога» —
- * tasks_draft.vanished: заголовок — первая строка text без «# », как его берёт макет. Судья задач — tasks.steps
- * (task_plan_judge — done).
+ * streams[0].notes.refs («OUT-0026» — итог O5, его родительская задача — A-O5). Номера задач в каталоге —
+ * tasks_draft.numbers (I1 → ISS-0023). «Уйдут из каталога» — tasks_draft.vanished: заголовок — первая строка text без
+ * «# », как его берёт макет. Судья задач — tasks.steps (task_plan_judge — done).
  */
 const G1: MockTasks = {
   judge: 'done',
@@ -287,9 +290,9 @@ const protoAdr = (adr: string): AdrRef => ({ adr, catalogId: null });
 
 /**
  * Задачи советов-примеров — ISSUES из prototype.js, все — потока A: why — story, where — entries, scope — scope, after —
- * dependsOn. Итога и решений у задач в макете нет — они из итогов потока (OUTCOMES): очередь и отправка — OUT-1
- * (ADR-0007, ADR-0008), сжатие фото — OUT-2 (ADR-0009). «Уйдут из каталога» в макете у них пусто. Работы моделей над
- * задачами в макете нет: судья задач не понадобился, как у c7 в контракте.
+ * dependsOn. Итога и решений у задач в макете нет — они из итогов потока (OUTCOMES): очередь и отправка — подзадачи
+ * OUT-1 (ADR-0007, ADR-0008), сжатие фото — OUT-2 (ADR-0009). «Уйдут из каталога» в макете у них пусто. Работы моделей
+ * над задачами в макете нет: судья задач не понадобился, как у c7 в контракте.
  */
 const PROTO: MockTasks = {
   judge: 'skipped',
@@ -299,7 +302,7 @@ const PROTO: MockTasks = {
       'ISS-0012',
       'Локальное хранилище очереди заявок',
       'Мастер без сети не теряет заполненную заявку.',
-      { id: 'OUT-1', catalogId: null },
+      'OUT-1',
       {
         entries: ['app/src/main/java/…/requests/RequestRepository.kt'],
         scope: ['Сохранять заявку в Room, помечать статусом pending.'],
@@ -311,7 +314,7 @@ const PROTO: MockTasks = {
       'ISS-0013',
       'Отправка очереди при появлении сети',
       'Заявки уходят сами, без участия мастера.',
-      { id: 'OUT-1', catalogId: null },
+      'OUT-1',
       {
         entries: ['app/src/main/java/…/sync/SyncWorker.kt'],
         scope: ['Подписка на ConnectivityManager, отправка pending по порядку.'],
@@ -324,7 +327,7 @@ const PROTO: MockTasks = {
       'ISS-0014',
       'Сжатие фото на устройстве',
       'Фото уходят по мобильной сети за секунды.',
-      { id: 'OUT-2', catalogId: null },
+      'OUT-2',
       {
         entries: ['app/src/main/java/…/media/PhotoCompressor.kt'],
         scope: ['Сжимать до 1600 px, JPEG 80 перед сохранением.'],
@@ -340,6 +343,30 @@ const PROTO: MockTasks = {
  * не готовы — план покажется, когда готовы все.
  */
 export const TASKS: Record<string, MockTasks> = { g1: G1, c1: PROTO, c4: PROTO, c7: PROTO };
+
+/** Номер задачи в каталоге числом: «ISS-0029» — 29; номера нет — 0. */
+const issueNumber = (catalogId: string | null): number => Number(catalogId?.replace(/^ISS-/, '') ?? 0);
+
+/**
+ * Родительские задачи плана, как их отдаёт сервер (решение владельца к задаче «Бекенд · Итоги → родительские задачи…»):
+ * утверждённые итоги потоков — по порядку потоков, в потоке — по порядку итогов (streams — поток и его итоги). Номера в
+ * каталоге — следующие за номерами задач плана, по порядку; в макете родительских задач нет.
+ */
+export function parentTasks(streams: [string, StreamOutcome[]][], tasks: Task[]): ParentTask[] {
+  const top = Math.max(0, ...tasks.map((t) => issueNumber(t.catalogId)));
+  return streams
+    .flatMap(([stream, outcomes]) => outcomes.filter((o) => o.approved).map((outcome) => ({ stream, outcome })))
+    .map(({ stream, outcome }, n) => ({
+      id: parentId(stream, outcome.id),
+      catalogId: `ISS-${String(top + n + 1).padStart(4, '0')}`,
+      stream,
+      outcome: outcome.id,
+      title: outcome.title,
+      change: outcome.change,
+      criteria: outcome.criteria,
+      decisions: outcome.decisions.map(({ adr, catalogId }) => ({ adr, catalogId })),
+    }));
+}
 
 /**
  * Язык каталога задач по проекту: у gen_sdk_tooling — tasks_draft.language в data-1.json (English); у остальных — как

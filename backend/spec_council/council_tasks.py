@@ -9,8 +9,10 @@
 заметок (tasks.py), а если исследование пройдено сканом — по снимку тех же рабочих копий, который
 ход читает уже в фоне (PlanRun). План готов, а задачи пишутся не на том языке, на котором работает
 совет, — судья сразу переводит файлы задач (как заметки на «Документации», решение q-008 бекенда).
-«Записать в каталог» на «Задачах» пишет файлы в папку задач проекта (tasks_export.py); папки нет —
-«Задачи» готовы без записи. План остановился — «Запустить снова» (retried).
+«Записать в каталог» на «Задачах» пишет файлы в папку задач проекта (tasks_export.py): на каждый
+утверждённый итог — родительская задача, задачи плана — её подзадачи (решение владельца к задаче
+«Бекенд · Итоги → родительские задачи…»); папки нет — «Задачи» готовы без записи. План
+остановился — «Запустить снова» (retried).
 
 Хранение прежнее: план — Council.tasks (pipeline.TaskRun), черновик выгрузки плана с переводом
 судьи — Council.tasks_draft (pipeline.NotesRun), последняя запись — Council.tasks_export. Номера и
@@ -71,6 +73,7 @@ from .tasks import (
     inputs_of,
     not_ready,
     outcome_names,
+    parents_of,
     research_cited,
     research_maps,
     research_texts,
@@ -394,16 +397,16 @@ def prepared(council: Council, plan: TaskPlan, folders: Folders,
 
 def draft_of(council: Council, plan: TaskPlan, notes: Path, issues: Path,
              store: Store) -> tuple[TasksDraft, Shelf]:
-    """Черновик выгрузки плана в папку задач issues — каким его записали бы сейчас: файл на задачу
-    с номером на весь проект, что с каждым будет и какие файлы прошлой записи исчезли. Каталог
-    заметок или папку задач не прочитать, или заметки, на которых план стоит, удалили — NotesError
-    с причиной."""
+    """Черновик выгрузки плана в папку задач issues — каким его записали бы сейчас: файл на
+    родительскую задачу каждого утверждённого итога и на каждую задачу плана с номером на весь
+    проект, что с каждым будет и какие файлы прошлой записи исчезли. Каталог заметок или папку
+    задач не прочитать, или заметки, на которых план стоит, удалили — NotesError с причиной."""
     shelf = shelf_of(notes, issues)
     fragments = {f.id: f for f in council.slicing.fragments} if council.slicing else {}
     files, vanished, numbers = drafted_tasks(
         plan, fragments, shelf, export_in(council.tasks_export, issues), words_for(language()),
         notes_language(), reserved_by_others(store, council.id, issues),
-        outcome_names(council, fragments, plan.cited))
+        outcome_names(council, fragments, plan.cited), parents_of(council))
     return TasksDraft(state="done", run=uuid4().hex[:8], plan=plan.run,
                       language=notes_language(), root=str(issues), notes=files,
                       vanished=vanished, numbers=numbers), shelf

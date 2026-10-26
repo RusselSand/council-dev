@@ -1,0 +1,16 @@
+/* Что меняется — как текст итога на «Итогах». */
+.change {
+  margin: 0;
+  font-size: var(--text-md);
+  line-height: var(--leading-text);
+  color: var(--color-text-body);
+  text-wrap: pretty;
+  overflow-wrap: anywhere;
+}
+
+/* «итог O8 · ADR-0052» — мелко, как строка под задачей. */
+.meta {
+  font-size: var(--text-xs);
+  color: var(--color-text-faint);
+  overflow-wrap: anywhere;
+}

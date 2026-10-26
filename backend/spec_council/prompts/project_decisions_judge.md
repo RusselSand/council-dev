@@ -5,7 +5,7 @@ You form the final list of the project's previously accepted decisions that are 
 You are given:
 - the approved IDEA;
 - the group's source fragments;
-- a catalog of previously accepted ADRs in a short format: ID, the IDEA the decision belongs to, OPEN QUESTION, accepted decision, status; some ADRs have a trail in the code (`found_in_code`): a commit with the number of the issue that implemented the OUTCOME of this decision, in a file that the new IDEA, according to the repository map, is going to touch;
+- a catalog of previously accepted ADRs in a short format: ID, the IDEA the decision belongs to, OPEN QUESTION, accepted decision, status; some ADRs have a trail in the code (`found_in_code`): a commit with the number of an issue built on this decision, in a file that the new IDEA, according to the repository map, is going to touch;
 - the results of independent Project Decisions Discovery runs.
 
 There may be only one candidate: the council has a single participant, or the others failed.
@@ -174,8 +174,7 @@ Each catalog record looks like this:
   "status": "active",
   "superseded_by": null,
   "found_in_code": [
-    {"issue": "ISS-0012", "outcome": "OUT-0004", "commit": "a1b2c3d",
-     "file": "billing/api.py"}
+    {"issue": "ISS-0012", "commit": "a1b2c3d", "file": "billing/api.py"}
   ]
 }
 

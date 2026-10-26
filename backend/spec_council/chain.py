@@ -61,7 +61,7 @@ from .pipeline import (
     design_of,
     repository_of,
 )
-from .project import checks_of, own_ids, project_catalog
+from .project import checks_of, issue_decisions, own_ids, project_catalog
 from .standing import STEP_RUNS, STEPS, Step, passed, stream_standing
 from .store import Store
 from .stream_decisions import confirmed, recheck_basis, rechecked, with_recheck
@@ -70,26 +70,31 @@ from .work import carried_analyses, carried_options, kept_outcomes, last_used
 # Ход шага потока, где работают модели.
 Work = DecisionsSearch | QuestionDiscovery | ProposalDiscovery | DecisionAnalysis | OutcomeDiscovery
 Report = Callable[[Work], None]
-# Как собрать ход шага: совет, поток, модели, отчёт хода, каталог заметок совета (None — его нет)
-# и каталог рабочих копий, как его видно сейчас (deps.get_repositories).
-Build = Callable[[Council, Stream, Runner, Report, str | None, Path | None], CouncilRun]
+# Как собрать ход шага: совет, поток, модели, отчёт хода, каталог заметок совета (None — его нет),
+# каталог рабочих копий, как его видно сейчас (deps.get_repositories), и папка задач проекта
+# (None — её нет).
+Build = Callable[[Council, Stream, Runner, Report, str | None, Path | None, str | None],
+                 CouncilRun]
 
 
 def selecting(council: Council, stream: Stream, runner: Runner, report: Report,
-              notes: str | None, repositories: Path | None) -> DecisionsRun:
+              notes: str | None, repositories: Path | None,
+              issues: str | None) -> DecisionsRun:
     """Отбор прошлых решений проекта, относящихся к идее потока: каталог — решения из папки
     документации проекта, кроме тех, что выгрузил сам поток; их след в коде — по карте кода
-    потока, в рабочих копиях там, где они сейчас."""
+    потока, в рабочих копиях там, где они сейчас, а решения задач из коммитов — по их файлам в
+    папке задач проекта."""
     folder = Path(notes) if notes is not None else None
     return DecisionsRun(council.id, stream, fragments_of(council, stream), council.participants,
                         council.judge, runner, report,
                         catalog=project_catalog(folder, stream) or Catalog({}),
                         scan=mapped_scan(stream), own=own_ids(stream, folder),
-                        repositories=repositories)
+                        repositories=repositories,
+                        issues=issue_decisions(Path(issues) if issues is not None else None))
 
 
 def asking(council: Council, stream: Stream, runner: Runner, report: Report,
-           notes: str | None, repositories: Path | None) -> QuestionRun:
+           notes: str | None, repositories: Path | None, issues: str | None) -> QuestionRun:
     """Поиск вопросов к идее потока — с картой кода, описанием макета и прошлыми решениями
     проекта, которые отметил человек."""
     return QuestionRun(council.id, idea_of(stream), fragments_of(council, stream),
@@ -100,7 +105,7 @@ def asking(council: Council, stream: Stream, runner: Runner, report: Report,
 
 
 def proposing(council: Council, stream: Stream, runner: Runner, report: Report,
-              notes: str | None, repositories: Path | None) -> ProposalRun:
+              notes: str | None, repositories: Path | None, issues: str | None) -> ProposalRun:
     """Поиск вариантов к отобранным вопросам. Варианты, уже найденные к тем же вопросам, — и тем
     поиском, что остановился, — остаются: ищут только к остальным, а новые номера — дальше всех,
     какие поток уже давал."""
@@ -114,7 +119,7 @@ def proposing(council: Council, stream: Stream, runner: Runner, report: Report,
 
 
 def checking(council: Council, stream: Stream, runner: Runner, report: Report,
-             notes: str | None, repositories: Path | None) -> DecisionRun:
+             notes: str | None, repositories: Path | None, issues: str | None) -> DecisionRun:
     """Проверка выбора. Что уже проверено к тому же выбору и тем же подтверждённым заменам
     решений проекта, переносится: проверяют остальное — и вопрос, где замену подтвердили только
     что, — считая подтверждённые решения проекта не действующими. Удалённых на «Вариантах»
@@ -135,7 +140,7 @@ def checking(council: Council, stream: Stream, runner: Runner, report: Report,
 
 
 def assembling(council: Council, stream: Stream, runner: Runner, report: Report,
-               notes: str | None, repositories: Path | None) -> OutcomeRun:
+               notes: str | None, repositories: Path | None, issues: str | None) -> OutcomeRun:
     """Сборка итогов из зафиксированных решений: готовые итоги, чьи решения те же,
     закрепляются. Удалённых на «Вариантах» вариантов модели не видят (options.seen)."""
     scope, decisions = stream.scope or [], stream.decisions or []
@@ -187,14 +192,16 @@ def begun(council: Council, stream: Stream, step: Step, runner: Runner, store: S
 
 def retried(council: Council, stream: Stream, runner: Runner, store: Store,
             notes: str | None, repositories: Path | None = None, *, step: Step | None = None,
-            finished: Callable[[], None] | None = None) -> Launch | None:
+            finished: Callable[[], None] | None = None, issues: str | None = None
+            ) -> Launch | None:
     """«Запустить снова»: ход шага step, который остановился, — заново; шаг не назван — первого
     шага с ошибкой. Модели, которые уже ответили, заново не работают: их ответы ход возьмёт из
     лотка даром. Шаг не остановился или это «Документация» (перевод заметок запускает снова
     stream_notes.retried) — None. Шагов с ошибкой бывает два: поиск прошлых решений на готовом
     шаге остановился, а шаг дальше — тоже, — поэтому шаг называют. Остановился отбор прошлых
     решений, а их в каталоге уже нет — отбирать нечего (nothing): шаг ждёт вас (решение q-005
-    бекенда), а искали заново на готовом шаге — он снова готов. finished — как у launch_of."""
+    бекенда), а искали заново на готовом шаге — он снова готов. finished — как у launch_of,
+    issues — папка задач проекта: по ней отбор ищет след решений в коде."""
     where = stream_standing(stream, notes)
     if step is None:
         step = next((one for one in STEPS if where.steps[one] == "failed"), None)
@@ -203,21 +210,21 @@ def retried(council: Council, stream: Stream, runner: Runner, store: Store,
     if step == "project" and not selects(stream, notes):
         return nothing(stream, notes, again=True)
     return launch_of(council, stream, step, runner, store, notes, repositories, again=True,
-                     finished=finished)
+                     finished=finished, issues=issues)
 
 
 def searched(council: Council, stream: Stream, runner: Runner, store: Store, notes: str | None,
              repositories: Path | None = None, *,
-             finished: Callable[[], None] | None = None) -> Launch:
+             finished: Callable[[], None] | None = None, issues: str | None = None) -> Launch:
     """«Искать прошлые решения» и «Искать заново» на «Решениях проекта»: модели ищут их заново, по
     каталогу, какой он сейчас, — это новый поиск, а не повтор: ответов прежних он не берёт. Шаг
     ждал вас — шаг ИИ работает; был готов — тоже, а шаги дальше какими были. Прошлых решений в
     каталоге нет — искать нечего (nothing): шаг ждёт вас или так и готов (решение q-005
-    бекенда). finished — как у launch_of."""
+    бекенда). finished и issues — как у retried."""
     if not selects(stream, notes):
         return nothing(stream, notes, again=False)
     return launch_of(council, stream, "project", runner, store, notes, repositories, again=False,
-                     finished=finished)
+                     finished=finished, issues=issues)
 
 
 def nothing(stream: Stream, notes: str | None, *, again: bool) -> Launch:
@@ -245,7 +252,7 @@ def selects(stream: Stream, notes: str | None) -> bool:
 
 def launch_of(council: Council, stream: Stream, step: Step, runner: Runner, store: Store,
               notes: str | None, repositories: Path | None, *, again: bool,
-              finished: Callable[[], None] | None = None) -> Launch:
+              finished: Callable[[], None] | None = None, issues: str | None = None) -> Launch:
     """Ход шага: запуск — следующий за прежним ходом шага, если тот был; повтор (again) берёт
     ответы прежнего хода: модели, что уже ответили, так и остаются готовыми, пока ход берёт их
     ответы из лотка (CouncilRun.replayed). Запуск «Решений» сам проверяет вопросы с отмеченными
@@ -258,7 +265,7 @@ def launch_of(council: Council, stream: Stream, step: Step, runner: Runner, stor
     report = reporter(store, council.id, stream_slot(stream.group, field))
     if finished is not None and step == "project":
         report = followed(report, finished)
-    pipeline = WORKS[step].build(council, stream, runner, report, notes, repositories)
+    pipeline = WORKS[step].build(council, stream, runner, report, notes, repositories, issues)
     state = pipeline.state
     state.launch = before.launch + 1 if before is not None else 1
     state.reused = resumed(state, before if again else None, datetime.now(UTC), runner.identity)

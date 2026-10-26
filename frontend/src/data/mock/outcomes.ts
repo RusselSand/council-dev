@@ -10,7 +10,6 @@ const outcome = (
   extra: Partial<StreamOutcome> = {},
 ): StreamOutcome => ({
   id,
-  catalogId: null,
   title,
   change,
   criteria,
@@ -29,8 +28,9 @@ const g1Decision = (n: number, note: string): OutcomeDecision => ({ ...g1Adr(n),
 
 /**
  * Итоги потока A совета g1 — из data-1.json (streams[0].outcomes.outcomes): название, behavior, критерии, решения с
- * пояснениями (adr_ids, adr_notes), опоры (relies_on_adr_ids), ограничения (constraint_ids: 3 — F3). Номера в каталоге —
- * notes.refs («O3» → «OUT-0024»). Шаг утверждён, и все итоги утверждены, как у g1 в макете.
+ * пояснениями (adr_ids, adr_notes), опоры (relies_on_adr_ids), ограничения (constraint_ids: 3 — F3). Номеров в каталоге
+ * у итогов нет: итогов в каталоге заметок нет (в data-1.json notes.refs их помнит — «O3» → «OUT-0024»). Шаг утверждён, и
+ * все итоги утверждены, как у g1 в макете.
  */
 const G1: StreamOutcome[] = [
   outcome(
@@ -44,7 +44,6 @@ const G1: StreamOutcome[] = [
       'Ни на одной из этих страниц для сервиса из нового списка не показываются ресурсы, спеки или результаты из mock-данных.',
     ],
     {
-      catalogId: 'OUT-0024',
       decisions: [
         g1Decision(
           6,
@@ -71,7 +70,6 @@ const G1: StreamOutcome[] = [
       'После отмены исключения сервис с подходящим активным снимком появляется в списке /generation без перезагрузки страницы.',
     ],
     {
-      catalogId: 'OUT-0025',
       decisions: [
         g1Decision(
           8,
@@ -102,7 +100,6 @@ const G1: StreamOutcome[] = [
       'В списке нет сервисов, которые есть только в mock-данных Generation и отсутствуют в данных Scan.',
     ],
     {
-      catalogId: 'OUT-0026',
       decisions: [
         g1Decision(
           1,
@@ -137,7 +134,6 @@ const G1: StreamOutcome[] = [
       'Ни в одной строке нет сведений о генерации, раскладке ресурсов или PR.',
     ],
     {
-      catalogId: 'OUT-0027',
       decisions: [
         g1Decision(5, 'Строка списка /generation содержит только название сервиса и никаких других сведений о нём.'),
         g1Decision(
@@ -161,7 +157,6 @@ const G1: StreamOutcome[] = [
       'Если после нажатия «Повторить» список получен успешно, сообщение об ошибке исчезает и страница показывает таблицу с сервисами.',
     ],
     {
-      catalogId: 'OUT-0028',
       decisions: [
         g1Decision(
           11,
@@ -183,7 +178,6 @@ const G1: StreamOutcome[] = [
       'На каждом языке интерфейса подпись описывает одно и то же условие отбора.',
     ],
     {
-      catalogId: 'OUT-0029',
       decisions: [
         g1Decision(
           12,

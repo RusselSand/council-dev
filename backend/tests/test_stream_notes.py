@@ -12,7 +12,7 @@ from fastapi.testclient import TestClient
 from spec_council import stream_notes
 from spec_council.app import app
 from spec_council.deps import get_agents, get_launcher, get_projects, get_repositories, get_store
-from spec_council.models import NotesDraft, NotesExport, ProjectDraft
+from spec_council.models import ExportedNote, NotePlan, NotesDraft, NotesExport, ProjectDraft
 from spec_council.notes import Catalog, Note, path_of, rendered
 from spec_council.pipeline import ModelFailed
 from spec_council.projects import Projects
@@ -33,12 +33,12 @@ from tests.test_stream_questions import (
 
 client = TestClient(app)
 
-# Заметки потока A, как их собирает выгрузка: идея, три вопроса, по два варианта на вопрос,
-# решения по Q1 и Q3 (Q2 оставлен открытым) и оба итога.
+# Заметки потока A, как их собирает выгрузка: идея, три вопроса, по два варианта на вопрос и
+# решения по Q1 и Q3 (Q2 оставлен открытым). Итогов в заметках нет (решение владельца к задаче
+# «Бекенд · Итоги → родительские задачи…»).
 WRITTEN = [("IDEA-0001", "idea"), ("OQ-0001", "question"), ("OQ-0002", "question"),
            ("OQ-0003", "question"), *((f"PRO-000{n}", "option") for n in range(1, 7)),
-           ("ADR-0001", "decision"), ("ADR-0002", "decision"), ("OUT-0001", "outcome"),
-           ("OUT-0002", "outcome")]
+           ("ADR-0001", "decision"), ("ADR-0002", "decision")]
 PAST = "Ищем полнотекстом по всей базе."
 OTHER_PAST = "Ищем только в базе знаний."
 
@@ -170,8 +170,8 @@ def test_a_waiting_step_shows_the_draft_of_the_whole_stream(store, pool, project
     assert export["catalog"] == {"path": "docs", "language": "Russian"}
     assert brief(export) == [(note_id, kind, "new") for note_id, kind in WRITTEN]
     titles = {note["id"]: note["title"] for note in export["notes"]}
-    assert (titles["IDEA-0001"], titles["OQ-0001"], titles["OUT-0001"]) == (
-        "Хочу базу знаний.", "Как искать ответы?", "Мерило идеи")
+    assert (titles["IDEA-0001"], titles["OQ-0001"]) == ("Хочу базу знаний.", "Как искать ответы?")
+    assert not any(note["type"] == "outcome" for note in export["notes"])
     assert titles["ADR-0001"] == ("Искать по заголовкам тредов, потому что поиск по заголовкам "
                                   "дешевле всего.")
     assert all((note["revisits"], note["supersedes"], note["supersededBy"]) == (None, [], None)
@@ -211,12 +211,12 @@ def test_the_stream_is_written_into_the_catalog_and_the_export_stays_the_same(
     assert stream == stream_of(council_id)
     notes = steps_of(stream)["notes"]
     assert (notes["state"], notes["note"], notes["text"], notes["progress"]) == (
-        "done", "выгружено заметок: 14", None, [])
-    # Файлом на заметку, по правилам графа.
+        "done", "выгружено заметок: 12", None, [])
+    # Файлом на заметку, по правилам графа; итогов в каталоге нет.
     catalog = Catalog.load(docs)
     assert sorted(catalog.notes) == sorted(note_id for note_id, _ in WRITTEN)
     assert catalog.problems() == []
-    assert catalog.notes["OUT-0001"].links == ("ADR-0001",)
+    assert not (docs / "outcomes").exists()
     # После записи выгрузка та же — с теми же метками.
     assert export_of(council_id) == before
     assert store.get_council(council_id).updated_at > changed
@@ -225,12 +225,13 @@ def test_the_stream_is_written_into_the_catalog_and_the_export_stays_the_same(
     assert not any(item["stream"] == "A" for item in council["activity"])
 
 
-def test_written_decisions_and_outcomes_get_their_catalog_ids(store, pool, projects):
+def test_written_decisions_get_their_catalog_ids_and_outcomes_have_none(store, pool, projects):
     council_id = outcomes_approved(store, pool, projects)
     assert writes(council_id).status_code == 200
     outcomes = client.get(f"/api/councils/{council_id}/streams/A/outcomes").json()["outcomes"]
-    assert [(o["id"], o["catalogId"]) for o in outcomes] == [("O1", "OUT-0001"),
-                                                             ("O2", "OUT-0002")]
+    # Итог в каталоге не хранится: номера в каталоге у него нет.
+    assert [o["id"] for o in outcomes] == ["O1", "O2"]
+    assert not any("catalogId" in outcome for outcome in outcomes)
     assert outcomes[0]["decisions"][0]["catalogId"] == "ADR-0001"
     decisions = client.get(f"/api/councils/{council_id}/streams/A/decisions").json()["decisions"]
     # Q2 оставлен открытым: решения в каталоге у него нет.
@@ -346,6 +347,9 @@ def test_a_written_stream_exported_again_keeps_its_notes_and_hand_edits(store, p
 
 
 def test_a_question_that_revisits_a_past_decision_supersedes_it(store, pool, projects, docs):
+    """Вопрос, который пересматривает решение проекта, — в ветке своей идеи, как при отмеченной
+    замене; пересматриваемое решение — в строке замен его решения (решение владельца к задаче
+    «Бекенд · Итоги → родительские задачи…»)."""
     past_decision(docs)
     council_id = assembled(store, pool)
     revisiting(store, council_id, "Q1")
@@ -372,7 +376,11 @@ def test_a_question_that_revisits_a_past_decision_supersedes_it(store, pool, pro
         "note": "После выгрузки ADR-0001 остаётся в каталоге, но не действует: следующие советы "
                 "увидят его как «заменено ADR-0002» и отберут вместо него ADR-0002."}]
     assert writes(council_id).status_code == 200
-    assert Catalog.load(docs).status("ADR-0001") == ("superseded", "ADR-0002")
+    catalog = Catalog.load(docs)
+    assert catalog.status("ADR-0001") == ("superseded", "ADR-0002")
+    assert catalog.notes["OQ-0002"].links == (found(export, "idea", "")["id"],)
+    assert catalog.notes["ADR-0002"].body.endswith("\n\nЗаменяет: ADR-0001.")
+    assert catalog.problems() == []
     # После записи — та же смена статуса: каталог её уже не помнит, а выгрузка помнит.
     assert export_of(council_id) == export
 
@@ -403,7 +411,7 @@ def test_a_decision_confirmed_to_replace_past_decisions_supersedes_them_all(stor
                                                                            projects, docs):
     """Человек подтвердил, что решение по Q1 заменяет ADR-0002 и ADR-0001 (решение владельца к
     задаче «…подтверждение замены ADR…» и q-011 бекенда): заменены оба. В заметке решения —
-    строка замен, а вопрос остаётся в цепочке своей идеи, и итог стоит на этом решении."""
+    строка замен, а вопрос остаётся в цепочке своей идеи."""
     past_decisions(docs)
     council_id = assembled(store, pool)
     replacing(store, council_id, "Q1", "ADR-0002", "ADR-0001")
@@ -436,7 +444,6 @@ def test_a_decision_confirmed_to_replace_past_decisions_supersedes_them_all(stor
         "Искать по заголовкам тредов, потому что поиск по заголовкам дешевле всего.\n\n"
         "Заменяет: ADR-0002, ADR-0001.")
     assert catalog.notes[asked["id"]].links == (idea["id"],)
-    assert decided["id"] in catalog.notes[found(export, "outcome", "Мерило идеи")["id"]].links
     # После записи — те же метки и смены статуса.
     assert export_of(council_id) == export
 
@@ -444,7 +451,7 @@ def test_a_decision_confirmed_to_replace_past_decisions_supersedes_them_all(stor
 def test_a_question_that_revisits_one_decision_and_replaces_another_supersedes_both(
         store, pool, projects, docs):
     """Подтвердить замену можно и у решения, которое вопрос не пересматривает: вопрос растёт из
-    пересматриваемого, как раньше, а заменённое называет строка замен."""
+    своей идеи, а строка замен называет и пересматриваемое, и подтверждённое."""
     past_decisions(docs)
     council_id = assembled(store, pool)
     revisiting(store, council_id, "Q1")
@@ -461,7 +468,8 @@ def test_a_question_that_revisits_one_decision_and_replaces_another_supersedes_b
         ("ADR-0001", "superseded", decided["id"]), ("ADR-0002", "superseded", decided["id"])]
     assert writes(council_id).status_code == 200
     catalog = Catalog.load(docs)
-    assert catalog.notes[asked["id"]].links == ("ADR-0001",)
+    assert catalog.notes[asked["id"]].links == (found(export, "idea", "")["id"],)
+    assert catalog.notes[decided["id"]].body.endswith("\n\nЗаменяет: ADR-0001, ADR-0002.")
     assert catalog.status("ADR-0001") == catalog.status("ADR-0002") == (
         "superseded", decided["id"])
 
@@ -478,7 +486,9 @@ def test_a_replaced_past_decision_gone_from_the_catalog_stops_the_export(store, 
     assert files_in(docs) == []
 
 
-def test_a_question_left_open_puts_the_past_decision_under_review(store, pool, projects, docs):
+def test_a_question_left_open_replaces_nothing(store, pool, projects, docs):
+    """Вопрос, что пересматривает решение проекта, оставили открытым: решения нет, и оно ничего
+    не заменяет — статусы как у отмеченной замены (q-011): решение проекта действует."""
     past_decision(docs)
     council_id = assembled(store, pool)
     revisiting(store, council_id, "Q2")                              # Q2 оставлен открытым
@@ -488,12 +498,22 @@ def test_a_question_left_open_puts_the_past_decision_under_review(store, pool, p
     export = export_of(council_id)
     question = next(note for note in export["notes"] if note["revisits"] == "ADR-0001")
     assert not any(note["change"] == "superseded" for note in export["notes"])
-    assert export["statusChanges"] == [{
-        "id": "ADR-0001", "title": PAST, "from": "active", "to": "under_review",
-        "supersededBy": None, "chain": [question["id"]],
-        "note": f"После выгрузки ADR-0001 остаётся в каталоге, но под вопросом: его "
-                f"пересматривают — {question['id']}, и следующие советы увидят это, пока на "
-                "вопрос нет решения."}]
+    assert export["statusChanges"] == []
+    assert writes(council_id).status_code == 200
+    catalog = Catalog.load(docs)
+    assert catalog.status("ADR-0001") == ("active", None)
+    assert catalog.notes[question["id"]].links == (found(export, "idea", "")["id"],)
+
+
+def test_an_open_question_revisiting_a_decision_gone_from_the_catalog_is_exported(
+        store, pool, projects, docs):
+    council_id = assembled(store, pool)
+    revisiting(store, council_id, "Q2")                    # ADR-0001 в каталоге нет, Q2 открыт
+    with_project(store, projects, council_id)
+    assert approves_one(council_id, "O1").status_code == 200
+    assert approves(council_id).status_code == 200
+    assert writes(council_id).status_code == 200
+    assert Catalog.load(docs).problems() == []
 
 
 # --- выгрузку не собрать
@@ -552,8 +572,30 @@ def test_a_stream_the_prior_version_wrote_shows_its_written_draft(store, pool, p
     put(store, council_id, notes_draft=draft.model_copy(update={
         "run": "n2", "state": "failed", "error": "прерван: сервер остановился"}))
     notes = steps_of(stream_of(council_id))["notes"]
-    assert (notes["state"], notes["note"]) == ("done", "выгружено заметок: 14")
+    assert (notes["state"], notes["note"]) == ("done", "выгружено заметок: 12")
     assert brief(export_of(council_id)) == [(note_id, kind, "kept") for note_id, kind in WRITTEN]
+
+
+def test_outcomes_the_prior_version_wrote_are_not_shown(store, pool, projects, docs):
+    """Поток прежней версии записал в каталог и итог: выгрузка его не показывает — итогов в
+    каталоге заметок совет больше не держит (решение владельца к задаче «Бекенд · Итоги →
+    родительские задачи…»)."""
+    council_id = outcomes_approved(store, pool, projects)
+    assert writes(council_id).status_code == 200
+    written = export_of(council_id)
+    stream = stored(store, council_id)
+    outcome = NotePlan(key="o:мерило", id="OUT-0001", type="outcome", text="Мерило",
+                       generated="Мерило", links=["ADR-0001"], action="create")
+    old = ExportedNote(key="o:мерило", id="OUT-0001", type="outcome", generated="Мерило",
+                       written="Мерило", links=["ADR-0001"], digest="")
+    put(store, council_id,
+        notes_draft=stream.notes_draft.model_copy(update={
+            "notes": [*stream.notes_draft.notes, outcome]}),
+        notes=stream.notes.model_copy(update={"notes": [*stream.notes.notes, old]}))
+    assert export_of(council_id) == written
+    # Без записанного черновика (совсем старый поток) — так же.
+    put(store, council_id, notes_draft=None)
+    assert not any(note["type"] == "outcome" for note in export_of(council_id)["notes"])
 
 
 def test_a_draft_of_the_prior_version_without_translation_does_not_hold_the_step(
@@ -656,7 +698,7 @@ def test_notes_in_another_language_are_translated_by_the_judge_before_they_wait(
     assert export_of(council_id) == export
     stream = writes(council_id).json()["stream"]
     notes = steps_of(stream)["notes"]
-    assert (notes["state"], notes["note"]) == ("done", "выгружено заметок: 14")
+    assert (notes["state"], notes["note"]) == ("done", "выгружено заметок: 12")
     assert runs_of(notes) == [("notes_translation", [("fable", "done")])]
     # Записан перевод, и судья переводил один раз — все заметки разом.
     assert len(translating.turns) == 1 and len(translating.turns[0]) == len(WRITTEN)

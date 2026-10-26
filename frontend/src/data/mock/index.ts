@@ -1,7 +1,7 @@
 import { cleanName, type CouncilFields, type CouncilSummary } from '../../domain/council';
 import { hasRationale, recheckable, type StreamDecision } from '../../domain/decisions';
 import { canSaveOption, type Choice, type OptionSet } from '../../domain/options';
-import { canApproveOutcome, type StreamOutcome } from '../../domain/outcomes';
+import { canApproveOutcome, type AdrRef, type StreamOutcome } from '../../domain/outcomes';
 import { cleanFields, MAX_PROJECT_REPOS, nameKey, type Project, type ProjectFields } from '../../domain/project';
 import { canAddQuestion, type Question } from '../../domain/questions';
 import { fitsKind, isFigmaLink, isPending, isSettled, researchStatus, type Research } from '../../domain/research';
@@ -64,7 +64,7 @@ import {
   startedStructure,
   STRUCTURES,
 } from './structures';
-import { plannedProgress, startedProgress, TASKS, tasksCatalog } from './tasks';
+import { parentTasks, plannedProgress, startedProgress, TASKS, tasksCatalog } from './tasks';
 
 /** Копия, чтобы экран не мог поменять моки у себя в руках. */
 const copy = <T>(value: T): T => structuredClone(value);
@@ -542,16 +542,18 @@ const notesOf = (id: string, streamId: string): MockNotes =>
   notesExports.get(streamKey(id, streamId)) ?? { catalog: null, notes: [], statusChanges: [], refs: {} };
 
 /**
- * Поток записан в каталог: решениям и итогам потока — их id в каталоге (refs); у прошлых решений всех потоков того же
- * каталога — новые статусы: следующие потоки увидят решение заменённым. Новые решения потока пополнили каталог: у других
- * потоков, где решения уже искали, каталог изменился после поиска.
+ * Поток записан в каталог: решениям потока — и у итогов тоже — их id в каталоге (refs); итогов в каталоге нет (решение
+ * владельца к задаче «Бекенд · Итоги → родительские задачи…»). У прошлых решений всех потоков того же каталога — новые
+ * статусы: следующие потоки увидят решение заменённым. Новые решения потока пополнили каталог: у других потоков, где
+ * решения уже искали, каталог изменился после поиска.
  */
 function notesWritten(id: string, streamId: string, written: MockNotes) {
   const stored = storedDecisions(id, streamId);
   for (const decision of Object.values(stored)) decision.catalogId = written.refs[decision.adr] ?? decision.catalogId;
+  const numbered = <T extends AdrRef>(ref: T): T => ({ ...ref, catalogId: written.refs[ref.adr] ?? ref.catalogId });
   const list = outcomesOf(id, streamId);
   list.forEach((o, i) => {
-    list[i] = { ...o, catalogId: written.refs[o.id] ?? o.catalogId };
+    list[i] = { ...o, decisions: o.decisions.map(numbered), reliesOn: o.reliesOn.map(numbered) };
   });
   const path = written.catalog?.path;
   const added = written.notes.filter((n) => n.type === 'decision' && n.change === 'new').length;
@@ -579,8 +581,9 @@ const TASKS_FAILED = 'План задач не построен — запуст
  * План задач совета, как его отдаёт сервер: план — на весь совет, когда готовы все потоки (решение q-009 бекенда); до
  * этого задач нет, а потоки, которые ещё не готовы (не записаны в каталог заметок), — в pendingStreams. План построен —
  * когда «Задачи» ждут вас или готовы; пока модели строят план — его ход, задач ещё нет. Новых планов моки не строят:
- * модели в моках не заканчивают работу, и план есть только у советов из данных макета. Каталог — папка задач проекта
- * совета, какой она сейчас; задачи пишутся не на языке совета — судья их перевёл.
+ * модели в моках не заканчивают работу, и план есть только у советов из данных макета. Родительские задачи — по
+ * утверждённым итогам потоков (решение владельца к задаче «Бекенд · Итоги → родительские задачи…»). Каталог — папка
+ * задач проекта совета, какой она сейчас; задачи пишутся не на языке совета — судья их перевёл.
  */
 function tasksPlanOf(id: string): TasksPlan {
   const { project, participants, judge, stages } = councils[councilAt(id)];
@@ -591,6 +594,7 @@ function tasksPlanOf(id: string): TasksPlan {
   const built =
     plan !== undefined && list.length > 0 && !pending.length && (stages.tasks === 'waiting' || stages.tasks === 'done');
   const translated = catalog !== null && catalog.language !== COUNCIL_LANGUAGE;
+  const outcomesOf = (stream: string) => outcomes.get(streamKey(id, stream)) ?? [];
   return {
     catalog,
     progress: built
@@ -598,6 +602,12 @@ function tasksPlanOf(id: string): TasksPlan {
       : stages.tasks === 'running'
         ? startedProgress(participants, judge)
         : [],
+    parents: built
+      ? parentTasks(
+          list.map((stream) => [stream.id, outcomesOf(stream.id)]),
+          plan.tasks,
+        )
+      : [],
     tasks: built ? plan.tasks : [],
     vanished: built && catalog ? plan.vanished : [],
     readyStreams: built ? list.map((stream) => stream.id) : [],

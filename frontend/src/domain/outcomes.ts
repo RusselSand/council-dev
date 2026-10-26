@@ -9,14 +9,6 @@ export interface AdrRef {
   catalogId: string | null;
 }
 
-/** Итог потока внутри другого объекта (задачи): номер в потоке и, когда поток выгружен, в каталоге — как у итога. */
-export interface OutcomeRef {
-  /** id итога в потоке: «O5». */
-  id: string;
-  /** id итога в каталоге заметок: «OUT-0026»; поток не выгружен — null. */
-  catalogId: string | null;
-}
-
 /** Решение, которое итог реализует, и что оно меняет в итоге. */
 export interface OutcomeDecision extends AdrRef {
   /** Что решение меняет в итоге — как написали модели; нет — null. */
@@ -29,12 +21,14 @@ export interface OutcomeGap {
   reason: string;
 }
 
-/** Итог потока: законченное изменение системы, собранное из решений. */
+/**
+ * Итог потока: законченное изменение системы, собранное из решений. В каталоге заметок итог не хранится — номера в
+ * каталоге у него нет, а утверждённый итог становится родительской задачей на «Задачах» (решение владельца к задаче
+ * «Бекенд · Итоги → родительские задачи…»).
+ */
 export interface StreamOutcome {
-  /** id итога в потоке: «O4». */
+  /** id итога в потоке: «O4»; на экране — как есть. */
   id: string;
-  /** id итога в каталоге заметок, когда поток выгрузили: «OUT-0025»; не выгружен — null. */
-  catalogId: string | null;
   title: string;
   /** Что меняется в системе. */
   change: string;
@@ -72,8 +66,7 @@ export function outcomeReadiness(outcome: Pick<StreamOutcome, 'blockedBy' | 'gap
   return outcome.gaps.length ? 'gaps' : 'ready';
 }
 
-/** Номер итога или решения на экране — как в макете: в каталоге, а не выгружен — в потоке. */
-export const outcomeLabel = (outcome: OutcomeRef): string => outcome.catalogId ?? outcome.id;
+/** Номер решения на экране — как в макете: в каталоге, а не выгружен — в потоке. */
 export const adrLabel = (ref: AdrRef): string => ref.catalogId ?? ref.adr;
 
 /** Итоги утверждают, пока шаг ждёт вас, остановился или уже готов, — как в макете. Не начат или работают модели — нет. */

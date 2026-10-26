@@ -5,7 +5,14 @@
   min-width: 0;
   padding: var(--space-12) var(--space-14);
   border-radius: var(--radius-14);
+}
+
+.paper {
   background: var(--color-paper);
+}
+
+.muted {
+  background: var(--color-surface-muted);
 }
 
 .list {

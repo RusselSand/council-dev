@@ -47,8 +47,8 @@ FOUND = [
                     reason="Его пересматривают."),
     ProjectDecision(adr_id="ADR-0003", question="Кто шлёт счета?", decision="Счета шлёт бот.",
                     relevance="potential_conflict", reason="Бот задевает поиск.",
-                    found_in_code=[CodeTrail(issue="ISS-0004", outcome="OUT-0001",
-                                             commit="a91c3e2", file="app.py")]),
+                    found_in_code=[CodeTrail(issue="ISS-0004", commit="a91c3e2",
+                                             file="app.py")]),
 ]
 SEARCH = DecisionsSearch(state="done", run="d1", catalog=5, traced=1, steps=[], decisions=FOUND)
 # Каталог решений проекта: два прошлых решения; третье добавят потом.

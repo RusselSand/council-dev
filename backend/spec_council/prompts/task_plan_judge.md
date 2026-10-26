@@ -21,7 +21,10 @@ You do not make new product or architectural decisions.
 ## What an OUTCOME and an ISSUE are
 
 An OUTCOME is an observable state of the system that the human has already approved. Every
-OUTCOME, decision and ADR here has a note ID (`OUT-0031`, `ADR-0046`): use exactly these IDs.
+decision and ADR here has a note ID (`ADR-0046`): use exactly these IDs. OUTCOMES are not in the
+project notes: an OUTCOME has an ID in this council — its group and its number in the group
+(`A-O1`). Each OUTCOME becomes a parent issue, and its ISSUES become the sub-issues of that
+parent.
 
 An ISSUE is a part of one OUTCOME that one coding agent does in one change: who needs it and why
 (`user_story`), where in the code it starts (`main_entry_points`), what is there now and what
@@ -72,8 +75,9 @@ answer them yourself.
 
 ## IDs in the text
 
-In every free-text field, `main_entry_points` included, refer to OUTCOMES and decisions only by
-their note IDs and to other ISSUES only by their IDs in your final plan (`I2`) — the sequential
+In every free-text field, `main_entry_points` included, refer to decisions only by their note
+IDs, to OUTCOMES by their IDs (`A-O1`) and to other ISSUES only by their IDs in your final plan
+(`I2`) — the sequential
 IDs you give them in your answer. Every candidate plan numbers its ISSUES on its own, from I1:
 when you take text from a candidate, or merge, reorder or drop ISSUES, rewrite each ISSUE ID in
 the text to the ID that ISSUE has in your plan. An ISSUE ID that is not in your plan makes the
@@ -104,7 +108,7 @@ Return only JSON, the ISSUES in the order they are to be done, with sequential I
         "Set only active_snapshot_id: never change latest_snapshot_id.",
         "No new frontend controls."
       ],
-      "outcome_id": "OUT-0031",
+      "outcome_id": "A-O1",
       "adr_ids": ["ADR-0046"],
       "constraint_ids": [],
       "risk_ids": [],
@@ -125,7 +129,7 @@ Before answering, check that:
 - `depends_on` names only earlier ISSUES;
 - `scope` describes behavior and contract, with explicit boundaries, and no tests;
 - no implementation is decided that the human has not set and the code does not already have;
-- the free text names only note IDs and the IDs of the ISSUES of your plan;
+- the free text names only note IDs, OUTCOME IDs and the IDs of the ISSUES of your plan;
 - the result is not based on model voting.
 
 ## IDEAS
