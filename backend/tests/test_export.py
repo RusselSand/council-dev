@@ -195,6 +195,18 @@ def test_the_revisited_decision_and_the_marked_ones_share_one_replaces_line(root
     assert by_id(draft(root, stream)[0])["ADR-0003"].text.endswith("\n\nЗаменяет: ADR-0001.")
 
 
+def test_the_adr_is_the_decision_text_the_judge_corrected(root):
+    """Решение владельца: судья поправил текст решения — заметка ADR из него; заметка варианта —
+    с текстом варианта, как он есть."""
+    text = "Ручной откат остаётся; откатывают по кнопке в панели, как и прежде."
+    stream = STREAM.model_copy(update={"decisions": [*DECIDED[:2], DECIDED[2].model_copy(
+        update={"text": text})]})
+    note = by_id(draft(root, stream)[0])
+    assert note["ADR-0003"].text == ("Ручной откат остаётся; откатывают по кнопке в панели, как "
+                                     f"и прежде, потому что откат нужен при сбое.{REPLACES}")
+    assert note["PRO-0005"].text == "Ручной откат остаётся."
+
+
 def test_exporting_again_keeps_numbers_and_human_edits(root):
     first, _, _, _ = export(root, edits={"idea": "Деплой без ручной работы."})
     notes, _, _ = draft(root, previous=first)

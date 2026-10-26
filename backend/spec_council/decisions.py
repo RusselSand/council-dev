@@ -19,6 +19,13 @@ ADR: решения потока — ADR-n, решения проекта — к
 отбора: убрали или добавили вопрос — номер сдвигается, поэтому «почему» помнит, по какому вопросу
 каждое решение, которое оно называет (adrs_named), и в перенесённом «почему» номера ставят по
 новому отбору (renumbered).
+
+Текст решения — текст варианта, но судья его правит сам (решение владельца к задаче «…судья
+переносит действующее из заменённого ADR и выравнивает запись»): решение заменяет решения проекта —
+дописывает, что в них ещё действует и в варианте не сказано; путь, имя или термин записаны иначе,
+чем у других решений потока и проекта, — записывает так, как у них. Это тоже не проблема решения.
+Вариант на «Вариантах» остаётся как был; текст, который не отличается от варианта, — не правка
+(rewritten).
 """
 
 import re
@@ -31,6 +38,8 @@ from .proposals import fragments_in, questions_in
 from .slicing import BadAnswer
 
 RATIONALE_MAX = 2000
+# Сколько знаков в тексте решения, который поправил судья: вариант и то, что он дописал.
+DECISION_MAX = 2000
 # Сколько знаков в одной правке: что поменять и почему.
 FIX_MAX = 1000
 # Сколько знаков в том, чем вариант расходится с решением проекта.
@@ -97,6 +106,8 @@ class Analysis:
     fixes: tuple[Fix, ...] = ()
     # С какими действующими решениями проекта расходится выбор.
     clashes: tuple[Clash, ...] = ()
+    # От судьи: текст решения, как он его поправил; None — текст варианта как есть.
+    decision: str | None = None
 
 
 def proposal_id(value: object) -> str | None:
@@ -109,6 +120,22 @@ def rationale_of(value: object) -> str | None:
     if len(text) > RATIONALE_MAX:
         raise BadAnswer(f"обоснование длиннее {RATIONALE_MAX} знаков")
     return text or None
+
+
+def decision_text_of(value: object) -> str | None:
+    """Текст решения от судьи: строкой или {"text": …}. Нет — None: текст варианта как есть."""
+    text = reason_of(value.get("text") if isinstance(value, dict) else value)
+    if len(text) > DECISION_MAX:
+        raise BadAnswer(f"текст решения длиннее {DECISION_MAX} знаков")
+    return text or None
+
+
+def rewritten(text: str | None, option: str | None) -> str | None:
+    """Текст решения, который поправил судья: тот же, что у варианта решения (option), или
+    варианта нет — судья ничего не поправил, None."""
+    if text is None or option is None or text == reason_of(option):
+        return None
+    return text
 
 
 def checked(data: dict, context: Context, field: str) -> Analysis:
@@ -240,12 +267,14 @@ def analysis_of(data: dict, context: Context) -> Analysis:
 
 
 def judged_analysis(data: dict, context: Context) -> Analysis:
-    """Итог судьи по вопросу."""
+    """Итог судьи по вопросу. У варианта, который проверили или рекомендовали, — и текст решения,
+    если судья его поправил."""
     status = data.get("status")
     kind = JUDGED.get(status) if isinstance(status, str) else None
     if kind is None:
         raise BadAnswer(f"неизвестный status: {status!r}")
     reason, rationale = reason_of(data.get("reason")), rationale_of(data.get("rationale"))
+    decision = decision_text_of(data.get("decision"))
     if kind in ("validated", "conflict"):
         found = checked(data, context, "proposal_id")
         # Судья назвал проблему — это конфликт, даже если status «validated».
@@ -256,10 +285,10 @@ def judged_analysis(data: dict, context: Context) -> Analysis:
         fixes = fixes_of(data.get("fixes"), context, required=not only_project) \
             if kind == "conflict" else ()
         return Analysis(kind, found.proposal, found.conflicts, found.risks, found.depends_on,
-                        reason, rationale, fixes, found.clashes)
+                        reason, rationale, fixes, found.clashes, decision)
     if kind == "recommended":
         return Analysis(kind, recommended(data.get("proposal_id"), context), reason=reason,
-                        rationale=rationale)
+                        rationale=rationale, decision=decision)
     if context.selected is not None:
         raise BadAnswer(f"no_recommendation вместо проверки выбранного {context.selected}")
     return Analysis("none", None, reason=reason)

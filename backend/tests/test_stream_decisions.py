@@ -62,6 +62,7 @@ MINE = "Поиск по заголовкам дешевле всего."
 HEADERS = "Искать по заголовкам и первым сообщениям тредов"
 PROBLEM = "P1 ищет по всем тредам, а бюджет F3 этого не выдержит."
 CORRECTED = "Поиск остаётся в одном месте, как решает ADR-3."
+ARCHIVE = "Искать по заголовкам тредов; треды старше года уходят в архив, как и прежде."
 LACKING = "Не хватает данных о нагрузке."
 RESULT = "Мерило идеи"
 
@@ -225,8 +226,8 @@ def test_checked_decisions_are_drafts_with_the_councils_rationale(store, pool):
     questions = questions_of(council_id)
     assert q1 == {
         "question": questions["Q1"], "adr": "ADR-1", "catalogId": None,
-        "option": option_at(council_id, "Q1", "P1"), "verdict": "validated", "note": None,
-        "problem": None, "context": [], "conflicts": [], "replaces": [], "risks": [],
+        "option": option_at(council_id, "Q1", "P1"), "text": None, "verdict": "validated",
+        "note": None, "problem": None, "context": [], "conflicts": [], "replaces": [], "risks": [],
         "fixes": [], "rationale": WHY, "rationaleBy": "ai", "status": "draft", "recheck": None,
         "unchecked": False, "stale": [], "cycle": []}
     # Передан как unresolved — судья взял вариант сам и объяснил почему.
@@ -328,6 +329,30 @@ def test_the_judge_corrects_the_councils_rationale_and_it_is_no_problem(store, p
     assert next(found.adrs for found in analyses if found.question_id == "Q1") == {"ADR-3": "Q3"}
     assert approves(council_id).status_code == 200
     assert stored(store, council_id).decisions[0].adrs == {"ADR-3": "Q3"}
+
+
+def test_the_judge_corrects_the_decision_text_and_it_goes_with_the_decision(store, pool, agents):
+    """Решение владельца: судья сам поправил текст решения — дописал, что ещё действует в
+    заменяемом решении проекта. На «Решениях» это текст решения (видно, что его поправил судья),
+    а вариант — тот же, что на «Вариантах». Это не проблема: решение фиксируют, как обычно, и
+    текст уходит с зафиксированным решением — по нему собирают итоги."""
+    agents.judged["Q1"] = {"status": "validated", "proposal_id": "P1", "decision": ARCHIVE,
+                           "rationale": {"text": WHY, "source": "ai"}}
+    council_id, _ = checked(store, pool)
+    shown = decisions_of(council_id)
+    q1 = shown["Q1"]
+    assert (q1["text"], q1["verdict"], q1["problem"], q1["fixes"], q1["status"]) == (
+        ARCHIVE, "validated", None, [], "draft")
+    assert q1["option"] == option_at(council_id, "Q1", "P1") and q1["option"]["text"] != ARCHIVE
+    assert (shown["Q2"]["text"], shown["Q3"]["text"]) == (None, None)
+    assert edits(council_id, "Q1", WHY, "fixed").json()["decision"]["text"] == ARCHIVE
+    assert approves(council_id).status_code == 200
+    assert [decision.text for decision in stored(store, council_id).decisions] == [
+        ARCHIVE, None, None]
+    pool.run()
+    adrs = json.loads(section(agents.prompts["outcome_discovery"][-1], "ACCEPTED ADRS"))
+    assert {adr["id"]: adr["decision"] for adr in adrs} == {
+        "ADR-1": ARCHIVE, "ADR-2": option_at(council_id, "Q2", "P2")["text"], "ADR-3": OWN}
 
 
 def test_a_question_the_council_could_not_pick_for_is_blocked_without_an_option(store, pool,
@@ -603,6 +628,28 @@ def test_a_recheck_corrects_the_councils_rationale_but_not_ones_own(store, pool,
         assert (q1["verdict"], q1["problem"], q1["recheck"]) == ("validated", None, None)
         assert (q1["rationale"], q1["rationaleBy"]) == (
             (CORRECTED, "ai") if own is None else (MINE, "user"))
+
+
+def test_a_recheck_corrects_the_decision_text_too(store, pool, agents):
+    """Пересчёт — так же, как шаг: отметили замену решения проекта и пересчитали — судья видит
+    отмеченное решение с тем, что в нём решено, и сам дописывает в текст решения, что в нём ещё
+    действует; вариант — как был."""
+    council_id, _ = clashing(store, pool, agents)
+    assert decisions_of(council_id)["Q1"]["text"] is None
+    assert marks(council_id, "Q1", "ADR-0005").status_code == 200
+    asked = len(agents.prompts["decision_judge"])
+    assert rechecks(council_id, "Q1").status_code == 200
+    agents.judged["Q1"] = {"status": "validated", "proposal_id": "P1", "decision": ARCHIVE,
+                           "rationale": {"text": WHY, "source": "ai"}}
+    pool.run()
+    accepted = json.loads(section(judged_prompt(agents, "Q1", asked), "ACCEPTED ADRS"))
+    assert [(d["adr_id"], d["decision"], d.get("replaced_by_this_decision"))
+            for d in accepted] == [("ADR-0005", SERVER, True),
+                                   ("ADR-0007", "Хранить треды год.", None)]
+    q1 = decisions_of(council_id)["Q1"]
+    assert (q1["text"], q1["verdict"], q1["problem"], q1["recheck"]) == (
+        ARCHIVE, "validated", None, None)
+    assert q1["option"] == option_at(council_id, "Q1", "P1")
 
 
 def test_each_project_decision_is_marked_on_its_own(store, pool, agents):
@@ -1457,6 +1504,8 @@ def test_a_stream_of_the_prior_version_shows_its_fixed_decisions(store):
     # Выгрузка — не к нынешним итогам (их нет): номера в каталоге нет.
     assert (q1["catalogId"], q1["option"]["id"], q1["rationale"], q1["rationaleBy"],
             q1["status"]) == (None, "P1", MINE, "user", "fixed")
+    # Текста решения, который поправил судья, прежняя версия не знает: текст решения — вариант.
+    assert (q1["text"], stored(store, council_id).decisions[0].text) == (None, None)
     # Открытый — с вариантом и «почему» совета: щелчок по варианту вернёт его в черновик.
     assert (q2["catalogId"], q2["option"]["id"], q2["rationale"], q2["rationaleBy"],
             q2["status"]) == (None, "P2", WHY, "ai", "open")

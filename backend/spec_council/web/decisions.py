@@ -59,6 +59,7 @@ from ..stream_decisions import (
     rechecking_questions,
     shifted,
     shown_of,
+    text_of,
     unchecked_questions,
     with_ruling,
 )
@@ -121,6 +122,8 @@ class StreamDecision(Schema):
     adr: str
     catalog_id: str | None
     option: Option | None
+    # Текст решения, который поправил судья; не правил — None: текст решения — текст варианта.
+    text: str | None
     verdict: Verdict
     note: str | None
     problem: DecisionProblem | None
@@ -347,13 +350,16 @@ def decision_of(item: Shown, question: Question, options: dict[str, Option | Non
                 catalog_id: str | None, past: dict[str, str], recheck: Recheck | None,
                 stale: list[StaleChoice], cycle: list[str]) -> StreamDecision:
     """Что совет сказал о решении: противоречие — проблемой и что поправить, без заметки судьи;
-    иначе — заметкой судьи. Противоречит вариант ограничениям группы или решениям проекта —
-    «последствия»: сначала ограничения, потом решения проекта, с тем, чем противоречит. Решения
-    проекта, замену которых отметили, — с тем, что в них решено (past — прошлые решения,
-    отобранные для потока). recheck — что с «Пересчитать»; у готового шага — ничего: решения
-    ушли в итоги. unchecked — выбор вопроса на «Вариантах» поменяли после проверки. stale — на
-    какой выбор других вопросов проверка опиралась и какой он сейчас; у готового шага — ничего.
-    cycle — вопросы круга зависимостей, в который входит этот, и он сам."""
+    иначе — заметкой судьи. Текст решения — его, если судья поправил текст варианта (решение
+    владельца к задаче «…судья переносит действующее из заменённого ADR и выравнивает запись»):
+    вариант — тот же, что на «Вариантах». Противоречит вариант ограничениям группы или решениям
+    проекта — «последствия»: сначала ограничения, потом решения проекта, с тем, чем
+    противоречит. Решения проекта, замену которых отметили, — с тем, что в них решено (past —
+    прошлые решения, отобранные для потока). recheck — что с «Пересчитать»; у готового шага —
+    ничего: решения ушли в итоги. unchecked — выбор вопроса на «Вариантах» поменяли после
+    проверки. stale — на какой выбор других вопросов проверка опиралась и какой он сейчас; у
+    готового шага — ничего. cycle — вопросы круга зависимостей, в который входит этот, и он
+    сам."""
     found, ruling = item.analysis, item.ruling
     conflict = found.verdict == "conflict"
     problem = DecisionProblem(text=found.reason or "", fixes=[
@@ -362,7 +368,7 @@ def decision_of(item: Shown, question: Question, options: dict[str, Option | Non
         for fix in found.fixes]) if conflict else None
     return StreamDecision(
         question=question, adr=item.adr, catalog_id=catalog_id,
-        option=options[item.question.id], verdict=VERDICTS[found.verdict],
+        option=options[item.question.id], text=text_of(item), verdict=VERDICTS[found.verdict],
         note=None if conflict else found.reason or None, problem=problem,
         context=[context_of(other, options) for other in rests_on(found)
                  if other != item.question.id],

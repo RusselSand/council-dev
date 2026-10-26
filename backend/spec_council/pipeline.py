@@ -55,8 +55,9 @@ Figma через REST API, модели читают снимок:
    сравнивает варианты вопроса и, если один обоснованно лучше, рекомендует его
    (decision_analysis.md);
 2. decision_judge — судья сводит их анализы в один итог (decision_judge.md); неправду в
-   «почему» участников он исправляет сам. У unresolved вопроса без вариантов сравнивать
-   нечего — модели его не видят.
+   «почему» участников он исправляет сам, а в текст решения дописывает, что ещё действует в
+   решениях проекта, которые оно заменяет, и записывает путь, имя, термин так, как у других
+   решений. У unresolved вопроса без вариантов сравнивать нечего — модели его не видят.
 
 Итоги потока (OutcomeRun) — из зафиксированных решений:
 1. outcome_discovery — каждый участник собирает решения в законченные изменения системы,
@@ -83,6 +84,7 @@ import tempfile
 from collections.abc import Callable, Collection, Iterable, Iterator, Mapping, Sequence
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
+from dataclasses import replace
 from datetime import UTC, datetime
 from functools import partial
 from pathlib import Path
@@ -90,7 +92,7 @@ from threading import Event, Lock
 from typing import Any, Protocol
 from uuid import uuid4
 
-from .decisions import Analysis, adrs_named, analysis_of, judged_analysis
+from .decisions import Analysis, adrs_named, analysis_of, judged_analysis, rewritten
 from .decisions import Context as DecisionContext
 from .decisions import as_prompt as analysis_prompt
 from .design import Context as DesignContext
@@ -360,8 +362,12 @@ def start_analysis(participants: list[str], judge: str, choices: list[Choice],
 
 
 def decisions_key(decisions: list[Decision]) -> list[str]:
-    """Решения, как их помнит сборка итогов: поменялись (и обоснование тоже) — собирать заново."""
-    return [f"{d.question_id}: {d.proposal or '-'}: {d.rationale or ''}" for d in decisions]
+    """Решения, как их помнит сборка итогов: поменялись (и обоснование, и текст решения, который
+    поправил судья) — собирать заново. Текст варианта как есть в ключе не пишется: ключ решения
+    прежней версии тот же. Обоснование — одной строкой (stream_decisions.decision_of), и текст
+    решения отделён от него переводом строки."""
+    return [f"{d.question_id}: {d.proposal or '-'}: {d.rationale or ''}"
+            + (f"\n{d.text}" if d.text is not None else "") for d in decisions]
 
 
 def start_outcomes(participants: list[str], judge: str, decisions: list[Decision],
@@ -1166,6 +1172,8 @@ class DecisionRun(CouncilRun[DecisionAnalysis]):
             else:
                 asked = True
                 verdict = self._analyze(question, offered, selected, known, limits, failures)
+                option = next((p["text"] for p in offered if p["id"] == verdict.proposal), None)
+                verdict = replace(verdict, decision=rewritten(verdict.decision, option))
             named = adrs_named(verdict.rationale, self._related_adrs(question),
                                [decision.adr_id for decision in self.decisions])
             with self._lock:
@@ -1189,9 +1197,10 @@ class DecisionRun(CouncilRun[DecisionAnalysis]):
             frozenset(proposal["id"] for proposal in offered), selected, question.id,
             self.active - frozenset(replaced), frozenset(self._related_adrs(question).values()))
         accepted = accepted_prompt(self.decisions, replaced)
+        asked = {"id": question.id, "text": question.text}
         values = {
             "idea": self.idea,
-            "question": as_json({"id": question.id, "text": question.text}),
+            "question": as_json(asked),
             "proposals": as_json(offered),
             "user_selection": as_json(
                 None if selected is None else {"proposal_id": selected, "rationale": None}),
@@ -1207,7 +1216,11 @@ class DecisionRun(CouncilRun[DecisionAnalysis]):
         self._keep_failures(StepName.decision_analysis, question.id, failures)
         distinct = {as_json(analysis_prompt(a)): analysis_prompt(a) for a in answers.values()}
         variants = shuffled(list(distinct.values()))
-        prompt = render("decision_judge", **values, accepted_adrs=accepted,
+        # Судья видит и решение проекта, которое вопрос пересматривает: решение вопроса его
+        # заменяет, и что в нём ещё действует, судья переносит в текст решения.
+        prompt = render("decision_judge", **{**values, "question": as_json(
+                            {**asked, "revisits": question.revisits})},
+                        accepted_adrs=accepted,
                         decision_analyses=as_json(
                             [{"analysis": n, **v} for n, v in enumerate(variants, 1)]))
         return self._ask_judge(StepName.decision_judge, prompt,
@@ -1238,12 +1251,13 @@ def analysis_of_question(question: OpenQuestion, verdict: Analysis,
     (entries — выбор по каждому вопросу потока, «Q2: P5»): от которых зависит, где судья велел
     что-то поправить и чьи решения называет её «почему» (rests_on). Там выбрали другое —
     проверку повторяют (work.holds). replaced — решения проекта, замену которых к ней
-    подтвердили; adrs — решения потока, которые называет её «почему» (decisions.adrs_named)."""
+    подтвердили; adrs — решения потока, которые называет её «почему» (decisions.adrs_named).
+    Текст решения — как его поправил судья (decisions.rewritten)."""
     found = QuestionAnalysis(
         question_id=question.id, verdict=verdict.kind, proposal=verdict.proposal,
         constraint_conflicts=list(verdict.conflicts), risk_ids=list(verdict.risks),
         depends_on=list(verdict.depends_on), reason=verdict.reason or None,
-        rationale=verdict.rationale,
+        rationale=verdict.rationale, decision=verdict.decision,
         fixes=[DecisionFix(question_id=fix.question, change=fix.change, why=fix.why)
                for fix in verdict.fixes],
         project_conflicts=[DecisionClash(adr_id=clash.adr, text=clash.text)
@@ -1297,7 +1311,9 @@ def decided_context(scope: list[OpenQuestion], decisions: dict[str, Decision],
                     found: dict[str, list[Proposal]], fragments: dict[int, LabeledFragment]
                     ) -> tuple[list[dict], list[dict], list[LabeledFragment]]:
     """Вопросы отбора с их статусом, принятые решения (ADR-n — по n-му вопросу отбора, с
-    выбранным вариантом и обоснованием) и ограничения с рисками группы — для промптов."""
+    выбранным вариантом, текстом решения и обоснованием) и ограничения с рисками группы — для
+    промптов. Текст решения — как его поправил судья проверки (Decision.text), а нет его — текст
+    варианта."""
     limits = [f for f in fragments.values() if f.label in ("constraint", "risk")]
     questions, adrs = [], []
     for n, question in enumerate(scope, 1):
@@ -1310,8 +1326,9 @@ def decided_context(scope: list[OpenQuestion], decisions: dict[str, Decision],
         if accepted:
             adrs.append({"id": adr_id(n), "question_id": question.id,
                          "question": question.text, "proposal_id": decision.proposal,
-                         "decision": next((o["text"] for o in options
-                                           if o["id"] == decision.proposal), None),
+                         "decision": decision.text or next((o["text"] for o in options
+                                                            if o["id"] == decision.proposal),
+                                                           None),
                          "rationale": decision.rationale})
     return questions, adrs, limits
 

@@ -988,7 +988,9 @@ def question_parts(question: OpenQuestion, options: list[dict[str, str]],
     те, замену которых подтвердил человек (Decision.replaces), — они становятся заменёнными
     (Catalog.status). Вопрос оставили открытым — решения нет, и оно ничего не заменяет. ADR,
     которое заменяет решение, из каталога пропал — выгружать нельзя: строка замен назвала бы
-    решение, которого нет."""
+    решение, которого нет. Текст ADR — текст решения: поправил его судья проверки
+    (Decision.text) — его, иначе текст варианта; заметка варианта — с текстом варианта, как он
+    есть."""
     key = unique(question_key(question), taken)
     decided = decision is not None and decision.proposal is not None
     replaced = list(dict.fromkeys([*([question.revisits] if question.revisits else []),
@@ -1010,8 +1012,8 @@ def question_parts(question: OpenQuestion, options: list[dict[str, str]],
         offered.append(Part(option_part, "proposal", option["text"], (key,), was))
         if decision is not None and decision.proposal == option["id"]:
             adr = Part(f"a:{option_part[2:]}", "adr",
-                       replacing(because(option["text"], decision.rationale, words), replaced,
-                                 words),
+                       replacing(because(decision.text or option["text"], decision.rationale,
+                                         words), replaced, words),
                        (option_part,), f"a:{was[2:]}" if was else None)
     return asked, offered, adr
 

@@ -12,6 +12,7 @@ from spec_council.decisions import (
     as_prompt,
     judged_analysis,
     renumbered,
+    rewritten,
 )
 from spec_council.slicing import BadAnswer
 
@@ -139,6 +140,40 @@ def test_the_judge_validates_flags_a_conflict_recommends_or_holds_back():
     assert held == Analysis("none", None, reason="зависит от Q2")
 
 
+def test_the_judge_corrects_the_decision_text_and_it_is_no_problem():
+    """Решение владельца: судья сам дописывает в текст решения, что ещё действует в решении
+    проекта, которое оно заменяет, и пишет путь так, как у других решений, — это не проблема.
+    Текст — у проверенного, противоречивого и рекомендованного варианта; варианта нет — нет и
+    текста."""
+    text = "Своя раскладка у /generation/{service}/layout; spec и result — общая."
+    validated = judged_analysis({"status": "validated", "proposal_id": "P2", "validation": {},
+                                 "decision": f"  {text}\n"}, CHOSEN)
+    assert (validated.kind, validated.reason, validated.fixes, validated.decision) == (
+        "validated", "", (), text)
+    conflict = judged_analysis({"status": "conflict", "proposal_id": "P2", "reason": "против F4",
+                                "validation": {"constraint_conflicts": ["F4"]},
+                                "fixes": [{"question_id": "Q2", "change": "Решите Q2."}],
+                                "decision": {"text": text}}, CHOSEN)
+    assert (conflict.kind, conflict.decision) == ("conflict", text)
+    recommended = judged_analysis({"status": "recommended", "proposal_id": "F3",
+                                   "decision": text}, OPEN)
+    assert recommended.decision == text
+    held = judged_analysis({"status": "no_recommendation", "decision": text}, OPEN)
+    assert held.decision is None
+    assert judged_analysis({"status": "validated", "proposal_id": "P2", "decision": None},
+                           CHOSEN).decision is None
+    # Участник текста решения не пишет: его черновик ADR — не правка.
+    assert analysis_of(checked(), CHOSEN).decision is None
+
+
+def test_a_decision_text_like_the_options_is_no_correction():
+    text = "Своя раскладка; spec и result — общая."
+    assert rewritten(text, "Своя  раскладка;\nspec и result — общая.") is None
+    assert rewritten(text, "Своя раскладка.") == text
+    assert rewritten(text, None) is None
+    assert rewritten(None, "Своя раскладка.") is None
+
+
 def test_a_problem_the_judge_names_is_a_conflict_whatever_the_status():
     found = judged_analysis({"status": "validated", "proposal_id": "P2",
                              "validation": {"constraint_conflicts": ["F4"]},
@@ -184,6 +219,8 @@ def test_a_replaced_project_decision_is_not_in_force_for_the_check():
     ({"status": "recommended", "proposal_id": "P9"}, OPEN, "нет варианта"),
     ({"status": "recommended", "proposal_id": "P1", "rationale": {"text": "x" * 2001}}, OPEN,
      "длиннее"),
+    ({"status": "validated", "proposal_id": "P2", "decision": "x" * 2001}, CHOSEN,
+     "текст решения длиннее"),
     ({"status": "accepted"}, OPEN, "status"),
     # Проблема без того, что с ней делать: ни одной правки — или ни одной годной.
     ({"status": "conflict", "proposal_id": "P2"}, CHOSEN, "без правок"),
