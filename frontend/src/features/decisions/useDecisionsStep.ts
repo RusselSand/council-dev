@@ -61,8 +61,13 @@ export interface RecheckView {
   /** Пересчитать есть что, пересчёт идёт или остановился: без проблемы — своя плашка. */
   active: boolean;
   /**
-   * Почему пересчитать есть что: выбор поменяли на «Вариантах», проверка опиралась на прежний выбор другого вопроса, а без
-   * проблемы — и отметки, которых проверка не учла; пересчёт идёт, остановился или пересчитывать нечего — null.
+   * Проверка опиралась на прежний выбор других вопросов: на какой выбор она опиралась и какой сейчас — по строке на
+   * вопрос, «Проверка шла с Q5: P7, а сейчас у Q5 выбран P58 — …»; стоят над «Проблемой». Пока пересчёт идёт — пусто.
+   */
+  stale: string[];
+  /**
+   * Почему ещё пересчитать есть что: выбор поменяли на «Вариантах», а без проблемы — и отметки, которых проверка не учла;
+   * пересчёт идёт, остановился или таких причин нет — null.
    */
   reason: string | null;
   /** Под кнопкой: пересчёт идёт — «ИИ пересчитывает…», остановился — «Пересчёт остановился…»; иначе — null. */
@@ -196,7 +201,8 @@ const NOT_SAVED_RECHECK = new ApiError('not_saved', 'Не всё сохрани�
  * кнопкой — «Не всё сохранилось», и открывается решение, где не сохранилось. Правки, «Пересчитать» и «Зафиксировать
  * решения» не уходят вместе с «Запустить снова» шага: retrying — шаг запускают снова, и они не действуют; пока решения
  * фиксируются, решение пересчитывается по запросу или правка ждёт паузы в наборе или ответа, onBusy(true) — не действует
- * «Запустить снова». Другой поток — другой экран: ставьте с key по совету и потоку.
+ * «Запустить снова». Какое решение открыто, узнаёт экран потока (onFocus): в «Ходе работы» раскрыт ход его пересчёта.
+ * Другой поток — другой экран: ставьте с key по совету и потоку.
  */
 export function useDecisionsStep(
   councilId: string,
@@ -204,6 +210,7 @@ export function useDecisionsStep(
   state: State,
   retrying: boolean,
   onBusy: (busy: boolean) => void,
+  onFocus: (question: string | null) => void,
 ): DecisionsStep {
   const { t, formatNumber, formatList } = useI18n();
   const query = useStreamDecisions(councilId, streamId, state);
@@ -258,6 +265,12 @@ export function useDecisionsStep(
   useEffect(() => {
     if (current === undefined && first !== undefined) setCurrent(first);
   }, [current, first]);
+
+  // Открытое решение — экрану потока; ушли с «Решений» — открытого нет.
+  useEffect(() => {
+    onFocus(currentId ?? null);
+  }, [currentId, onFocus]);
+  useEffect(() => () => onFocus(null), [onFocus]);
 
   /** Последнее, что на экране: его читают пауза в наборе, ответ сервера и закрытие экрана. */
   const latest = useRef({ decisions, edits, currentId });
@@ -515,6 +528,21 @@ export function useDecisionsStep(
           : null;
     // Почему пересчитать есть что; отметки, которых проверка не учла, на красной плашке видны и так — в последствиях.
     const reason = d.recheck === 'ready' && !recheckNote ? recheckReason(d, marks) : null;
+    // На какой выбор других вопросов опиралась проверка и какой он сейчас; с проблемой — «проблема может уйти».
+    const tail = d.problem ? 'problem' : 'recheck';
+    const choiceLabel = (option: string | null) => option ?? t('decisions.stale.unresolved');
+    const stale =
+      recheckNote?.tone === 'running'
+        ? []
+        : d.stale.map((s) =>
+            s.checked === s.chosen
+              ? t(`decisions.stale.text.${tail}`, { question: s.question, option: choiceLabel(s.chosen) })
+              : t(`decisions.stale.${tail}`, {
+                  question: s.question,
+                  checked: choiceLabel(s.checked),
+                  chosen: choiceLabel(s.chosen),
+                }),
+          );
     return {
       id,
       question: d.question.text,
@@ -536,6 +564,7 @@ export function useDecisionsStep(
         ? {
             disabled: lockedHere || fixing !== null || !recheckable(d.recheck),
             active: d.recheck !== null || recheckNote !== null,
+            stale,
             reason: reason && (reason !== 'marks' || !d.problem) ? t(`decisions.recheck.${reason}`) : null,
             note: recheckNote,
           }

@@ -6,9 +6,11 @@ import { streamKey } from './streams';
  * «Варианты». option — id варианта, который берёт решение; dependsOn — вопросы, от решений которых оно зависит: из них
  * складывается «в контексте», по ним же — порядок решений и круги зависимостей (order.ts). checked — какой выбор на
  * «Вариантах» проверили модели (choiceKey в index.ts): его запоминают, когда выбор на готовых «Вариантах» меняют в
- * первый раз; до тех пор проверили тот, что там стоит. По нему моки считают unchecked, как сервер.
+ * первый раз; до тех пор проверили тот, что там стоит. По нему моки считают unchecked, как сервер. На какой выбор других
+ * вопросов опиралась проверка (stale), моки не помнят: пересчёт в моках не кончается, и утверждённый выбор не меняется.
  */
-export interface MockDecision extends Omit<StreamDecision, 'question' | 'option' | 'context' | 'cycle' | 'unchecked'> {
+export interface MockDecision
+  extends Omit<StreamDecision, 'question' | 'option' | 'context' | 'cycle' | 'unchecked' | 'stale'> {
   option: string | null;
   dependsOn: string[];
   checked?: string | null;

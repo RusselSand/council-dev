@@ -42,7 +42,7 @@ export function Screen() {
           <Research key={council.id} council={council} />
         ) : route.screen === 'step' ? (
           <Stream key={council.id} council={council} route={route}>
-            {({ stream, streams, step, retrying, onBusy }) =>
+            {({ stream, streams, step, retrying, onBusy, onFocus }) =>
               route.step === 'project' ? (
                 <ProjectDecisions
                   key={`${council.id}/${stream.id}`}
@@ -81,6 +81,7 @@ export function Screen() {
                   state={step.state}
                   retrying={retrying}
                   onBusy={onBusy}
+                  onFocus={onFocus}
                 />
               ) : route.step === 'outcomes' ? (
                 <Outcomes

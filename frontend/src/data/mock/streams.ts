@@ -52,6 +52,7 @@ function steps(
       note: state === 'idle' ? '' : (notes[i] ?? ''),
       text: null,
       progress: state === 'idle' ? [] : doneProgress(step, participants, judge, judgeState),
+      rechecks: [],
     };
   });
 }
@@ -301,7 +302,7 @@ export const newStreams = (
       title: group.title,
       idea: group.idea,
       steps: STEPS.map((step): StreamStep => {
-        if (step !== 'project') return { step, state: 'idle', note: '', text: null, progress: [] };
+        if (step !== 'project') return { step, state: 'idle', note: '', text: null, progress: [], rechecks: [] };
         return selecting
           ? {
               step,
@@ -309,8 +310,9 @@ export const newStreams = (
               note: RUNNING_NOTE.project ?? '',
               text: workText(step, participants),
               progress: started(step, participants, judge, now),
+              rechecks: [],
             }
-          : { step, state: 'waiting', note: projectWaitingNote(decisions), text: null, progress: [] };
+          : { step, state: 'waiting', note: projectWaitingNote(decisions), text: null, progress: [], rechecks: [] };
       }),
     };
   });
@@ -364,10 +366,37 @@ const projectDoneNote = (selected: string[]) =>
     : `${selected.length > 1 ? 'учтены' : 'учтено'} ${selected.join(', ')}`;
 
 /**
- * Поток, где человек утвердил шаг: шаг готов, со строкой note. Шаг готов впервые — на следующем начинают работать
- * модели (в макете он сразу ждёт вас, будто модели уже поработали), а где модели не работают («Документация»), он сразу
- * ждёт вас; уже был готов — меняется только строка шага, остальные шаги не трогаются, как в макете. В моках модели на
- * следующем шаге не заканчивают.
+ * Поток, где решение вопроса начали пересчитывать сейчас (now): у «Решений» — ход пересчёта, модели совета проверяют,
+ * судья ждёт. Пересчёты — в порядке решений (order). В моках пересчёт не кончается, как работа моделей на шагах.
+ */
+export const recheckStarted = (
+  stream: Stream,
+  question: string,
+  order: readonly string[],
+  participants: string[],
+  judge: string,
+  now: string,
+): Stream => ({
+  ...stream,
+  steps: stream.steps.map(
+    (step): StreamStep =>
+      step.step === 'decisions'
+        ? {
+            ...step,
+            rechecks: [
+              ...step.rechecks.filter((one) => one.question !== question),
+              { question, progress: started('decisions', participants, judge, now) },
+            ].sort((a, b) => order.indexOf(a.question) - order.indexOf(b.question)),
+          }
+        : step,
+  ),
+});
+
+/**
+ * Поток, где человек утвердил шаг: шаг готов, со строкой note, — пересчётов на нём больше нет. Шаг готов впервые — на
+ * следующем начинают работать модели (в макете он сразу ждёт вас, будто модели уже поработали), а где модели не работают
+ * («Документация»), он сразу ждёт вас; уже был готов — меняется только строка шага, остальные шаги не трогаются, как в
+ * макете. В моках модели на следующем шаге не заканчивают.
  */
 function stepApproved(
   stream: Stream,
@@ -382,7 +411,7 @@ function stepApproved(
   return {
     ...stream,
     steps: stream.steps.map((step): StreamStep => {
-      if (step.step === approved) return { ...step, state: 'done', note, text: null };
+      if (step.step === approved) return { ...step, state: 'done', note, text: null, rechecks: [] };
       if (step.step === next && first && !PHASES[next]) {
         return { ...step, state: 'waiting', note: WAITING_NOTE[next] ?? '', text: null, progress: [] };
       }
@@ -523,8 +552,8 @@ export const notesApproved = (stream: Stream, count: number | null, now: string)
 /**
  * «Запустить снова» — шаг, который остановился, запускается снова: модели, которые уже ответили, заново не работают —
  * их ответы сохранены и второй раз не оплачиваются, как в макете. Шаг идёт снова с первой части, где ответили не все
- * (модели совета или судья): её модели работают заново, модели следующих частей ждут своей очереди. В моках шаг
- * не кончается. Шага с ошибкой нет — поток как есть.
+ * (модели совета или судья): её модели работают заново, модели следующих частей ждут своей очереди; пересчёты решений,
+ * что шли, снимаются — их работу делает этот запуск. В моках шаг не кончается. Шага с ошибкой нет — поток как есть.
  */
 export function streamRetried(stream: Stream, now: string): Stream {
   return {
@@ -560,6 +589,7 @@ export function streamRetried(stream: Stream, now: string): Stream {
           ? `${work} заново, ${kept.length > 1 ? 'ответы' : 'ответ'} ${modelsText(kept)} ${kept.length > 1 ? 'сохранены и не оплачиваются' : 'сохранён и не оплачивается'} второй раз.`
           : `${work} заново.`,
         progress: progressNow,
+        rechecks: [],
       };
     }),
   };

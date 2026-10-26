@@ -5,6 +5,8 @@ import { useI18n } from '../../i18n';
 import { Columns } from '../../ui/Columns';
 import { DashedNote } from '../../ui/DashedNote';
 import { TitledCard } from '../../ui/TitledCard';
+import { RecheckRuns } from './parts/RecheckRuns';
+import { RunGroups } from './parts/RunGroups';
 import { RunPanel } from './parts/RunPanel';
 import { StepBanner } from './parts/StepBanner';
 import { StepChain } from './parts/StepChain';
@@ -19,7 +21,8 @@ interface StreamProps {
 }
 
 /**
- * Шаг потока: вкладки потоков; слева — цепочка шагов, плашка состояния шага и «Ход работы»; справа — карточка шага.
+ * Шаг потока: вкладки потоков; слева — цепочка шагов, плашка состояния шага и «Ход работы» (ход последнего запуска шага,
+ * а пока у «Решений» идут пересчёты — их ход); справа — карточка шага.
  * Шаг не начат — вместо его содержимого «Шаг откроется, когда пройдены предыдущие.» Пока потоки грузятся — «Загружаем…»
  * или ошибка. Другой совет — другой экран: ставьте с key={council.id}.
  */
@@ -44,7 +47,16 @@ export function Stream({ council, route, children }: StreamProps) {
                 onRetry={page.retry}
               />
             )}
-            {page.runs && <RunPanel groups={page.runs} />}
+            {page.rechecks && (
+              <RunPanel label={t('stream.runs.rechecks')}>
+                <RecheckRuns rows={page.rechecks} onToggle={page.toggleRecheck} />
+              </RunPanel>
+            )}
+            {page.runs && (
+              <RunPanel label={t('stream.runs.last')}>
+                <RunGroups groups={page.runs} />
+              </RunPanel>
+            )}
           </>
         }
         main={

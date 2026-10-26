@@ -178,9 +178,9 @@ export function useDecisionEdits(councilId: string, streamId: string, run: numbe
 /**
  * «Пересчитать» — POST /api/councils/<id>/streams/<streamId>/decisions/<questionId>/recheck; ответ — решение: модели
  * проверяют выбор этого вопроса заново, а шаг и другие решения не меняются. Решение сразу встаёт на место прежнего в
- * решениях того же запуска шага; решения и список советов перезапрашиваются, а пока пересчёт идёт — опрашиваются
- * (useStreamDecisions()). run — номер запуска шага, решения которого на экране: шаг с тех пор запустили снова — сервер
- * не пересчитает.
+ * решениях того же запуска шага; решения, потоки (ход пересчёта у шага — rechecks) и список советов перезапрашиваются, а
+ * пока пересчёт идёт — опрашиваются (useStreamDecisions(), useCouncilStreams()). run — номер запуска шага, решения
+ * которого на экране: шаг с тех пор запустили снова — сервер не пересчитает.
  */
 export function useRecheckDecision(): Mutation<
   [id: string, streamId: string, run: number, questionId: string],
@@ -197,6 +197,7 @@ export function useRecheckDecision(): Mutation<
     },
     (decision, id, streamId, run) => {
       markStale('decisions', putDecision(id, streamId, run, decision));
+      markStale('streams');
       markStale('councils');
     },
   );

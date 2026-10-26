@@ -49,6 +49,7 @@ import {
   outcomesStepApproved,
   PROJECT_DECISIONS,
   questionsApproved,
+  recheckStarted,
   STREAMS,
   streamKey,
   streamRetried,
@@ -412,6 +413,8 @@ function decisionListOf(id: string, streamId: string): StreamDecision[] {
       status: unchecked && rest.status === 'fixed' ? 'draft' : rest.status,
       recheck: started ? rest.recheck : rest.recheck === 'ready' || unchecked ? 'ready' : null,
       unchecked,
+      // Пересчёт в моках не кончается: утверждённый выбор других вопросов тот же, и проверка опирается на нынешний.
+      stale: [],
       question,
       option: optionOf(question.id, option),
       context: dependsOn.map((other) => {
@@ -1127,10 +1130,15 @@ export const mockSource: DataSource = {
     const done = stepOf((streams.get(id) ?? [])[at], 'decisions').state === 'done';
     if (!done && recheckable(shown.recheck)) {
       // Модели проверяют выбор вопроса заново; решение — черновик и занято, «почему» ИИ напишет пересчёт, своё «почему»
-      // человека остаётся. Шаг и другие решения не меняются. В моках пересчёт не кончается, как работа моделей на шагах.
+      // человека остаётся. Шаг и другие решения не меняются, только у шага — ход пересчёта. В моках пересчёт не
+      // кончается, как работа моделей на шагах.
       stored.recheck = 'running';
       stored.status = 'draft';
       if (stored.rationaleBy === 'ai') stored.rationale = '';
+      const { participants, judge } = councils[index];
+      const list = streams.get(id) ?? [];
+      const order = decisionListOf(id, streamId).map((d) => d.question.id);
+      list[at] = recheckStarted(list[at], questionId, order, participants, judge, new Date().toISOString());
       decisionsChanged(index, id, streamId);
     }
     return copy(decisionListOf(id, streamId).find((d) => d.question.id === questionId) as StreamDecision);

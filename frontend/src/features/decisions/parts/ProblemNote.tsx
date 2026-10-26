@@ -15,13 +15,20 @@ interface ProblemNoteProps {
 /**
  * Красная плашка над решением, как в макете: «Проблема: …», «Что поправить» по номерам — вопрос и что сделать, —
  * пояснение, как поправить, «Поправить в «Вариантах»» и, на месте «Перепроверить» макета, «Пересчитать»; под ними —
- * почему пересчитать есть что (выбор поменяли на «Вариантах», проверка опиралась на прежний выбор другого вопроса), идёт
- * ли пересчёт или он остановился.
+ * выбор поменяли на «Вариантах», идёт ли пересчёт или он остановился. Проверка опиралась на прежний выбор других
+ * вопросов — над «Проблемой», на какой выбор она опиралась и какой сейчас.
  */
 export function ProblemNote({ problem, onFix, recheck, onRecheck }: ProblemNoteProps) {
   const { t } = useI18n();
   return (
     <section className={styles.problem}>
+      {recheck && recheck.stale.length > 0 && (
+        <ul className={styles.stale}>
+          {recheck.stale.map((line) => (
+            <li key={line}>{line}</li>
+          ))}
+        </ul>
+      )}
       <p className={styles.text}>
         <strong className={styles.label}>{t('decisions.problem')}</strong> {problem.text}
       </p>

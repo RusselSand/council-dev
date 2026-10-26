@@ -48,6 +48,19 @@ export interface DecisionConflict {
   text: string | null;
 }
 
+/**
+ * Выбор другого вопроса, на который опиралась проверка решения, и какой у него утверждён сейчас: «Проверка шла с Q5: P7,
+ * а сейчас у Q5 выбран P58». Вариант — null, когда вопрос передан как unresolved; текст — у своего варианта (человека).
+ * Вариант тот же, а тексты разные — текст своего варианта поправили.
+ */
+export interface StaleChoice {
+  question: string;
+  checked: string | null;
+  checkedText: string | null;
+  chosen: string | null;
+  chosenText: string | null;
+}
+
 /** Что поправить, чтобы снять проблему: в каком вопросе и что. */
 export interface DecisionFix {
   question: string;
@@ -99,6 +112,11 @@ export interface StreamDecision {
    */
   unchecked: boolean;
   /**
+   * Проверка опиралась на выбор других вопросов, а их с тех пор пересчитали с другим выбором: на какой выбор она
+   * опиралась и какой сейчас — по вопросу. Нет таких или шаг готов — пусто. Считает сервер.
+   */
+  stale: StaleChoice[];
+  /**
    * Решение в круге зависимостей проверки — id вопросов круга, чьи решения есть на шаге, и этого тоже, по номерам: «Круг
    * зависимостей: Q1 и Q3 зависят друг от друга.»; не в круге — пусто. Порядок решений и круги считает сервер.
    */
@@ -133,15 +151,16 @@ export const decisionsApprovable = (state: State): boolean => stepApprovable(sta
 export const recheckable = (recheck: DecisionRecheck | null): boolean => recheck === 'ready' || recheck === 'failed';
 
 /**
- * Почему решение есть что пересчитать: выбор вопроса поменяли на «Вариантах»; отмечены замены, которых проверка не учла
- * (противоречие с ними ещё видно); иначе — проверка опиралась на прежний выбор другого вопроса. marks — отметки на экране.
+ * Почему решение есть что пересчитать, кроме выбора других вопросов, на который опиралась проверка (о нём — stale): выбор
+ * вопроса поменяли на «Вариантах»; отмечены замены, которых проверка не учла (противоречие с ними ещё видно); ни то, ни
+ * другое — null. marks — отметки на экране.
  */
-export type RecheckReason = 'unchecked' | 'marks' | 'context';
+export type RecheckReason = 'unchecked' | 'marks';
 
-export function recheckReason(decision: StreamDecision, marks: readonly string[]): RecheckReason {
+export function recheckReason(decision: StreamDecision, marks: readonly string[]): RecheckReason | null {
   if (decision.unchecked) return 'unchecked';
   const clashes = decision.conflicts.filter((c) => c.kind === 'decision').map((c) => c.id);
-  return marks.some((id) => clashes.includes(id)) ? 'marks' : 'context';
+  return marks.some((id) => clashes.includes(id)) ? 'marks' : null;
 }
 
 /** Есть «почему»: из одних пробелов — нет. Без него решение не фиксируется, как в макете. */
