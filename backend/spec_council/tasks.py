@@ -96,13 +96,17 @@ class Names:
     def __call__(self, text: str, quote: str = "«{}»") -> str:
         return renumbered(text, self.numbers, self.texts, quote, self.terms, self.phrases)
 
+    def own(self) -> Names:
+        """Номера для текстов, что писали модели самого потока (заметки, итоги): R1 в них —
+        находка скана потока (owned), а не исследования совета."""
+        return replace(self, texts=self.owned or self.texts)
+
     def settled(self, note_id: str, text: str, quote: str = "«{}»") -> str:
         """Текст заметки потока с номерами заметок: в записи до них (legacy) — номера потока, и
-        R1 в нём — находка скана потока (owned)."""
+        R1 в нём — находка скана потока (own)."""
         if note_id not in self.legacy:
             return text
-        return renumbered(text, self.numbers, self.owned or self.texts, quote, self.terms,
-                          self.phrases)
+        return self.own()(text, quote)
 
     def within(self, notes: Collection[str]) -> Names:
         """Только номера заметок, что есть в каталоге (notes): заметку вопроса или варианта

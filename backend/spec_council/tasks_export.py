@@ -211,12 +211,17 @@ def drafted_tasks(plan: TaskPlan, fragments: Mapping[int, LabeledFragment], shel
     # ту задача сослалась бы впустую. Номер с нулями или без — одна заметка.
     known = {note_key(note_id) for note_id in catalog.notes}
 
-    def names_of(outcome: str) -> Names | None:
+    def names_of(outcome: str, own: bool = False) -> Names | None:
+        """Номера потока итога. Текст задачи плана писали модели, что читали исследование совета;
+        текст итога (own) — модели потока по его скану: R1 в нём — находка скана потока."""
         names = (streams or {}).get(outcome)
-        return names.within(catalog.notes) if names is not None else None
+        if names is None:
+            return None
+        names = names.within(catalog.notes)
+        return names.own() if own else names
 
-    def renumber(outcome: str) -> Callable[[str], str] | None:
-        names = names_of(outcome)
+    def renumber(outcome: str, own: bool = False) -> Callable[[str], str] | None:
+        names = names_of(outcome, own)
         return (lambda text: names(text, words["quote"])) if names else None
 
     def kept(outcome: str) -> frozenset[str]:
@@ -240,11 +245,12 @@ def drafted_tasks(plan: TaskPlan, fragments: Mapping[int, LabeledFragment], shel
     notes: list[NotePlan] = []
     dead: set[str] = set()
 
-    def place(number: IssueNumber, text: str, links: Sequence[str], outcome: str) -> None:
+    def place(number: IssueNumber, text: str, links: Sequence[str],
+              fix: Callable[[str], str] | None) -> None:
         old = filed.get(number.id)
         notes.append(planned(Part(number.key, "issue", text, tuple(dict.fromkeys(links))),
                              {number.key: number.id},
-                             migrated(old, text, renumber(outcome)), old.key if old else None,
+                             migrated(old, text, fix), old.key if old else None,
                              shelf, reuse))
 
     for issue in plan.issues:
@@ -266,11 +272,12 @@ def drafted_tasks(plan: TaskPlan, fragments: Mapping[int, LabeledFragment], shel
         parent = by_issue[by_name[issue.outcome_id].name].id
         place(number, text, [issue_files.parent_link(parent),
                              *(name for name in issue.adr_ids if name in catalog.notes),
-                             *(name for name, _ in after)], issue.outcome_id)
+                             *(name for name, _ in after)], renumber(issue.outcome_id))
     for parent in parents:
-        text = parent_text(parent.outcome, words, renumber(parent.name))
+        own = renumber(parent.name, own=True)
+        text = parent_text(parent.outcome, words, own)
         dead |= dead_in(text, parent.name)
-        place(by_issue[parent.name], text, parent_decisions(parent), parent.name)
+        place(by_issue[parent.name], text, parent_decisions(parent), own)
     if dead:
         raise NotesError(f"В каталоге заметок больше нет {', '.join(sorted(dead))}, а задачи "
                          "плана их называют: верните заметки или выгрузите потоки заново и "

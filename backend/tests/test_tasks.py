@@ -840,6 +840,25 @@ def test_each_approved_outcome_is_a_parent_task_and_its_plan_tasks_are_subtasks(
     assert "outcomes" not in rendered
 
 
+def test_a_parent_task_names_the_findings_of_its_streams_scan(tmp_path):
+    # Исследование прошли заново после того, как поток взял себе его копию, и R1 у них разные.
+    # Итог писали модели потока по его скану: в родительской задаче R1 — находка потока. Задачу
+    # плана писали модели, что читали исследование совета: в ней R1 — его находка.
+    names = Names({}, {"R1": "Ответы ищут в индексе."},
+                  owned={"R1": "Ответы ищут полнотекстом."})
+    outcome = Outcome(id="O1", title="Кэш", behavior="Ответы — по R1.",
+                      acceptance_criteria=["R1 соблюдена."])
+    issue = Issue(id="I1", title="Кэш", user_story="As a team, I want answers.",
+                  outcome_id="C-O1", scope=["Сделать по R1."])
+    plan = TaskPlan(state="done", run="t1", steps=[], issues=[issue])
+    [task, cache], _, _ = drafted_tasks(plan, {}, Shelf(Catalog({}), tmp_path, tmp_path / "issues"),
+                                        None, words_for("Russian"), "Russian", (),
+                                        {"C-O1": names}, parents=[parent(outcome=outcome)])
+    assert "- Сделать по «Ответы ищут в индексе»." in task.text
+    assert "Ответы — по «Ответы ищут полнотекстом»." in cache.text
+    assert "- «Ответы ищут полнотекстом» соблюдена." in cache.text
+
+
 def test_a_plan_of_the_previous_version_names_outcomes_by_note_numbers(tmp_path):
     # План прежней версии звал итог номером его заметки (OUT-0001), пока выгрузка потока его
     # помнит: подзадача — того же родителя, а номер итога в тексте — номер родительской задачи.
