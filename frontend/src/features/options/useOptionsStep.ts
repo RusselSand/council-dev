@@ -18,6 +18,7 @@ import { useI18n } from '../../i18n';
 import { navigate, navigationFocus, routePath } from '../../router';
 import { claimChoice } from './choiceClaims';
 import { failedChoicesOf, settleWrites, trackChoice, useFailedChoices } from './pendingWrites';
+import { useOptionDeletion } from './useOptionDeletion';
 import { useOptionEditor } from './useOptionEditor';
 import { useOwnOption } from './useOwnOption';
 
@@ -48,10 +49,23 @@ export interface OptionView {
   /** Открыта правка этого варианта. */
   editing: boolean;
   /**
-   * «Поправить» действует: правки не заперты, другая правка не уходит (и с экрана, который закрыли, пока она уходила) и
-   * вариант не сохраняется из поля «Свой вариант».
+   * «Поправить» действует: правки не заперты, другая правка не уходит (и с экрана, который закрыли, пока она уходила),
+   * вариант не сохраняется из поля «Свой вариант» и не удаляется.
    */
   editable: boolean;
+  /**
+   * «Удалить» действует: как «Поправить», а ещё вариант не выбран (и выбор, который уходит, не он), выбор вопроса не
+   * уходит и другой вариант не удаляется.
+   */
+  deletable: boolean;
+  /** Вариант выбран, а «Удалить» иначе бы действовала: рядом — «сначала выберите другой». */
+  chosen: boolean;
+  /** Первое «Удалить» нажато — кнопка стала «Да, удалить». */
+  confirming: boolean;
+  /** Вариант удаляется: его не выбрать и не поправить. */
+  deleting: boolean;
+  /** Не вышло удалить. */
+  deleteError: ApiError | undefined;
 }
 
 /** Плашка судьи: «Выбор за вами · судья fable», что он думает и отброшенные. */
@@ -120,6 +134,11 @@ export interface OptionsStep {
    */
   choiceError: ApiError | undefined;
 
+  /** «Удалить» и «Да, удалить» у варианта. */
+  deleteOption: (id: string) => void;
+  /** Удалить вариант ещё раз, если не вышло. */
+  retryDelete: (id: string) => void;
+
   /** Правка варианта: что набрано, уходит ли, ошибка. */
   editText: string;
   editSaving: boolean;
@@ -154,7 +173,8 @@ const NOT_SAVED = new ApiError('not_saved', 'Не всё сохранилось 
 
 /**
  * Шаг «Варианты», как в макете: вопросы по одному — чипы, «готово 2 из 4», «←» / «→»; плашка судьи и отброшенные;
- * варианты с «почему», «ценой» и зависимостями; «Поправить»; «Свой вариант»; «Пока не решаю». Выбор уходит сразу по
+ * варианты с «почему», «ценой» и зависимостями; «Поправить»; «Удалить» (решение владельца: любой вариант, кроме
+ * выбранного, — useOptionDeletion()); «Свой вариант»; «Пока не решаю». Выбор уходит сразу по
  * щелчку (useOptionChoices()); свой вариант — после паузы в наборе (useOwnOption()), правка — по «Сохранить»
  * (useOptionEditor()), и сохранённое становится выбором, если, пока оно сохранялось, у вопроса не выбрали другое (щелчок
  * по варианту, «Пока не решаю», «Свой вариант», в котором начали писать, ушедшая правка) — и на экране, открытом снова,
@@ -243,10 +263,11 @@ export function useOptionsStep(
   // забываются его поле и правка.
   const own = useOwnOption(councilId, streamId, currentId, run, round, query.data?.optionSets, select);
   const editor = useOptionEditor(councilId, streamId, currentId, run, round, query.data?.optionSets, select);
+  const deletion = useOptionDeletion(councilId, streamId, run, round);
 
-  // Пока ответа ждут утверждение, выбор, свой вариант (и пока он ждёт паузы в наборе) или правка, «Запустить снова» не
-  // действует; ответили или ушли с шага — снова действует.
-  const busy = approving || Object.keys(pending).length > 0 || own.saving || editor.saving;
+  // Пока ответа ждут утверждение, выбор, свой вариант (и пока он ждёт паузы в наборе), правка или удаление варианта,
+  // «Запустить снова» не действует; ответили или ушли с шага — снова действует.
+  const busy = approving || Object.keys(pending).length > 0 || own.saving || editor.saving || deletion.pending;
   useEffect(() => {
     if (!busy) return undefined;
     onBusy(true);
@@ -259,8 +280,10 @@ export function useOptionsStep(
   // утвердит без неё. На готовом шаге вопросы смотрят, хоть выбирать и нельзя.
   const navLocked = approving || retrying || editor.saving;
   // «Поправить»: пока правка уходит (и с экрана, который закрыли, пока она уходила), другую не открыть; вариант ещё
-  // сохраняется из поля «Свой вариант» — правка ушла бы раньше набранного в поле, и оно бы её затёрло.
-  const editable = (id: string) => !locked && !editor.saving && !editor.locked && !own.saves(id);
+  // сохраняется из поля «Свой вариант» — правка ушла бы раньше набранного в поле, и оно бы её затёрло; вариант
+  // удаляется — править нечего.
+  const removing = (id: string) => set !== undefined && deletion.deleting(set.question.id, id);
+  const editable = (id: string) => !locked && !editor.saving && !editor.locked && !own.saves(id) && !removing(id);
   const ownOpen = set !== undefined && own.shown;
   const choice: Choice | null = set ? choiceOf(set, pending) : null;
   // Выбором станет вариант из поля (в нём набрано то, чего на сервере ещё нет) или уже стал — выбран его кружок. Поле
@@ -271,9 +294,10 @@ export function useOptionsStep(
   const show = (id: string) => {
     if (id === currentId || navLocked) return;
     // Ушли к другому вопросу: набранное в поле «Свой вариант» уходит и остаётся выбором, поле закрывается (не
-    // сохранилось — ждёт у вопроса с ошибкой); правка закрывается без сохранения.
+    // сохранилось — ждёт у вопроса с ошибкой); правка закрывается без сохранения; «Да, удалить» снят.
     own.close();
     editor.cancel();
+    deletion.reset();
     setCurrent(id);
   };
 
@@ -295,27 +319,39 @@ export function useOptionsStep(
     // Пока поле «Свой вариант» открыто, созданный из него вариант — в поле, а не карточкой; пока открыта правка,
     // созданный ею вариант — в правке: карточкой со старым текстом рядом с ней он не встаёт.
     .filter((option) => !(ownOpen && option.id === own.option) && option.id !== editor.created)
-    .map((option) => ({
-      id: option.id,
-      text: option.text,
-      source: source(option),
-      fromGroup: option.source === 'group',
-      recommended: option.recommended,
-      why: why(option),
-      cost: option.cost,
-      dependencies: option.dependsOn.map((id) => {
-        const dependency = dependencyState(id, sets, pending);
-        return {
-          id,
-          state: dependency,
-          label: t('options.dependency', { id, state: t(`options.dependency.${dependency}`) }),
-          openable: dependency !== 'removed' && !navLocked,
-        };
-      }),
-      selected: !ownSelected && chosenHere(option.id),
-      editing: editor.option === option.id,
-      editable: editable(option.id),
-    }));
+    .map((option) => {
+      const chosen = chosenHere(option.id);
+      // «Удалить» — как «Поправить», пока выбор вопроса не уходит (он мог уйти на этот вариант) и другой вариант не
+      // удаляется; выбранный вариант не удаляют — сначала выбирают другой.
+      const removable =
+        editable(option.id) && set !== undefined && pending[set.question.id] === undefined && !deletion.pending;
+      return {
+        id: option.id,
+        text: option.text,
+        source: source(option),
+        fromGroup: option.source === 'group',
+        recommended: option.recommended,
+        why: why(option),
+        cost: option.cost,
+        dependencies: option.dependsOn.map((id) => {
+          const dependency = dependencyState(id, sets, pending);
+          return {
+            id,
+            state: dependency,
+            label: t('options.dependency', { id, state: t(`options.dependency.${dependency}`) }),
+            openable: dependency !== 'removed' && !navLocked,
+          };
+        }),
+        selected: !ownSelected && chosen,
+        editing: editor.option === option.id,
+        editable: editable(option.id),
+        deletable: removable && !chosen,
+        chosen: removable && chosen,
+        confirming: removable && !chosen && deletion.confirming(set.question.id, option.id),
+        deleting: removing(option.id),
+        deleteError: set ? deletion.errorOf(set.question.id, option.id) : undefined,
+      };
+    });
 
   const choose = (next: Choice) => {
     if (!set || locked) return;
@@ -327,7 +363,8 @@ export function useOptionsStep(
   };
 
   const done = chosenCount(sets, pending);
-  const approveDisabled = approving || retrying;
+  // Пока вариант удаляется, не утверждают: «Решения» взяли бы его вместе с выбором.
+  const approveDisabled = approving || retrying || deletion.pending;
 
   const approve = () => {
     if (!stepApprovable(state) || approveDisabled || !query.data) return;
@@ -420,7 +457,9 @@ export function useOptionsStep(
     toggleDropped: () => setDroppedOpen((value) => !value),
 
     options,
-    pick: (id) => choose({ kind: 'option', option: id }),
+    pick: (id) => {
+      if (!removing(id)) choose({ kind: 'option', option: id });
+    },
     ownOpen,
     ownSelected,
     ownText: ownOpen ? own.text : '',
@@ -437,6 +476,13 @@ export function useOptionsStep(
     unresolved: !ownSelected && choice?.kind === 'unresolved',
     pickUnresolved: () => choose({ kind: 'unresolved' }),
     choiceError: set ? failed[set.question.id] : undefined,
+
+    deleteOption: (id) => {
+      if (set && options.find((o) => o.id === id)?.deletable) deletion.remove(set.question.id, id);
+    },
+    retryDelete: (id) => {
+      if (set && options.find((o) => o.id === id)?.deletable) deletion.retry(set.question.id, id);
+    },
 
     editText: editor.text,
     editSaving: editor.saving,

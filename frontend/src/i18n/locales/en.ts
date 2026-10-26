@@ -315,6 +315,9 @@ export const en = translation({
   'options.dependency.unresolved': 'unresolved',
   'options.dependency.removed': 'removed',
   'options.edit': 'Edit',
+  'options.delete': 'Delete',
+  'options.delete.confirm': 'Yes, delete',
+  'options.delete.chosen': 'The chosen option can’t be deleted — choose another one first.',
   'options.edit.label': 'Edit option {id}',
   'options.edit.note': 'Your edit becomes your own option — the council will revisit “why” and “cost” for the new wording.',
   'options.edit.save': 'Save',
@@ -587,6 +590,7 @@ export const en = translation({
     'The choice can’t be changed now: the step hasn’t started or it was run again. The stream and options are updated.',
   'error.unknown_option': 'The question has no such option. Options are updated.',
   'error.not_own_option': 'Council options aren’t edited — an edit becomes your own option.',
+  'error.option_chosen': 'The option is chosen — choose another one first. Options are updated.',
   'error.decisions_not_ready':
     'Decisions can’t be changed now: the step hasn’t started or it was run again. The stream and decisions are updated.',
   'error.rationale_required': 'A decision can’t be finalized without a rationale — write the “why”.',

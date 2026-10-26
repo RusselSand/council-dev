@@ -134,14 +134,16 @@ def earlier_choices(stream: Stream) -> dict[str, Choice]:
 
 def last_used(stream: Stream) -> int:
     """Самый большой номер варианта, какой поток уже давал: найденные советом (и к вопросам,
-    которых в отборе больше нет), свои варианты человека, проверки и решения — и в прежней
-    работе тоже. Новые номера — только дальше: вопрос, вернувшийся в отбор, не должен узнать
+    которых в отборе больше нет), свои варианты человека, удалённые, проверки и решения — и в
+    прежней работе тоже. Новые номера — только дальше: вопрос, вернувшийся в отбор, не должен узнать
     свой прежний выбор в чужом варианте под тем же номером."""
     ids = [proposal.id for options in (stream.proposals.options if stream.proposals else [])
            for proposal in options.proposals]
     # Поиск помнит, с какого номера нумеровал: варианты убранных вопросов ушли, их номера — нет.
     ids.append(f"P{stream.proposals.first - 1}" if stream.proposals else "")
     ids += [own.id for own in stream.own_options or []]
+    # Удалённый вариант ушёл, а номер его — нет (options.with_removed).
+    ids += [removed.id for removed in stream.removed_options]
     for choice in [*(stream.choices or []), *(work.choice for work in stream.earlier)]:
         ids.append(choice.proposal or "")
     for work in stream.earlier:

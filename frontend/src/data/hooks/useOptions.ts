@@ -59,6 +59,19 @@ const putOption =
     };
   };
 
+/** Вариант — прочь из вариантов своего вопроса в вариантах того же потока и запуска шага. */
+const dropOption =
+  (councilId: string, streamId: string, run: number, questionId: string, optionId: string) =>
+  (current: StreamOptions) =>
+    sameRound(current, councilId, streamId, run)
+      ? {
+          ...current,
+          optionSets: current.optionSets.map((set) =>
+            set.question.id === questionId ? { ...set, options: set.options.filter((o) => o.id !== optionId) } : set,
+          ),
+        }
+      : current;
+
 /**
  * Выбор сейчас не меняют (шаг запустили снова в другой вкладке: модели ещё работают или варианты уже другого запуска) —
  * потоки и варианты на экране устарели; варианта или вопроса уже нет — устарели варианты.
@@ -238,6 +251,37 @@ export function useUpdateOption(): Mutation<
     },
     (option, id, streamId, run, questionId, _optionId, _text, fresh) => {
       markStale('options', fresh() ? putOption(id, streamId, run, questionId, option) : undefined);
+      markStale('councils');
+    },
+  );
+}
+
+/**
+ * Удалить вариант вопроса — DELETE /api/councils/<id>/streams/<streamId>/options/<questionId>/<optionId>; ответа нет.
+ * Вариант сразу пропадает из вариантов вопроса, если fresh() — набор вариантов тот же, что когда запрос ушёл, и у
+ * вариантов тот же run (как у useAddOption()); варианты, потоки (строка «Решений» в цепочке: решение, которое брало
+ * вариант, ждёт «Пересчитать») и список советов перезапрашиваются. Варианта уже нет (not_found) — он тоже удалён.
+ * Вариант успели выбрать в другой вкладке (option_chosen) — варианты перезапрашиваются. run — номер запуска шага,
+ * варианты которого на экране: шаг с тех пор запустили снова — сервер не удалит.
+ */
+export function useDeleteOption(): Mutation<
+  [id: string, streamId: string, run: number, questionId: string, optionId: string, fresh: () => boolean],
+  void
+> {
+  return useMutation(
+    async (id: string, streamId: string, run: number, questionId: string, optionId: string, _fresh: () => boolean) => {
+      try {
+        await source.deleteOption(id, streamId, run, questionId, optionId);
+      } catch (error) {
+        if (error instanceof ApiError && error.code === 'not_found') return;
+        if (error instanceof ApiError && error.code === 'option_chosen') markStale('options');
+        staleOnRefused(error);
+        throw error;
+      }
+    },
+    (_result, id, streamId, run, questionId, optionId, fresh) => {
+      markStale('options', fresh() ? dropOption(id, streamId, run, questionId, optionId) : undefined);
+      markStale('streams');
       markStale('councils');
     },
   );

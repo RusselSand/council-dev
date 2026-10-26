@@ -1,14 +1,16 @@
 """«Варианты» потока — docs/api-contract.md: варианты потока (GET …/streams/{streamId}/options),
 выбор по вопросу (PUT …/options/{questionId}/choice), свой вариант (POST …/options/{questionId}),
-правка своего варианта (PATCH …/options/{questionId}/{optionId}) и «Утвердить выбор» (POST
-…/options/approve).
+правка своего варианта (PATCH …/options/{questionId}/{optionId}), удаление варианта (DELETE
+…/options/{questionId}/{optionId}) и «Утвердить выбор» (POST …/options/approve).
 
 Вопросы шага, их варианты и выбор — options.py. Вопросы идут в порядке зависимостей вариантов
 (options.order_of; решение владельца к задаче «…порядок вопросов по «зависит от»…»), у вопроса
-круга зависимостей — вопросы его круга (cycle). Выбирать, писать свой вариант и править можно,
-пока шаг ждёт вас, остановился или уже готов, — шаги потока это не меняет. Шаг не начат или на
-нём работают модели — options_not_ready; так же — когда запрос к вариантам другого запуска шага
-(run): шаг с тех пор запустили снова, и варианты уже другие, хоть номера у них те же.
+круга зависимостей — вопросы его круга (cycle). Выбирать, писать свой вариант, править и удалять
+варианты можно, пока шаг ждёт вас, остановился или уже готов, — шаги потока это не меняет. Шаг не
+начат или на нём работают модели — options_not_ready; так же — когда запрос к вариантам другого
+запуска шага (run): шаг с тех пор запустили снова, и варианты уже другие, хоть номера у них те же.
+Удалить можно любой вариант вопроса, кроме выбранного — option_chosen (решение владельца к задаче
+«…удалить любой вариант вопроса»).
 
 «Утвердить выбор» у шага, который ждал вас или остановился, утверждает выбор по каждому вопросу
 шага — шаг готов, — и модели сразу проверяют решения (chain.begun): раньше проверку запускал
@@ -17,7 +19,7 @@
 
 from typing import Annotated, Literal
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Response
 from pydantic import Field
 
 from ..background import launched
@@ -33,6 +35,7 @@ from ..options import (
     sets_of,
     with_own,
     with_pick,
+    with_removed,
     with_text,
 )
 from ..options import OptionSet as Offering
@@ -132,7 +135,7 @@ class Edit(Schema):
 
 
 class Run(Schema):
-    """Тело «Утвердить выбор»: run вариантов, которые были на экране."""
+    """Тело «Утвердить выбор» и удаления варианта: run вариантов, которые были на экране."""
 
     run: int
 
@@ -246,6 +249,29 @@ def update_option(council_id: str, stream_id: str, question_id: str, option_id: 
         stream, own = with_text(stream, option_id, text)
         store.update_council(council_id, {"streams": replaced(council, stream)})
     return OptionAnswer(option=own_option(own))
+
+
+@router.delete("/councils/{council_id}/streams/{stream_id}/options/{question_id}/{option_id}",
+               status_code=204)
+def delete_option(council_id: str, stream_id: str, question_id: str, option_id: str, body: Run,
+                  store: StoreDep, projects: ProjectsDep,
+                  repositories: RepositoriesDep) -> Response:
+    """Удалить вариант вопроса — свой, совета или из текста группы (этот — только у этого
+    вопроса). Выбранный не удаляют: сначала выбирают другой. Выбор и шаги потока не меняются;
+    решение, которое брало этот вариант, ждёт «Пересчитать», как после смены выбора."""
+    with council_lock:
+        council = council_of(store, council_id)
+        stream = shown_of(council, stream_id)
+        editable(stream, folders_of(council, projects, repositories).notes, body.run)
+        item = set_at(stream, question_id)
+        if not item.has(option_id):
+            raise not_found(f"У вопроса {question_id} нет варианта {option_id}")
+        if item.pick is not None and item.pick.option == option_id:
+            raise ApiError(409, "option_chosen",
+                           f"Вариант {option_id} выбран по {question_id}: сначала выберите другой")
+        stream = with_removed(stream, question_id, option_id)
+        store.update_council(council_id, {"streams": replaced(council, stream)})
+    return Response(status_code=204)
 
 
 def run_of(stream: Stored) -> int:

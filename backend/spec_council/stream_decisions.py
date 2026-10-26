@@ -38,6 +38,11 @@
 пересчитываются, но «Пересчитать» у них доступна, и видно, на какой выбор проверка опиралась и
 какой он сейчас (shifted; решение владельца к задаче «…ход пересчёта в «Ходе работы»…»).
 
+Вариант, который берёт решение, удалили на «Вариантах» (решение владельца к задаче «…удалить
+любой вариант вопроса»), — решение ждёт «Пересчитать», как после смены выбора (gone_of):
+пересчёт проверяет вопрос без удалённого варианта (options.seen), «почему» и отметки — от новой
+проверки.
+
 Поток прежней версии решений на экране отдельно не помнит — только зафиксированные, а до них —
 решения прежней работы к тому же выбору (work.known_decisions): с них начинал и старый фронт.
 Зафиксированное с вариантом — зафиксировано, без варианта — открыто; с вариантом, которого модели
@@ -57,7 +62,7 @@ from .models import (
     Ruling,
     Stream,
 )
-from .options import picked, sets_of
+from .options import picked, removed_of, sets_of
 from .order import Order, ordered
 from .pipeline import adr_id, choice_entry, question_key
 from .scope import kept_of
@@ -112,7 +117,10 @@ def unchecked_of(stream: Stream) -> dict[str, Choice]:
     """Вопросы, чей выбор на «Вариантах» не тот, что проверили модели, — с этим выбором: на
     готовых «Вариантах» выбрали другой вариант или поправили текст своего (решение владельца к
     задаче «…«Пересчитать» после смены выбора…»). Проверили утверждённый выбор (Stream.choices):
-    по нему проверяет шаг, а пересчёт с другим выбором утверждает его (rechecked). Сравнивают,
+    по нему проверяет шаг, а пересчёт с другим выбором утверждает его (rechecked). Так же — когда
+    вариант, который берёт решение, удалили на «Вариантах» (решение владельца к задаче «…удалить
+    любой вариант вопроса»): выбран уже другой, или это вариант, который судья взял вопросу,
+    переданному как unresolved, — решение нужно пересчитать, как при смене выбора. Сравнивают,
     пока решения правят и пересчитывают: проверка кончилась или остановилась, а решения не
     зафиксированы; у вопроса без выбора на экране (options.sets_of) или без утверждённого —
     сравнивать не с чем."""
@@ -121,10 +129,21 @@ def unchecked_of(stream: Stream) -> dict[str, Choice]:
             or analysis.state == "running"):
         return {}
     checked = {choice.question_id: choice_entry(choice) for choice in stream.choices}
+    gone = gone_of(stream)
     now = {item.question.id: picked(item) for item in sets_of(stream, None)
            if item.pick is not None}
     return {question: choice for question, choice in now.items()
-            if question in checked and choice_entry(choice) != checked[question]}
+            if question in checked
+            and (choice_entry(choice) != checked[question] or question in gone)}
+
+
+def gone_of(stream: Stream) -> set[str]:
+    """Вопросы, у чьей проверки вариант удалили на «Вариантах»: проверенный выбор или вариант,
+    который судья взял вопросу, переданному как unresolved."""
+    removed = removed_of(stream)
+    return {found.question_id
+            for found in (stream.analysis.analyses if stream.analysis else [])
+            if found.proposal is not None and found.proposal in removed.get(found.question_id, ())}
 
 
 def unchecked_questions(stream: Stream) -> set[str]:
@@ -263,9 +282,10 @@ def rechecked(stream: Stream, question_id: str, work: DecisionAnalysis) -> Strea
     встаёт в ход шага на место прежней проверки вопроса, и хода пересчёта больше нет; вариант
     решения — тот, что она проверила. Пересчитали с выбором, который не тот, что утверждён
     (поменяли на «Вариантах»), — утверждённым становится он, и ход шага помнит, что проверил его;
-    решение — как его оставили модели: «почему» и отметки прежнего выбора к новому не идут.
-    Порядок решений остаётся прежним: у новой проверки зависимости могли стать другими, а порядок
-    меняется только с новым запуском шага (order_of)."""
+    решение — как его оставили модели: «почему» и отметки прежнего выбора к новому не идут. Так же
+    — когда вариант прежней проверки удалили на «Вариантах» (gone_of). Порядок решений остаётся
+    прежним: у новой проверки зависимости могли стать другими, а порядок меняется только с новым
+    запуском шага (order_of)."""
     rechecks = {**stream.rechecks, question_id: work}
     if work.state != "done":
         return stream.model_copy(update={"rechecks": rechecks})
@@ -281,11 +301,14 @@ def rechecked(stream: Stream, question_id: str, work: DecisionAnalysis) -> Strea
     entries = analysis.choices
     choice = work.choice
     before = next((one for one in stream.choices or [] if one.question_id == question_id), None)
-    if choice is not None and before is not None and choice_entry(choice) != choice_entry(before):
+    changed = (choice is not None and before is not None
+               and choice_entry(choice) != choice_entry(before))
+    if changed:
         changes["choices"] = [choice if one.question_id == question_id else one
                               for one in stream.choices or []]
         entries = [choice_entry(choice) if entry.split(": ", 1)[0] == question_id else entry
                    for entry in entries]
+    if changed or question_id in gone_of(stream):
         ruling = first_ruling(found)
     changes["analysis"] = analysis.model_copy(update={
         "order": order_of(analysis), "choices": entries, "analyses": [

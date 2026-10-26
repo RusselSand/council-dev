@@ -25,6 +25,7 @@ export { useApproveNotes, useStreamNotes } from './hooks/useNotes';
 export {
   useAddOption,
   useApproveOptions,
+  useDeleteOption,
   useOptionChoices,
   useStreamOptions,
   useUpdateOption,

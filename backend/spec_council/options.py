@@ -20,6 +20,15 @@
 «Пересчитать» на «Решениях»: пересчёт проверяет новый выбор и утверждает его
 (stream_decisions.rechecked; решение владельца к задаче «…«Пересчитать» после смены выбора…»).
 
+Удалить можно любой вариант вопроса, кроме выбранного (решение владельца к задаче «…удалить любой
+вариант вопроса»; Stream.removed_options): из группы — только из вариантов этого вопроса, совета,
+свой. Удалённого нет на шаге (sets_of), его не видят модели дальше и выгрузка в заметки (seen), а
+его номер другому варианту не достаётся (work.last_used); вернуть его нельзя — и «Запустить
+снова» его не возвращает: варианты, найденные раньше, повтор берёт с теми же номерами. Вариант,
+который берут утверждённый выбор или зафиксированное решение, — их вариант, пока вопрос не
+пересчитали: удалили его, когда выбран уже другой, — решение ждёт «Пересчитать», как после смены
+выбора (stream_decisions.unchecked_of).
+
 Поток прежней версии своих вариантов и выбора отдельно не помнит — только утверждённый выбор
 (свой вариант жил в нём текстом), а до утверждения — выбор прежней работы по тем же вопросам
 (work.earlier_choices): с него начинал и старый фронт. Вопрос, который убрали из отбора, а на
@@ -32,7 +41,16 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Literal
 
-from .models import Choice, OpenQuestion, OwnOption, Pick, Proposal, QuestionOptions, Stream
+from .models import (
+    Choice,
+    OpenQuestion,
+    OwnOption,
+    Pick,
+    Proposal,
+    QuestionOptions,
+    RemovedOption,
+    Stream,
+)
 from .order import Order, ordered
 from .pipeline import question_key
 from .scope import kept_of, listed, number
@@ -64,23 +82,28 @@ class OptionSet:
         return any(offered.id == option_id for offered in self.offered)
 
 
-def sets_of(stream: Stream, fragments: Mapping[int, str] | None) -> list[OptionSet]:
+def sets_of(stream: Stream, fragments: Mapping[int, str] | None, *,
+            removed: bool = False) -> list[OptionSet]:
     """Вопросы шага по порядку, у каждого — его варианты и выбор. fragments — тексты фрагментов
-    группы потока; None — тексты не нужны, только какие варианты есть (counted)."""
+    группы потока; None — тексты не нужны, только какие варианты есть (counted). Удалённых
+    вариантов нет; removed — есть и они, кроме своих: вариант решения, который удалили, — тот же,
+    что проверили (свой вариант решения — в утверждённом выборе)."""
     judged = {options.question_id: options
               for options in (stream.proposals.options if stream.proposals else [])}
     own = own_of(stream)
     picks = picks_of(stream)
+    gone = {} if removed else removed_of(stream)
     sets = []
     for question in kept_of(stream):
         found = judged.get(question.id)
-        offered = [
+        hidden = gone.get(question.id, set())
+        offered = [one for one in [
             *(Offered(f"F{n}", fragments[n] if fragments is not None else "", "group")
               for n in question.proposal_ids if fragments is None or n in fragments),
             *(Offered(proposal.id, proposal.text, "council", found=proposal)
               for proposal in (found.proposals if found else [])),
             *(Offered(one.id, one.text, "own", own=one)
-              for one in own if one.question_id == question.id)]
+              for one in own if one.question_id == question.id)] if one.id not in hidden]
         item = OptionSet(question, found, offered, None)
         pick = picks.get(question.id)
         if pick is not None and (pick.option is None or item.has(pick.option)):
@@ -147,6 +170,48 @@ def with_text(stream: Stream, option_id: str, text: str) -> tuple[Stream, OwnOpt
                                       "picks": list(picks_of(stream).values())}), edited)
 
 
+def with_removed(stream: Stream, question_id: str, option_id: str) -> Stream:
+    """Поток, где вариант option_id вопроса удалён: среди вариантов вопроса его нет, свой — и
+    среди своих. Выбор не меняется: выбранный вариант не удаляют."""
+    removed = RemovedOption(question_id=question_id, id=option_id)
+    return stream.model_copy(update={
+        "own_options": [one for one in own_of(stream)
+                        if (one.question_id, one.id) != (question_id, option_id)],
+        "picks": list(picks_of(stream).values()),
+        "removed_options": [*stream.removed_options, removed]})
+
+
+def seen(stream: Stream) -> Stream:
+    """Поток, каким его видят модели дальше — проверка решений, пересчёт, сборка итогов — и
+    выгрузка в заметки: без удалённых вариантов (hidden_of). Сам поток не меняется: это только
+    взгляд на него."""
+    hidden = hidden_of(stream)
+    if not hidden:
+        return stream
+    scope = None if stream.scope is None else [
+        question.model_copy(update={"proposal_ids": [
+            n for n in question.proposal_ids if f"F{n}" not in hidden.get(question.id, ())]})
+        for question in stream.scope]
+    proposals = None if stream.proposals is None else stream.proposals.model_copy(update={
+        "options": [options.model_copy(update={"proposals": [
+            proposal for proposal in options.proposals
+            if proposal.id not in hidden.get(options.question_id, ())]})
+            for options in stream.proposals.options]})
+    return stream.model_copy(update={"scope": scope, "proposals": proposals})
+
+
+def hidden_of(stream: Stream) -> dict[str, set[str]]:
+    """Удалённые варианты по вопросу, которых модели и выгрузка не видят, — кроме тех, что берут
+    утверждённый выбор и зафиксированные решения: это их вариант, пока вопрос не пересчитали
+    (удалили, когда выбран уже другой). Свой вариант модели и так видят только в выборе."""
+    hidden = removed_of(stream)
+    taken = [*((choice.question_id, choice.proposal) for choice in stream.choices or []),
+             *((decision.question_id, decision.proposal) for decision in stream.decisions or [])]
+    for question, option in taken:
+        hidden.get(question, set()).discard(option or "")
+    return {question: ids for question, ids in hidden.items() if ids}
+
+
 def approved(stream: Stream, sets: list[OptionSet]) -> Stream:
     """Поток, где выбор утверждён: по каждому вопросу шага (sets) — его выбор; без выбора —
     первый вариант, вариантов нет — unresolved («Решения» берут выбор, а нет его — первый
@@ -187,6 +252,14 @@ def own_of(stream: Stream) -> list[OwnOption]:
                       based_on=choice.based_on)
             for choice in prior_of(stream)
             if choice.text is not None and choice.proposal is not None]
+
+
+def removed_of(stream: Stream) -> dict[str, set[str]]:
+    """Удалённые варианты по вопросу: их номера."""
+    removed: dict[str, set[str]] = {}
+    for one in stream.removed_options:
+        removed.setdefault(one.question_id, set()).add(one.id)
+    return removed
 
 
 def picks_of(stream: Stream) -> dict[str, Pick]:

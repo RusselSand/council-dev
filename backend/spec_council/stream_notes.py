@@ -53,6 +53,7 @@ from .models import (
     TasksExport,
 )
 from .notes import Catalog, Note, NotesError, order
+from .options import seen
 from .pipeline import NotesRun, Runner, translating
 from .prompts import language, notes_language
 from .standing import translation
@@ -64,19 +65,21 @@ def draft_of(council: Council, stream: Stream, root: Path,
     """Черновик выгрузки потока в каталог root — каким его записали бы сейчас — и каталог, к
     которому он собран. councils — все советы: номера из выгрузок их потоков в этот каталог
     новым заметкам не даются. Каталог не прочитать или поток в него не выгрузить
-    (пересматриваемого решения в каталоге уже нет) — NotesError с причиной."""
+    (пересматриваемого решения в каталоге уже нет) — NotesError с причиной. Вариантов, удалённых
+    на «Вариантах», в выгрузке нет (options.seen)."""
     shelf = Shelf(Catalog.load(root), root)
     fragments = {fragment.id: fragment for fragment in fragments_of(council, stream)}
     previous = export_in(stream.notes, root)
+    view = seen(stream)
     notes, vanished, skipped, refs = drafted(
-        stream, fragments, shelf, previous, words_for(language()), notes_language(),
+        view, fragments, shelf, previous, words_for(language()), notes_language(),
         reserved(councils, council.id, stream.group, root))
     own = {note.id for note in [*notes, *(previous.notes if previous else ())]}
     return NotesDraft(
         state="done", run=uuid4().hex[:8], outcomes=stream.outcomes.run if stream.outcomes else "",
         language=notes_language(), root=str(root), notes=notes, vanished=vanished,
         skipped=skipped, refs=refs,
-        cited=cited_in(stream, fragments, shelf.catalog.notes, previous.cited if previous else ()),
+        cited=cited_in(view, fragments, shelf.catalog.notes, previous.cited if previous else ()),
         shifts=shifts_of(shelf.catalog, notes, own)), shelf
 
 

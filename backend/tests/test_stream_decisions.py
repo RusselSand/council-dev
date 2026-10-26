@@ -27,7 +27,18 @@ from spec_council.models import (
 from spec_council.pipeline import ModelFailed
 from spec_council.projects import Projects
 from spec_council.store import InMemoryStore, interrupted
-from tests.test_stream_options import ONE, OWN, SHARE, WHY, adds, chooses, offered, sets_of
+from tests.test_stream_options import (
+    ONE,
+    OWN,
+    POLL,
+    SHARE,
+    WHY,
+    adds,
+    chooses,
+    deletes,
+    offered,
+    sets_of,
+)
 from tests.test_stream_options import Agents as OptionAgents
 from tests.test_stream_options import approves as approves_choice
 from tests.test_stream_options import edits as rewrites
@@ -963,6 +974,124 @@ def test_a_recheck_of_a_decision_that_rested_on_the_old_choice_takes_the_new_one
         None, MINE, "user", "draft")
     found = next(f for f in stored(store, council_id).analysis.analyses if f.question_id == "Q1")
     assert found.context == [f"Q3: {own}: {HEADERS}"]
+
+
+# --- вариант решения удалили на «Вариантах»: пересчитать вопрос
+
+def ids_of(prompt) -> list[str]:
+    return [option["id"] for option in json.loads(section(prompt, "PROPOSALS"))]
+
+
+def prompt_of(agents, question_id, since=0) -> str:
+    return next(prompt for prompt in agents.prompts["decision_analysis"][since:]
+                if json.loads(section(prompt, "OPEN QUESTION"))["id"] == question_id)
+
+
+def test_a_checked_option_deleted_on_the_options_waits_for_a_recheck(store, pool, agents):
+    """Решение владельца: вариант, который проверили на «Решениях», а выбран сейчас другой, —
+    удалить можно; решение этого вопроса нужно пересчитать, как при смене выбора."""
+    council_id, _ = checked(store, pool)
+    assert edits(council_id, "Q1", MINE, "fixed").status_code == 200
+    assert chooses(council_id, "Q1", "F2").status_code == 200
+    checked_option = decisions_of(council_id)["Q1"]["option"]
+    assert deletes(council_id, "Q1", "P1").status_code == 204
+    assert sets_of(council_id)["Q1"]["unchecked"] is True
+    q1 = decisions_of(council_id)["Q1"]
+    # Решение — по проверке удалённого: он виден, как его проверили, пока не пересчитали.
+    assert (q1["option"], q1["status"], q1["recheck"], q1["unchecked"]) == (
+        checked_option, "draft", "ready", True)
+    assert error_of(edits(council_id, "Q1", MINE, "fixed")) == (409, "decisions_not_ready")
+    assert error_of(approves(council_id)) == (409, "decisions_not_ready")
+    asked = len(agents.prompts["decision_analysis"])
+    assert rechecks(council_id, "Q1").status_code == 200
+    pool.run()
+    # Пересчёт проверяет новый выбор, а удалённого варианта модели не видят.
+    assert ids_of(prompt_of(agents, "Q1", asked)) == ["F2"]
+    q1 = decisions_of(council_id)["Q1"]
+    assert (q1["option"]["id"], q1["rationale"], q1["rationaleBy"], q1["recheck"],
+            q1["unchecked"]) == ("F2", WHY, "ai", None, False)
+    assert approves(council_id).status_code == 200
+
+
+def test_an_option_the_judge_took_for_an_unresolved_question_deleted_waits_for_a_recheck(
+        store, pool, agents):
+    """Q2 передан как unresolved, судья взял ему P2; P2 удалили — решение нужно пересчитать, хоть
+    выбор и тот же: «почему» и отметки — от новой проверки, где P2 нет."""
+    council_id, _ = checked(store, pool)
+    assert edits(council_id, "Q2", MINE, "fixed").status_code == 200
+    assert decisions_of(council_id)["Q2"]["option"]["id"] == "P2"
+    assert deletes(council_id, "Q2", "P2").status_code == 204
+    q2 = decisions_of(council_id)["Q2"]
+    assert (q2["option"]["id"], q2["option"]["text"], q2["status"], q2["recheck"],
+            q2["unchecked"]) == ("P2", SHARE, "draft", "ready", True)
+    assert sets_of(council_id)["Q2"]["unchecked"] is True
+    assert steps_of(stream_of(council_id))["decisions"]["note"] == "решено 0 из 3"
+    asked = len(agents.prompts["decision_analysis"])
+    assert rechecks(council_id, "Q2").status_code == 200
+    pool.run()
+    assert ids_of(prompt_of(agents, "Q2", asked)) == ["P3"]
+    q2 = decisions_of(council_id)["Q2"]
+    assert (q2["option"]["id"], q2["option"]["text"], q2["rationale"], q2["rationaleBy"],
+            q2["status"], q2["recheck"], q2["unchecked"]) == (
+        "P3", POLL, WHY, "ai", "draft", None, False)
+    assert sets_of(council_id)["Q2"]["unchecked"] is False
+
+
+def test_a_retry_of_the_step_checks_again_what_took_a_deleted_option(store, pool, agents):
+    """Шаг остановился на Q3; Q2 проверен с P2, а P2 удалили: «Запустить снова» проверяет Q2
+    заново, без P2, а Q1 переносит."""
+    agents.stuck = {"Q3"}
+    council_id, _ = chosen(store, pool)
+    pool.run()
+    assert steps_of(stream_of(council_id))["decisions"]["state"] == "failed"
+    assert deletes(council_id, "Q2", "P2").status_code == 204
+    agents.stuck = set()
+    asked = len(agents.prompts["decision_analysis"])
+    assert client.post(f"/api/councils/{council_id}/streams/A/retry", json={}).status_code == 200
+    pool.run()
+    again = {json.loads(section(prompt, "OPEN QUESTION"))["id"]
+             for prompt in agents.prompts["decision_analysis"][asked:]}
+    assert again == {"Q2", "Q3"}
+    assert ids_of(prompt_of(agents, "Q2", asked)) == ["P3"]
+    assert {q: (d["option"]["id"], d["unchecked"]) for q, d in decisions_of(council_id).items()
+            if q != "Q3"} == {"Q1": ("P1", False), "Q2": ("P3", False)}
+
+
+def test_a_deleted_option_is_not_seen_by_the_models_later(store, pool, agents):
+    """Удалённый вариант не участвует дальше: его не видят ни проверка решений, ни сборка
+    итогов."""
+    council_id = offered(store, pool)
+    assert deletes(council_id, "Q1", "F2").status_code == 204
+    assert deletes(council_id, "Q2", "P3").status_code == 204
+    assert chooses(council_id, "Q1", "P1").status_code == 200
+    assert chooses(council_id, "Q2").status_code == 200
+    assert approves_choice(council_id).status_code == 200
+    pool.run()
+    assert (ids_of(prompt_of(agents, "Q1")), ids_of(prompt_of(agents, "Q2"))) == (["P1"], ["P2"])
+    assert edits(council_id, "Q1", MINE, "fixed").status_code == 200
+    assert approves(council_id).status_code == 200
+    pool.run()
+    questions = json.loads(section(agents.prompts["outcome_discovery"][0],
+                                   "OPEN QUESTIONS AND PROPOSALS"))
+    assert {q["id"]: [p["id"] for p in q["proposals"]] for q in questions} == {
+        "Q1": ["P1"], "Q2": ["P2"], "Q3": ["P4"]}
+
+
+def test_a_deleted_option_on_done_decisions_stays_the_decisions_own(store, pool, agents):
+    """«Решения» готовы — удаление, как и смена выбора, их не меняет: решение и итоги берут свой
+    вариант, пока его не пересчитают, хоть на «Вариантах» его уже нет."""
+    council_id, _ = checked(store, pool)
+    assert edits(council_id, "Q1", MINE, "fixed").status_code == 200
+    assert approves(council_id).status_code == 200
+    assert chooses(council_id, "Q1", "F2").status_code == 200
+    assert deletes(council_id, "Q1", "P1").status_code == 204
+    q1 = decisions_of(council_id)["Q1"]
+    assert (q1["option"]["id"], q1["status"], q1["recheck"], q1["unchecked"]) == (
+        "P1", "fixed", None, False)
+    pool.run()
+    questions = json.loads(section(agents.prompts["outcome_discovery"][0],
+                                   "OPEN QUESTIONS AND PROPOSALS"))
+    assert [p["id"] for p in questions[0]["proposals"]] == ["F2", "P1"]
 
 
 def test_a_stream_of_the_prior_version_has_no_changed_choice(store):

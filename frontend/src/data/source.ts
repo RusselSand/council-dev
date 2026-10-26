@@ -132,6 +132,11 @@ export interface DataSource {
     text: string,
   ): Promise<Option>;
   /**
+   * DELETE /api/councils/<id>/streams/<streamId>/options/<questionId>/<optionId> — удалить вариант вопроса (выбранный не
+   * удаляют — option_chosen); ответа нет.
+   */
+  deleteOption(id: string, streamId: string, run: number, questionId: string, optionId: string): Promise<void>;
+  /**
    * POST /api/councils/<id>/streams/<streamId>/options/approve — «Утвердить выбор → к решениям» вариантов запуска run;
    * ответ — поток.
    */

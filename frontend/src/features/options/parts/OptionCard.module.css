@@ -19,7 +19,7 @@
   overflow-wrap: anywhere;
 }
 
-/* Зависимости и «Поправить» справа. */
+/* Зависимости, справа — «Поправить» и «Удалить». */
 .foot {
   display: flex;
   flex-wrap: wrap;
@@ -27,6 +27,18 @@
   gap: var(--space-6);
 }
 
-.edit {
+.actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: var(--space-4);
   margin-left: auto;
+}
+
+/* «Выбранный вариант не удалить — сначала выберите другой.» рядом с недоступной «Удалить». */
+.hint {
+  font-size: var(--text-sm);
+  color: var(--color-text-faint);
+  text-wrap: pretty;
 }

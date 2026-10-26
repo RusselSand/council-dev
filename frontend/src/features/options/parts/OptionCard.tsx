@@ -1,4 +1,5 @@
 import type { ReactNode } from 'react';
+import { LoadState } from '../../../components/LoadState';
 import { useI18n } from '../../../i18n';
 import { Button } from '../../../ui/Button';
 import { Chip } from '../../../ui/Chip';
@@ -15,6 +16,10 @@ interface OptionCardProps {
   onPick: (id: string) => void;
   /** «Поправить». */
   onEdit: (id: string) => void;
+  /** «Удалить» и «Да, удалить». */
+  onDelete: (id: string) => void;
+  /** Удалить ещё раз, если не вышло. */
+  onRetryDelete: (id: string) => void;
   /** Щелчок по зависимости — открыть тот вопрос. */
   onShowQuestion: (id: string) => void;
   /** Правка этого варианта, пока она открыта: на месте текста. */
@@ -23,10 +28,20 @@ interface OptionCardProps {
 
 /**
  * Вариант карточкой с кружком выбора, как в макете: id, откуда он, «рекомендация судьи», текст; под ним «почему» и
- * «цена», зависимости — «зависит от Q2 · решён» (щелчок открывает тот вопрос, убранный — нет) и справа «Поправить».
- * Пока вариант правят — вместо текста поле правки.
+ * «цена», зависимости — «зависит от Q2 · решён» (щелчок открывает тот вопрос, убранный — нет) и справа «Поправить» и
+ * «Удалить» (первое нажатие — «Да, удалить»; у выбранного — недоступна, с пояснением). Пока вариант правят — вместо
+ * текста поле правки. Не вышло удалить — под карточкой текст ошибки и «Повторить».
  */
-export function OptionCard({ option, disabled, onPick, onEdit, onShowQuestion, editor }: OptionCardProps) {
+export function OptionCard({
+  option,
+  disabled,
+  onPick,
+  onEdit,
+  onDelete,
+  onRetryDelete,
+  onShowQuestion,
+  editor,
+}: OptionCardProps) {
   const { t } = useI18n();
   const facts: Fact[] = [
     ...(option.why ? [{ label: t('options.why'), value: option.why }] : []),
@@ -71,18 +86,29 @@ export function OptionCard({ option, disabled, onPick, onEdit, onShowQuestion, e
             </Chip>
           ))}
           {!option.editing && (
-            <Button
-              variant="link"
-              size="xs"
-              className={styles.edit}
-              disabled={!option.editable}
-              onClick={() => onEdit(option.id)}
-            >
-              {t('options.edit')}
-            </Button>
+            <span className={styles.actions}>
+              <Button variant="link" size="xs" disabled={!option.editable} onClick={() => onEdit(option.id)}>
+                {t('options.edit')}
+              </Button>
+              <Button
+                variant="link"
+                size="xs"
+                tone={option.confirming ? 'danger' : 'ink'}
+                disabled={!option.deletable}
+                onClick={() => onDelete(option.id)}
+              >
+                {option.confirming ? t('options.delete.confirm') : t('options.delete')}
+              </Button>
+              {option.chosen && <span className={styles.hint}>{t('options.delete.chosen')}</span>}
+            </span>
           )}
         </div>
       )}
+      <LoadState
+        loading={false}
+        error={option.deleteError}
+        onRetry={option.deletable ? () => onRetryDelete(option.id) : undefined}
+      />
     </RadioCard>
   );
 }
