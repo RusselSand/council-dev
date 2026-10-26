@@ -839,6 +839,42 @@ def test_a_judge_rewrites_a_false_rationale_and_it_is_no_problem():
     assert "## REPOSITORY CONTEXT" in judge_prompt and "Rationale written by AI" in judge_prompt
 
 
+def test_a_judge_corrects_the_decision_text_and_sees_what_the_question_revisits():
+    """Решение владельца: вопрос пересматривает решение проекта — его решение то заменяет, и
+    судья видит это у вопроса; участники — нет, им промпт тот же. Поправленный судьёй текст
+    решения — в проверке, а вариант — как был."""
+    revisiting = SEARCH.model_copy(update={"revisits": "ADR-0047"})
+    corrected = f"{HYBRID}; страницы spec и result — как раньше."
+    judge = {"status": "validated", "proposal_id": "P1", "validation": {},
+             "decision": corrected}
+    result, runner, _ = check({("decision_analysis", "sol"): checked_by("P1"),
+                               ("decision_analysis", "fable"): checked_by("P1"),
+                               ("decision_judge", "fable"): judge},
+                              choices=[("Q1", "P1")], scope=[revisiting])
+    [found] = result.analyses
+    assert (found.verdict, found.proposal, found.decision, found.reason, found.fixes) == (
+        "validated", "P1", corrected, None, [])
+    assert FOUND.options[0].proposals[0].text == HYBRID
+    assert json.loads(section(runner.asked["decision_judge", "fable"], "OPEN QUESTION")) == {
+        "id": "Q1", "text": SEARCH.text, "revisits": "ADR-0047"}
+    assert json.loads(section(runner.asked["decision_analysis", "sol"], "OPEN QUESTION")) == {
+        "id": "Q1", "text": SEARCH.text}
+    assert "## Decision text" in runner.asked["decision_judge", "fable"]
+
+
+def test_a_decision_text_the_same_as_the_options_is_no_correction():
+    """Судья вернул текст варианта — он ничего не поправил; рекомендованному тоже."""
+    analysis = by_question(checked_by("P1"), recommends("P2"))
+    judge = by_question({"status": "validated", "proposal_id": "P1", "decision": f" {HYBRID} "},
+                        {"status": "recommended", "proposal_id": "P2", "reason": "уже есть",
+                         "decision": "Notion, как у ADR-0003."})
+    result, _, _ = check({("decision_analysis", "sol"): analysis,
+                          ("decision_analysis", "fable"): analysis,
+                          ("decision_judge", "fable"): judge})
+    assert [(found.question_id, found.decision) for found in result.analyses] == [
+        ("Q1", None), ("Q2", "Notion, как у ADR-0003.")]
+
+
 def test_the_options_of_a_question_are_its_group_proposals_and_what_the_council_found():
     analysis = checked_by("P1")
     judge = {"status": "validated", "proposal_id": "P1", "validation": {}}
@@ -933,6 +969,19 @@ def test_outcomes_stand_on_the_decisions_and_an_open_question_blocks():
     judge_prompt = runner.asked["outcome_judge", "fable"]
     assert "Поиск" in section(judge_prompt, "INDEPENDENT OUTCOME CANDIDATES")
     assert '"sol"' not in judge_prompt and '"fable"' not in judge_prompt
+
+
+def test_outcomes_stand_on_the_decision_text_the_judge_corrected():
+    """Итоги собирают по тексту решения: поправил его судья проверки — по его тексту, а не по
+    тексту варианта; и сборка помнит решение с ним."""
+    corrected = "Полнотекстовый поиск по базе; бот в Slack остаётся входом."
+    decided = [DECIDED[0].model_copy(update={"text": corrected}), DECIDED[1]]
+    same = {"outcomes": [result_of("Поиск", adrs=["ADR-1"], blocked=["Q2"])]}
+    result, runner = assemble({("outcome_discovery", "sol"): same,
+                               ("outcome_discovery", "fable"): same}, decisions=decided)
+    [adr] = json.loads(section(runner.asked["outcome_discovery", "sol"], "ACCEPTED ADRS"))
+    assert (adr["id"], adr["proposal_id"], adr["decision"]) == ("ADR-1", "F2", corrected)
+    assert result.decisions == [f"Q1: F2: Уже есть в тексте.\n{corrected}", "Q2: -: "]
 
 
 def test_the_same_sets_need_no_judge():

@@ -84,6 +84,13 @@ export interface DecisionView {
   /** «P12 · текст варианта»; вопрос передан как unresolved — «— · Передан как unresolved». */
   choice: string;
   /**
+   * «решение» в ADR: «P12 · текст решения» — текст, который поправил судья, а не поправил — текст варианта; вопрос передан
+   * как unresolved — как в choice.
+   */
+  decision: string;
+  /** Текст решения поправил судья: под ним — «поправил судья». */
+  byJudge: boolean;
+  /**
    * Вопросы круга зависимостей, в который входит это решение, и он сам, по номерам: «Круг зависимостей: Q1 и Q3 зависят
    * друг от друга.»; не в круге — пусто.
    */
@@ -555,6 +562,10 @@ export function useDecisionsStep(
             }
           : { tone: status === 'fixed' ? 'green' : 'red', label: t(`decisions.state.${status}`) },
       choice: d.option ? t('decisions.option', { id: d.option.id, text: d.option.text }) : t('decisions.unresolved'),
+      decision: d.option
+        ? t('decisions.option', { id: d.option.id, text: d.text ?? d.option.text })
+        : t('decisions.unresolved'),
+      byJudge: d.option !== null && d.text !== null,
       cycle: d.cycle,
       problem: d.problem && {
         text: d.problem.text,

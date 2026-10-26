@@ -13,7 +13,10 @@
 «Почему» сначала — обоснование совета, решение — черновик: судья проверил его по карте кода и
 другим решениям и неправду исправил сам (decisions.py), а «почему», которое написал человек,
 судья не переписывает: оно остаётся и после пересчёта — кроме пересчёта с новым выбором
-(rechecked). Человек правит «почему» и то, где
+(rechecked). Текст решения — текст варианта, а поправил его судья — его текст (text_of; решение
+владельца к задаче «…судья переносит действующее из заменённого ADR и выравнивает запись»): он
+уходит в зафиксированное решение, из него — заметка ADR; вариант на «Вариантах» тот же. Человек
+текст решения не правит, пересчёт пишет его заново. Человек правит «почему» и то, где
 решение (Stream.rulings): зафиксировать, оставить открытым, вернуть в черновик. «Зафиксировать
 решения» кладёт решения шага в зафиксированные (Stream.decisions) — из них модели собирают итоги:
 открытое решение, решение без варианта и без «почему» — открытый вопрос. Правка решений на
@@ -348,12 +351,14 @@ def approved(stream: Stream) -> Stream:
     их не проверили или вопрос убрали), — тоже открытый. Последние собранные итоги запоминаются:
     готовые на тех же решениях закрепятся (work.kept_outcomes). Пересчёт, который остановился,
     забыт: решения ушли в итоги."""
-    shown = {item.question.id: item.ruling for item in shown_of(stream)}
+    items = {item.question.id: item for item in shown_of(stream)}
+    shown = {question: item.ruling for question, item in items.items()}
     scope = stream.scope or []
     selected = {choice.question_id for choice in stream.choices or [] if choice.proposal}
     catalog = [decision.adr_id for decision in stream.project_decisions or []]
     decisions = [decision_of(question.id, shown.get(question.id),
-                             related_adrs(scope, selected, question.id), catalog)
+                             related_adrs(scope, selected, question.id), catalog,
+                             text_of(items[question.id]) if question.id in items else None)
                  for question in scope]
     rulings = {**rulings_of(stream), **shown}
     return stream.model_copy(update={"rulings": list(rulings.values()), "decisions": decisions,
@@ -362,20 +367,32 @@ def approved(stream: Stream) -> Stream:
 
 def decision_of(question_id: str, ruling: Ruling | None,
                 numbers: Mapping[str, str] | None = None,
-                catalog: Sequence[str] = ()) -> Decision:
+                catalog: Sequence[str] = (), text: str | None = None) -> Decision:
     """Решение вопроса, каким его видят модели итогов и выгрузка: «почему» — одной строкой, как
     его фиксировал старый фронт, и решения проекта, которые оно заменяет. Без «почему» решения
     нет — ADR без обоснования не бывает (rationale_required): черновик, где его не написали (у
     противоречия модели его не пишут), — открытый вопрос; открытый вопрос ничего не заменяет.
     У «почему» совета — и какие решения потока оно называет (numbers — номера решений других
     вопросов, как их видят модели; catalog — номера решений проекта): с правкой отбора их номера
-    сдвигаются (work.known_decisions)."""
+    сдвигаются (work.known_decisions). text — текст решения, который поправил судья (text_of):
+    из него — заметка ADR."""
     rationale = " ".join(ruling.rationale.split()) if ruling is not None else ""
     if ruling is None or ruling.status == "open" or ruling.option is None or not rationale:
         return Decision(question_id=question_id)
     adrs = adrs_named(rationale, numbers or {}, catalog) if ruling.rationale_by == "ai" else {}
     return Decision(question_id=question_id, proposal=ruling.option, rationale=rationale,
-                    rationale_by=ruling.rationale_by, replaces=ruling.replaces, adrs=adrs)
+                    rationale_by=ruling.rationale_by, text=text, replaces=ruling.replaces,
+                    adrs=adrs)
+
+
+def text_of(item: Shown) -> str | None:
+    """Текст решения, который поправил судья проверки (QuestionAnalysis.decision), — у варианта,
+    который она проверила; судья текст не правил — None: текст решения — текст варианта как
+    есть."""
+    found = item.analysis
+    if found.proposal is None or item.ruling.option != found.proposal:
+        return None
+    return found.decision
 
 
 # Как это хранится.

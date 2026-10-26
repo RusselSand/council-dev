@@ -374,6 +374,7 @@ export const en = translation({
   'decisions.why.label': 'Why the decision on {id}',
   'decisions.by.ai': 'AI',
   'decisions.by.user': 'you',
+  'decisions.by.judge': 'edited by the judge',
   'decisions.context': '{question}: {option}',
   'decisions.context.text': '{question}: {option}: {text}',
   'decisions.conflict': 'conflicts with constraint {id}',

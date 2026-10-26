@@ -398,6 +398,7 @@ export const ru = {
   'decisions.why.label': 'Почему решение по {id}',
   'decisions.by.ai': 'ИИ',
   'decisions.by.user': 'вы',
+  'decisions.by.judge': 'поправил судья',
   'decisions.context': '{question}: {option}',
   'decisions.context.text': '{question}: {option}: {text}',
   'decisions.conflict': 'противоречит ограничению {id}',
