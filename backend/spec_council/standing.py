@@ -281,12 +281,15 @@ def shown_streams(council: Council) -> list[Stream]:
 
 
 def stream_standing(stream: Stream, notes: str | None) -> StreamStanding:
-    """Шаги по порядку: пока шаг не готов, следующие не начаты."""
+    """Шаги по порядку: пока шаг не готов, следующие не начаты. Кроме «Решений проекта», на
+    которых ищут заново после того, как их прошли: шаги дальше — какими были (решение q-006
+    бекенда и решение владельца к задаче «…поиск по кнопке и «Искать заново»»)."""
     steps: dict[Step, State] = {}
     reached = True
     for step in STEPS:
         steps[step] = STEP_STATES[step](stream, notes) if reached else "idle"
-        reached = steps[step] == "done"
+        reached = steps[step] == "done" or (
+            step == "project" and stream.design is not None and passed(stream))
     return StreamStanding(id=stream.group, steps=steps)
 
 
@@ -299,13 +302,24 @@ def run_state(run: Run | None) -> State:
 
 
 def project_of(stream: Stream, notes: str | None) -> State:
-    """«Решения проекта»: поток не начат — ждёт отбора; прошлые решения отобраны или их в каталоге
-    нет и вопросы уже ищут — готово; иначе — ход отбора."""
+    """«Решения проекта»: поток не начат — ждёт отбора; пройдены — готово, пока на них не ищут
+    заново: поиск идёт — ИИ работает, остановился — ошибка, пока отбор после него не приняли;
+    иначе — ход поиска, а нет его (прошлые решения ищут по кнопке) — ждёт вас."""
     if stream.design is None:
         return "waiting"
-    if stream.project_decisions is not None or stream.questions is not None:
+    search = stream.decisions_search
+    if passed(stream):
+        if search is not None and (search.state == "running"
+                                   or (search.state == "failed" and search.reopened)):
+            return search.state
         return "done"
-    return run_state(stream.decisions_search)
+    return run_state(search)
+
+
+def passed(stream: Stream) -> bool:
+    """«Решения проекта» пройдены: отбор человека принят или вопросы уже ищут (у потоков прежней
+    версии отбор был внутри «Вопросов»)."""
+    return stream.project_decisions is not None or stream.questions is not None
 
 
 def questions_of(stream: Stream, notes: str | None) -> State:
@@ -399,12 +413,13 @@ def activity_of(council: Council, stages: dict[Stage, State], streams: list[Stre
     kept = {stream.group: stream for stream in council.streams or []}
     latest = sorted(streams, key=lambda stream: council.streams_changed.get(stream.id, LONG_AGO),
                     reverse=True)
+    # Обычно у потока такой шаг один — текущий; на «Решениях проекта» ищут заново — и они тоже.
     for stream in latest:
-        step = stream.step
-        state = stream.steps[step]
-        if state in ACTIVE:
-            places.append(Activity("streams", stream.id, step, state,
-                                   step_text(kept[stream.id], step, state)))
+        for step in STEPS:
+            state = stream.steps[step]
+            if state in ACTIVE:
+                places.append(Activity("streams", stream.id, step, state,
+                                       step_text(kept[stream.id], step, state)))
     return [place for state in ACTIVE for place in places if place.state == state]
 
 

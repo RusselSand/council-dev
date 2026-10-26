@@ -1,4 +1,4 @@
-import type { State } from '../../domain/council';
+import type { State, Step } from '../../domain/council';
 import type { Stream } from '../../domain/stream';
 import { source } from '../config';
 import { ApiError } from '../errors';
@@ -42,15 +42,15 @@ function staleOnMissing(error: unknown) {
 }
 
 /**
- * «Запустить снова» — POST /api/councils/<id>/streams/<streamId>/retry: шаг, который остановился, запускается снова;
- * ответ — поток. Он сразу встаёт на место прежнего в потоках совета; потоки и список советов перезапрашиваются: у шага
- * и совета новое состояние.
+ * «Запустить снова» — POST /api/councils/<id>/streams/<streamId>/retry: шаг step, который остановился, запускается
+ * снова; ответ — поток. Он сразу встаёт на место прежнего в потоках совета; потоки и список советов перезапрашиваются: у
+ * шага и совета новое состояние.
  */
-export function useRetryStream(): Mutation<[id: string, streamId: string], Stream> {
+export function useRetryStream(): Mutation<[id: string, streamId: string, step: Step], Stream> {
   return useMutation(
-    async (id: string, streamId: string) => {
+    async (id: string, streamId: string, step: Step) => {
       try {
-        return await source.retryStream(id, streamId);
+        return await source.retryStream(id, streamId, step);
       } catch (error) {
         staleOnMissing(error);
         throw error;
@@ -65,8 +65,8 @@ export function useRetryStream(): Mutation<[id: string, streamId: string], Strea
 
 /**
  * Прошлые решения потока — GET /api/councils/<id>/streams/<streamId>/project-decisions: каталог и решения. Шаг
- * «Решения проекта» сменил состояние (state: модели закончили отбор или остановились, шаг запустили снова) — решения
- * запрашиваются заново, а прежние экран уже не показывает.
+ * «Решения проекта» сменил состояние (state: модели начали искать, закончили или остановились, шаг запустили снова) —
+ * решения запрашиваются заново, а прежние экран уже не показывает.
  */
 export function useProjectDecisions(id: string, streamId: string, state: State): Query<StreamProjectDecisions> {
   const query = useQuery(
@@ -77,6 +77,33 @@ export function useProjectDecisions(id: string, streamId: string, state: State):
   const { data, loading, error } = query;
   const fresh = data?.council === id && data.stream === streamId && data.state === state;
   return { ...query, data: fresh ? data : undefined, loading: loading || (!fresh && error === undefined) };
+}
+
+/**
+ * «Искать прошлые решения» и «Искать заново» — POST /api/councils/<id>/streams/<streamId>/project-decisions/search;
+ * ответ — поток: модели ищут, шаг «ИИ работает». Он сразу встаёт на место прежнего; потоки, прошлые решения и список
+ * советов перезапрашиваются. Модели уже ищут (поиск начали в другой вкладке) — потоки и прошлые решения тоже.
+ */
+export function useSearchProjectDecisions(): Mutation<[id: string, streamId: string], Stream> {
+  return useMutation(
+    async (id: string, streamId: string) => {
+      try {
+        return await source.searchProjectDecisions(id, streamId);
+      } catch (error) {
+        if (error instanceof ApiError && error.code === 'project_not_ready') {
+          markStale('streams');
+          markStale('projectDecisions');
+        }
+        staleOnMissing(error);
+        throw error;
+      }
+    },
+    (stream, id) => {
+      markStale('streams', replaceStream(id, stream));
+      markStale('projectDecisions');
+      markStale('councils');
+    },
+  );
 }
 
 /**

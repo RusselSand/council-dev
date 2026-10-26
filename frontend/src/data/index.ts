@@ -58,6 +58,7 @@ export {
   useCouncilStreams,
   useProjectDecisions,
   useRetryStream,
+  useSearchProjectDecisions,
 } from './hooks/useStreams';
 export { useCouncilStructure, useGroupEdits, type GroupEdits } from './hooks/useStructure';
 export { useCouncilTasks } from './hooks/useTasks';

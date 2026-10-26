@@ -50,6 +50,7 @@ import {
   PROJECT_DECISIONS,
   questionsApproved,
   recheckStarted,
+  searchStarted,
   STREAMS,
   streamKey,
   streamRetried,
@@ -226,7 +227,7 @@ function streamAt(id: string, streamId: string): number {
 /** Прошлые решения потока; у потока, которого нет в моках, каталога нет. */
 function decisionsOf(id: string, streamId: string): ProjectDecisions {
   const key = streamKey(id, streamId);
-  const decisions = projectDecisions.get(key) ?? { catalog: null, decisions: [] };
+  const decisions = projectDecisions.get(key) ?? newDecisions('');
   projectDecisions.set(key, decisions);
   return decisions;
 }
@@ -516,7 +517,8 @@ const notesOf = (id: string, streamId: string): MockNotes =>
 
 /**
  * Поток записан в каталог: решениям и итогам потока — их id в каталоге (refs); у прошлых решений всех потоков того же
- * каталога — новые статусы: следующие потоки увидят решение заменённым.
+ * каталога — новые статусы: следующие потоки увидят решение заменённым. Новые решения потока пополнили каталог: у других
+ * потоков, где решения уже искали, каталог изменился после поиска.
  */
 function notesWritten(id: string, streamId: string, written: MockNotes) {
   const stored = storedDecisions(id, streamId);
@@ -526,12 +528,18 @@ function notesWritten(id: string, streamId: string, written: MockNotes) {
     list[i] = { ...o, catalogId: written.refs[o.id] ?? o.catalogId };
   });
   const path = written.catalog?.path;
-  for (const past of projectDecisions.values()) {
-    if (!path || past.catalog?.path !== path) continue;
+  const added = written.notes.filter((n) => n.type === 'decision' && n.change === 'new').length;
+  const touched = added > 0 || written.statusChanges.length > 0;
+  for (const [key, past] of projectDecisions) {
+    if (!path || !past.catalog || past.catalog.path !== path) continue;
     past.decisions = past.decisions.map((d) => {
       const change = written.statusChanges.find((c) => c.id === d.id);
       return change ? { ...d, status: change.to, supersededBy: change.supersededBy } : d;
     });
+    if (key === streamKey(id, streamId)) continue;
+    const current = past.catalog.current + added;
+    past.catalog = { ...past.catalog, current, changed: past.searched && (past.catalog.changed || touched) };
+    if (!past.searched) past.catalog.total = current;
   }
 }
 
@@ -852,13 +860,12 @@ export const mockSource: DataSource = {
       );
     }
     const now = new Date().toISOString();
-    // «Потоки» не начаты — каждая группа становится потоком; прошлые решения из папки документации проекта отбирают
-    // модели (решение q-005 бекенда).
+    // «Потоки» не начаты — каждая группа становится потоком; прошлые решения из папки документации проекта модели ищут
+    // по кнопке на «Решениях проекта» (решение владельца к задаче «…поиск по кнопке и «Искать заново»»).
     if (stages.streams === 'idle') {
-      const { participants, judge } = councils[index];
       const docs = projects.find((p) => p.id === councils[index].project?.id)?.docs ?? '';
       for (const group of groups) projectDecisions.set(streamKey(id, group.id), newDecisions(docs));
-      streams.set(id, newStreams(groups, (stream) => decisionsOf(id, stream), participants, judge, now));
+      streams.set(id, newStreams(groups, (stream) => decisionsOf(id, stream)));
     }
     councils[index] = researchApproved(councils[index], streams.get(id) ?? [], now);
     return copy(councils[index]);
@@ -867,17 +874,17 @@ export const mockSource: DataSource = {
     councilAt(id);
     return copy(streams.get(id) ?? []);
   },
-  async retryStream(id, streamId) {
+  async retryStream(id, streamId, step) {
     const index = councilAt(id);
     const at = streamAt(id, streamId);
     const list = streams.get(id) ?? [];
     // Шаг не останавливался — не перезапускаем, отвечаем потоком как есть.
-    if (list[at].steps.some((step) => step.state === 'failed')) {
+    if (stepOf(list[at], step).state === 'failed') {
       const now = new Date().toISOString();
-      if (stepOf(list[at], 'options').state === 'failed') optionsStarted(id, streamId);
-      if (stepOf(list[at], 'decisions').state === 'failed') decisionsStarted(id, streamId);
-      if (stepOf(list[at], 'outcomes').state === 'failed') outcomesStarted(id, streamId);
-      list[at] = streamRetried(list[at], now);
+      if (step === 'options') optionsStarted(id, streamId);
+      if (step === 'decisions') decisionsStarted(id, streamId);
+      if (step === 'outcomes') outcomesStarted(id, streamId);
+      list[at] = streamRetried(list[at], step, now);
       councils[index] = streamsChanged(councils[index], list, streamId, now);
     }
     return copy(list[at]);
@@ -886,21 +893,46 @@ export const mockSource: DataSource = {
     councilAt(id);
     const at = streamAt(id, streamId);
     const decisions = decisionsOf(id, streamId);
-    // Пока модели отбирают или отбор остановился, прошлых решений нет, а след в коде ещё не искали.
+    // Пока модели ищут или поиск остановился, прошлых решений нет, а след в коде ещё не искали.
     const { state } = stepOf((streams.get(id) ?? [])[at], 'project');
     if (state === 'running' || state === 'failed') {
-      return copy({ catalog: decisions.catalog && { ...decisions.catalog, traced: 0 }, decisions: [] });
+      const { catalog } = decisions;
+      return copy({
+        ...decisions,
+        catalog: catalog && { ...catalog, total: catalog.current, traced: 0, changed: false },
+        decisions: [],
+      });
     }
     return copy(decisions);
+  },
+  async searchProjectDecisions(id, streamId) {
+    const index = councilAt(id);
+    const at = streamAt(id, streamId);
+    const list = streams.get(id) ?? [];
+    if (stepOf(list[at], 'project').state === 'running') {
+      throw new ApiError('project_not_ready', `Модели уже ищут прошлые решения потока ${streamId}`, 409);
+    }
+    const decisions = decisionsOf(id, streamId);
+    // Решений в каталоге нет — искать нечего: модели не работают, шаг как был.
+    if (!decisions.catalog?.current) {
+      Object.assign(decisions, { decisions: [], searched: false });
+      return copy(list[at]);
+    }
+    const now = new Date().toISOString();
+    const { participants, judge } = councils[index];
+    list[at] = searchStarted(list[at], participants, judge, now, decisions.searched);
+    decisions.searched = true;
+    councils[index] = streamsChanged(councils[index], list, streamId, now);
+    return copy(list[at]);
   },
   async approveProjectDecisions(id, streamId, selected) {
     const index = councilAt(id);
     const at = streamAt(id, streamId);
     const { state } = stepOf((streams.get(id) ?? [])[at], 'project');
     if (state === 'running') {
-      throw new ApiError('project_not_ready', `Модели ещё отбирают прошлые решения потока ${streamId}`, 409);
+      throw new ApiError('project_not_ready', `Модели ещё ищут прошлые решения потока ${streamId}`, 409);
     }
-    // Отбор остановился — прошлых решений нет.
+    // Поиск остановился — прошлых решений нет.
     const decisions =
       state === 'failed' ? { ...decisionsOf(id, streamId), decisions: [] } : decisionsOf(id, streamId);
     const unknown = selected.find((d) => !decisions.decisions.some((known) => known.id === d));
@@ -908,6 +940,7 @@ export const mockSource: DataSource = {
     // Отмеченные — по порядку списка, без повторов.
     const chosen = decisions.decisions.filter((d) => selected.includes(d.id)).map((d) => d.id);
     decisions.decisions = decisions.decisions.map((d) => ({ ...d, selected: chosen.includes(d.id) }));
+    decisionsOf(id, streamId).taken = chosen;
     const list = streams.get(id) ?? [];
     const now = new Date().toISOString();
     const { participants, judge } = councils[index];

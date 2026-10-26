@@ -161,6 +161,19 @@ def plan_begun(council: Council, context: Context) -> tuple[Council, TasksLaunch
     return context.store.update_council(council.id, start.changes) or council, start
 
 
+def plan_later(council_id: str, context: Context) -> None:
+    """План, когда пора, — после хода, который сам, без человека, мог сделать готовыми все
+    потоки: поиск прошлых решений на готовом шаге кончился, и шаг снова готов (chain.searched).
+    Как plan_begun после действия, только вне запроса: совет — под замком советов, ход — в пул
+    после замка. Не отдался — план записан упавшим, его запускают снова на «Задачах»."""
+    with council_lock:
+        council = context.store.get_council(council_id)
+        if council is None:
+            return
+        _, start = plan_begun(council, context)
+    go(context.launch, start)
+
+
 def retried(council: Council, context: Context) -> TasksLaunch | None:
     """«Запустить снова» у «Задач», которые остановились: остановился перевод — судья переводит
     заново (переводить уже нечего — перевод «Задачи» больше не держит); иначе план строят заново —

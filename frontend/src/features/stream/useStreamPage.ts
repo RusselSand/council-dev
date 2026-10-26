@@ -329,7 +329,7 @@ export function useStreamPage(council: CouncilSummary, route: StepRoute): Stream
     retry: () => {
       if (state !== 'failed' || retryDisabled) return;
       setRetried(here);
-      void retryAction.run(council.id, route.stream);
+      void retryAction.run(council.id, route.stream, route.step);
     },
     retryDisabled,
     retryError: retriedHere ? retryAction.error : undefined,

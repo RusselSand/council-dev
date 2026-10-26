@@ -14,14 +14,6 @@
   color: var(--state-waiting-ink);
 }
 
-.catalog {
-  margin: 0;
-  font-family: var(--font-mono);
-  font-size: var(--text-sm);
-  color: var(--color-text-secondary);
-  overflow-wrap: anywhere;
-}
-
 .list {
   display: flex;
   flex-direction: column;

@@ -16,7 +16,7 @@ from collections.abc import Collection, Iterable, Mapping, Sequence
 from pathlib import Path
 
 from .export import export_in
-from .models import CodeTrail, ProjectDecision, RepositoryScan, Stream
+from .models import CodeTrail, DecisionsSearch, ProjectDecision, RepositoryScan, Stream
 from .notes import Catalog, NotesError, declared_issues, issues_in
 from .repository import RepositoryError, git_bytes, has_commit
 from .repository import text_of as reason_text
@@ -48,6 +48,12 @@ def own_ids(stream: Stream, notes: Path | None) -> list[str]:
     Выгрузка в другой каталог (проект или его папку сменили) здесь ничего не значит."""
     record = export_in(stream.notes, notes)
     return [note.id for note in record.notes] if record else []
+
+
+def decisions_in(notes: Path | None, stream: Stream) -> int:
+    """Сколько прошлых решений в каталоге заметок сейчас — кроме решений самого потока."""
+    catalog = catalog_at(notes)
+    return len(records(catalog, {}, own_ids(stream, notes))) if catalog is not None else 0
 
 
 def project_catalog(notes: Path | None, stream: Stream) -> Catalog | None:
@@ -252,3 +258,49 @@ def catalog_prompt(catalog: Sequence[ProjectDecision]) -> list[dict]:
     """Каталог для промпта — записи без оценки: её и просят у моделей."""
     return [record.model_dump(mode="json", exclude={"relevance", "reason"})
             for record in catalog]
+
+
+# Отбор на «Решениях проекта»: прошлые решения из поиска моделей и галочки у них.
+
+def search_of(stream: Stream) -> DecisionsSearch | None:
+    """Поиск прошлых решений, где работали модели. Не искали или искать было нечего
+    (DecisionsSearch.empty) — None: для человека поиска не было."""
+    search = stream.decisions_search
+    return search if search is not None and not search.empty else None
+
+
+def past_of(stream: Stream) -> list[ProjectDecision]:
+    """Прошлые решения, которые совет счёл относящимися к идее, — из готового поиска моделей;
+    поиска нет, он идёт или упал — их нет."""
+    search = stream.decisions_search
+    return list(search.decisions) if search is not None and search.state == "done" else []
+
+
+def suggested(decision: ProjectDecision) -> bool:
+    """Совет предлагает учесть решение, которое действует и относится к идее или может ей
+    противоречить; «неясно» — на усмотрение человека (так отмечал старый фронт)."""
+    return decision.status == "active" and decision.relevance in ("applicable",
+                                                                  "potential_conflict")
+
+
+def checked(stream: Stream, decision: ProjectDecision, done: bool) -> bool:
+    """Галочка у прошлого решения, когда открывается отбор. Поиск помнит галочки, что стояли до
+    него, — у решения, что нашлось снова, она та же, у нового — как предлагает совет (решение к
+    задаче «…Искать заново»). Не помнит: шаг готов (done) — у тех, что учитываются; ждёт человека
+    — как предлагает совет."""
+    search = stream.decisions_search
+    checks = search.checks if search is not None else None
+    if checks is not None:
+        return checks.get(decision.adr_id, suggested(decision))
+    if done:
+        return decision.adr_id in {taken.adr_id for taken in stream.project_decisions or []}
+    return suggested(decision)
+
+
+def checks_of(stream: Stream, done: bool) -> dict[str, bool]:
+    """Галочки, которые стоят сейчас, — их помнит новый поиск. Прежний поиск остановился, и решений
+    у него нет, — те, что помнил он."""
+    search = stream.decisions_search
+    earlier = dict(search.checks or {}) if search is not None else {}
+    return earlier | {decision.adr_id: checked(stream, decision, done)
+                      for decision in past_of(stream)}

@@ -259,6 +259,54 @@ def test_without_models_the_plan_stops_and_is_run_again(agents, base):
     assert retries(council_id).status_code == 200 and len(agents.asked) == asked
 
 
+def written_while_searching(agents, base, *, online):
+    """Поток C записали в каталог, пока на его «Решениях проекта» искали заново (решение
+    владельца к задаче «…поиск по кнопке и «Искать заново»»): поток ещё не готов, и плана нет.
+    Ходы ждут в jobs — их пускает тест; модели, пока ищут, — online."""
+    council_id = single()
+    free_c(council_id)
+    assert approves(council_id, "C").status_code == 200
+    project_of(council_id)
+    for note in (Note("PRO-0001", "proposal", "Ищем в базе знаний."),
+                 Note("ADR-0001", "adr", "Ищем в базе знаний.", ("PRO-0001",))):
+        path = path_of(base / "notes", note)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(rendered(note), encoding="utf-8")
+    jobs = []
+    app.dependency_overrides[get_launcher] = lambda: jobs.append
+    agents.online = online
+    res = client.post(f"/api/councils/{council_id}/streams/C/project-decisions/search", json={})
+    assert res.status_code == 200, res.text
+    written_notes(council_id)
+    assert council(council_id).tasks is None
+    assert tasks_of(council_id)["stages"]["tasks"] == "idle"
+    drained(jobs)
+    agents.online = {"sol", "fable"}
+    return council_id, jobs
+
+
+def drained(jobs):
+    while jobs:
+        jobs.pop(0)()
+
+
+def test_a_search_again_ending_after_the_last_stream_is_written_plans_the_tasks(agents, base):
+    council_id, _ = written_while_searching(agents, base, online={"sol", "fable"})
+    assert council(council_id).tasks.state == "done"
+    assert tasks_of(council_id)["stages"]["tasks"] == "waiting"
+
+
+def test_a_selection_after_a_failed_search_again_plans_the_tasks(agents, base):
+    council_id, jobs = written_while_searching(agents, base, online=set())
+    assert council(council_id).tasks is None                     # поиск остановился
+    res = client.post(f"/api/councils/{council_id}/streams/C/project-decisions/approve",
+                      json={"selected": []})
+    assert res.status_code == 200, res.text
+    drained(jobs)
+    assert council(council_id).tasks.state == "done"
+    assert tasks_of(council_id)["stages"]["tasks"] == "waiting"
+
+
 def test_a_council_of_the_previous_version_without_a_plan_runs_it_on_retry(agents, base):
     council_id = ready()
     get_store().update_council(council_id, {"tasks": None, "tasks_draft": None})

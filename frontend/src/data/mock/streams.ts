@@ -229,12 +229,24 @@ const PROTO_DECISIONS: Omit<PastDecision, 'selected'>[] = [
 /** Отбор по потокам из prototype.js (PD0): у A учтены ADR-0003 и ADR-0005, у B — ADR-0005, у C — ничего. */
 const PROTO_CHOSEN: Record<string, string[]> = { A: ['ADR-0003', 'ADR-0005'], B: ['ADR-0005'], C: [] };
 
-/** Каталог советов-примеров — PD_CATALOG из prototype.js: «В каталоге решений: 14, со следом в коде: 9». */
-const protoCatalog = (path: string): DecisionCatalog => ({ path, total: 14, traced: 9 });
+/**
+ * Каталог советов-примеров — PD_CATALOG из prototype.js: «В каталоге решений: 14, со следом в коде: 9». Его пополнили
+ * после поиска (current) — каталог изменился.
+ */
+const protoCatalog = (path: string, current = 14): DecisionCatalog => ({
+  path,
+  total: 14,
+  traced: 9,
+  current,
+  changed: current !== 14,
+});
 
-const protoDecisions = (path: string, streamId: string): ProjectDecisions => ({
-  catalog: protoCatalog(path),
+/** Отбор советов-примеров: модели искали, человек отметил решения PROTO_CHOSEN — они и учитываются. */
+const protoDecisions = (path: string, streamId: string, current?: number): ProjectDecisions => ({
+  catalog: protoCatalog(path, current),
   decisions: PROTO_DECISIONS.map((d) => ({ ...d, selected: (PROTO_CHOSEN[streamId] ?? []).includes(d.id) })),
+  searched: true,
+  taken: PROTO_DECISIONS.map((d) => d.id).filter((id) => (PROTO_CHOSEN[streamId] ?? []).includes(id)),
 });
 
 /** Ключ потока в моках — совет и поток: по нему лежат прошлые решения и вопросы потока. */
@@ -242,80 +254,88 @@ export const streamKey =(council: string, stream: string) => `${council}/${strea
 
 /**
  * Прошлые решения по совету и потоку. g1 — каталог /repos/claude_notes, прошлых решений, относящихся к идее, нет
- * (data-1.json: questions.notes, project_decisions — null). Советы-примеры — из prototype.js: каталог — папка
- * документации проекта (Кромка — kromka-api/docs/reasoning, Сайт — site/docs/adr).
+ * (data-1.json: questions.notes, project_decisions — null): моделям искать было нечего. Советы-примеры — из
+ * prototype.js: каталог — папка документации проекта (Кромка — kromka-api/docs/reasoning, Сайт — site/docs/adr). У
+ * потока A Сайта (c7) каталог пополнили после поиска — на шаге видно, что каталог изменился (в макете такого нет).
  */
 export const PROJECT_DECISIONS: Record<string, ProjectDecisions> = {
-  [streamKey('g1', 'A')]: { catalog: { path: '/repos/claude_notes', total: 0, traced: 0 }, decisions: [] },
+  [streamKey('g1', 'A')]: {
+    catalog: { path: '/repos/claude_notes', total: 0, traced: 0, current: 0, changed: false },
+    decisions: [],
+    searched: false,
+    taken: [],
+  },
   ...Object.fromEntries(
     (['A', 'B', 'C'] as const).flatMap((id) => [
       [streamKey('c1', id), protoDecisions('kromka-api/docs/reasoning', id)],
       [streamKey('c4', id), protoDecisions('kromka-api/docs/reasoning', id)],
     ]),
   ),
-  ...Object.fromEntries(
-    (['A', 'B'] as const).map((id) => [streamKey('c7', id), protoDecisions('site/docs/adr', id)]),
-  ),
+  [streamKey('c7', 'A')]: protoDecisions('site/docs/adr', 'A', 16),
+  [streamKey('c7', 'B')]: protoDecisions('site/docs/adr', 'B'),
 };
 
 /**
- * Прошлые решения нового потока: у проекта есть папка документации — решения, как у советов-примеров, отмечены те, что
- * совет предлагает учесть (не заменённые и не под вопросом, которые относятся к идее или могут ей противоречить); папки
- * нет — каталога нет и решений нет.
+ * Прошлые решения нового потока: у проекта есть папка документации — в каталоге решения, как у советов-примеров, а
+ * модели их ещё не искали; папки нет — каталога нет и решений нет.
  */
 export function newDecisions(docs: string): ProjectDecisions {
-  if (!docs) return { catalog: null, decisions: [] };
-  return {
-    catalog: protoCatalog(docs),
-    decisions: PROTO_DECISIONS.map((d) => ({
-      ...d,
-      selected: d.status === 'active' && d.relation !== 'uncertain',
-    })),
-  };
+  return { catalog: docs ? protoCatalog(docs) : null, decisions: [], searched: false, taken: [] };
 }
 
-/** Строка «Решений проекта» в цепочке, пока они ждут человека: что нашлось в каталоге; пишет сервер. */
-const projectWaitingNote = (decisions: ProjectDecisions) =>
-  !decisions.catalog
-    ? 'у проекта нет папки документации'
-    : decisions.decisions.length
-      ? `найдено решений: ${decisions.decisions.length}`
-      : 'решений в каталоге нет';
+/** Строка «Решений проекта» в цепочке, пока они ждут человека: что в каталоге; пишет сервер. */
+const projectWaitingNote = (decisions: ProjectDecisions) => {
+  if (!decisions.catalog) return 'у проекта нет папки документации';
+  if (decisions.decisions.length) return `найдено решений: ${decisions.decisions.length}`;
+  if (!decisions.searched && decisions.catalog.current) return `в каталоге решений: ${decisions.catalog.current}`;
+  return 'решений в каталоге нет';
+};
 
 /**
- * Потоки после «К потокам →»: каждая группа — поток с её названием и идеей; на «Решениях проекта» модели начали
- * отбирать прошлые решения (now), а в каталоге их нет — шаг ждёт вас (решение q-005 бекенда); остальные шаги не начаты.
- * В моках отбор не кончается.
+ * Потоки после «К потокам →»: каждая группа — поток с её названием и идеей; «Решения проекта» ждут вас — прошлые
+ * решения модели ищут по кнопке (решение владельца к задаче «…поиск по кнопке и «Искать заново»»); остальные шаги не
+ * начаты.
  */
-export const newStreams = (
-  groups: Group[],
-  decisionsOf: (stream: string) => ProjectDecisions,
+export const newStreams = (groups: Group[], decisionsOf: (stream: string) => ProjectDecisions): Stream[] =>
+  groups.map((group) => ({
+    id: group.id,
+    title: group.title,
+    idea: group.idea,
+    steps: STEPS.map(
+      (step): StreamStep =>
+        step === 'project'
+          ? { step, state: 'waiting', note: projectWaitingNote(decisionsOf(group.id)), text: null, progress: [], rechecks: [] }
+          : { step, state: 'idle', note: '', text: null, progress: [], rechecks: [] },
+    ),
+  }));
+
+/**
+ * Поток, где модели начали искать прошлые решения сейчас (now): «Решения проекта» — ИИ работает, модели совета ищут,
+ * судья ждёт своей очереди; искали уже (again) — «… заново.». Шаги дальше — какими были: искали заново на готовом шаге,
+ * а они идут с прежним отбором (решение q-006 бекенда). В моках поиск не кончается.
+ */
+export const searchStarted = (
+  stream: Stream,
   participants: string[],
   judge: string,
   now: string,
-): Stream[] =>
-  groups.map((group) => {
-    const decisions = decisionsOf(group.id);
-    const selecting = decisions.catalog !== null && decisions.decisions.length > 0;
-    return {
-      id: group.id,
-      title: group.title,
-      idea: group.idea,
-      steps: STEPS.map((step): StreamStep => {
-        if (step !== 'project') return { step, state: 'idle', note: '', text: null, progress: [], rechecks: [] };
-        return selecting
-          ? {
-              step,
-              state: 'running',
-              note: RUNNING_NOTE.project ?? '',
-              text: workText(step, participants),
-              progress: started(step, participants, judge, now),
-              rechecks: [],
-            }
-          : { step, state: 'waiting', note: projectWaitingNote(decisions), text: null, progress: [], rechecks: [] };
-      }),
-    };
-  });
+  again: boolean,
+): Stream => ({
+  ...stream,
+  steps: stream.steps.map(
+    (step): StreamStep =>
+      step.step === 'project'
+        ? {
+            ...step,
+            state: 'running',
+            note: RUNNING_NOTE.project ?? '',
+            text: again ? `${workText('project', participants)} заново.` : workText('project', participants),
+            progress: started('project', participants, judge, now),
+            rechecks: [],
+          }
+        : step,
+  ),
+});
 
 /** «sol и fable», «sol, fable и opus» — модели в тексте; текст пишет сервер. */
 export const modelsText = (names: string[]) =>
@@ -429,14 +449,26 @@ function stepApproved(
   };
 }
 
-/** Поток после «… → к вопросам»: «Решения проекта» готовы, со строкой о том, что учтено; модели собирают вопросы. */
+/**
+ * Поток после «… → к вопросам»: «Решения проекта» готовы, со строкой о том, что учтено; модели собирают вопросы. Шаг
+ * уже проходили («Вопросы» начаты) — меняется только отбор, шаги дальше не трогаются.
+ */
 export const decisionsApproved = (
   stream: Stream,
   selected: string[],
   participants: string[],
   judge: string,
   now: string,
-): Stream => stepApproved(stream, 'project', projectDoneNote(selected), participants, judge, now);
+): Stream =>
+  stepOf(stream, 'questions').state === 'idle'
+    ? stepApproved(stream, 'project', projectDoneNote(selected), participants, judge, now)
+    : withProject(stream, projectDoneNote(selected));
+
+/** Поток, где «Решения проекта» снова готовы, со строкой note; остальные шаги — как были. */
+const withProject = (stream: Stream, note: string): Stream => ({
+  ...stream,
+  steps: stream.steps.map((step) => (step.step === 'project' ? { ...step, state: 'done', note, text: null } : step)),
+});
 
 /** «отобрано 4 вопроса» — строка готовых «Вопросов» в цепочке; пишет сервер. */
 const QUESTIONS_DONE_NOTE: Record<string, (count: number) => string> = {
@@ -553,13 +585,14 @@ export const notesApproved = (stream: Stream, count: number | null, now: string)
  * «Запустить снова» — шаг, который остановился, запускается снова: модели, которые уже ответили, заново не работают —
  * их ответы сохранены и второй раз не оплачиваются, как в макете. Шаг идёт снова с первой части, где ответили не все
  * (модели совета или судья): её модели работают заново, модели следующих частей ждут своей очереди; пересчёты решений,
- * что шли, снимаются — их работу делает этот запуск. В моках шаг не кончается. Шага с ошибкой нет — поток как есть.
+ * что шли, снимаются — их работу делает этот запуск. В моках шаг не кончается. Шаг retried не остановился — поток как
+ * есть.
  */
-export function streamRetried(stream: Stream, now: string): Stream {
+export function streamRetried(stream: Stream, retried: Step, now: string): Stream {
   return {
     ...stream,
     steps: stream.steps.map((step): StreamStep => {
-      if (step.state !== 'failed') return step;
+      if (step.step !== retried || step.state !== 'failed') return step;
       const answered = (run: Run) => run.state === 'done' || run.state === 'skipped';
       const from = step.progress.findIndex((phase) => !phase.runs.every(answered));
       const progressNow = step.progress.map((phase, i) => ({
