@@ -13,6 +13,7 @@ standing.py, как и состояние совета. Здесь — что в
 """
 
 from collections.abc import Callable
+from pathlib import Path
 from typing import Literal
 
 from fastapi import APIRouter
@@ -26,6 +27,7 @@ from ..models import Stream as Stored
 from ..notes import NotesError
 from ..options import counted
 from ..order import placed
+from ..project import decisions_in
 from ..standing import (
     STEP_RUNS,
     STEP_STOPPED,
@@ -274,8 +276,8 @@ def note_of(stream: Stored, step: Step, state: State, notes: str | None) -> str:
 
 
 def project_note(stream: Stored, done: bool, notes: str | None) -> str:
-    """Готовы — что учтено; ждут вас — что отобрали модели из каталога решений проекта. Отбора
-    нет — в каталоге не было прошлых решений: моделям нечего было отбирать (решение q-005
+    """Готовы — что учтено; ждут вас — что нашли модели в каталоге решений проекта. Поиска нет —
+    прошлые решения ищут по кнопке: сколько их в каталоге; нет — искать нечего (решение q-005
     бекенда)."""
     if done:
         chosen = [decision.adr_id for decision in stream.project_decisions or []]
@@ -285,9 +287,12 @@ def project_note(stream: Stored, done: bool, notes: str | None) -> str:
     if notes is None:
         return "у проекта нет папки документации"
     search = stream.decisions_search
-    if search is not None and search.decisions:
+    if search is None:
+        count = decisions_in(Path(notes), stream)
+        return f"в каталоге решений: {count}" if count else "решений в каталоге нет"
+    if search.decisions:
         return f"найдено решений: {len(search.decisions)}"
-    if search is None or not search.catalog:
+    if not search.catalog:
         return "решений в каталоге нет"
     return "относящихся к идее решений нет"
 

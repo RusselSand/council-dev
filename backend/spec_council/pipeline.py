@@ -434,6 +434,9 @@ class CouncilRun[S: (Slicing, Structure, IdeaDiscovery, RepositoryScan, DesignSc
     fingerprint: str = ""
     # Какие файлы легли в снимок.
     copied: frozenset[str] = frozenset()
+    # Чем этот ход отличается от прежних с тем же промптом: входит в ключ ответа — ответы прежних
+    # ему не годятся («Искать заново» на «Решениях проекта»). Пусто — ключи как всегда.
+    salt: str = ""
 
     def __init__(self, council_id: str, participants: list[str], judge: str,
                  runner: Runner, report: Callable[[S], None], state: S) -> None:
@@ -574,7 +577,8 @@ class CouncilRun[S: (Slicing, Structure, IdeaDiscovery, RepositoryScan, DesignSc
         # Повтор с тем же ключом берёт оплаченный ответ даром — только если отвечает та же
         # модель: провайдер и модель за alias тоже в ключе.
         identity = self.runner.identity(model)
-        key = f"{self.council_id}-{step}-{model}-{digest(identity + self.fingerprint + prompt)}"
+        key = (f"{self.council_id}-{step}-{model}-"
+               f"{digest(identity + self.fingerprint + self.salt + prompt)}")
         if self._halt.is_set():
             self._set_run(step, model, "failed", "ход остановлен")
             return None
@@ -1667,9 +1671,11 @@ class DecisionsRun(CouncilRun[DecisionsSearch]):
                  report: Callable[[DecisionsSearch], None], *, catalog: Catalog,
                  scan: RepositoryScan | None, own: Sequence[str] = (),
                  repositories: Path | None = None) -> None:
+        # У потока прежней версии идею могли не утвердить — она пустая.
+        idea = stream.idea.text if stream.idea is not None else ""
         super().__init__(council_id, participants, judge, runner, report, start_decisions(
-            participants, judge, stream.idea.text, repository_of(stream), design_of(stream)))
-        self.idea = stream.idea.text
+            participants, judge, idea, repository_of(stream), design_of(stream)))
+        self.idea = idea
         self.fragments = fragments
         self.catalog = catalog
         self.scan = scan

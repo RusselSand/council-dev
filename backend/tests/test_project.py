@@ -1,5 +1,6 @@
 """Решения проекта для потока: каталог прошлых ADR, их след в коде и отбор на шаге «Решения
-проекта» — его делают модели сразу после «К потокам →» (решение q-005 бекенда)."""
+проекта» — его делают модели по кнопке на шаге (решение владельца к задаче «…поиск по кнопке и
+«Искать заново»»)."""
 
 import subprocess
 
@@ -270,9 +271,8 @@ def test_a_replaced_decision_is_never_selected_and_one_under_review_is_not_appli
                                                         ("ADR-0003", "applicable")]
 
 
-# --- в потоке: модели отбирают прошлые решения сразу после «К потокам →» (решение q-005
-# бекенда), человек отмечает нужные на «Решениях проекта»; дальше по цепочке — старые ручки шагов,
-# которые ещё не переехали, сверяют отмеченное с каталогом.
+# --- в потоке: модели отбирают прошлые решения по кнопке на «Решениях проекта», человек отмечает
+# нужные там же.
 
 NOTES = "notes"
 
@@ -322,24 +322,32 @@ def retries(council_id, group="C"):
     return client.post(f"/api/councils/{council_id}/streams/{group}/retry", json={})
 
 
+def searches(council_id, group="C"):
+    """«Искать прошлые решения» на «Решениях проекта»."""
+    res = client.post(f"/api/councils/{council_id}/streams/{group}/project-decisions/search",
+                      json={})
+    assert res.status_code == 200, res.text
+
+
 def at_project(projects, notes=NOTES, offline=None):
     """Совет с проектом, у которого папка документации notes: идея C утверждена, исследования
-    пропущены, «К потокам →» — модели отобрали прошлые решения, если они в каталоге есть.
-    offline — модели (фейк), которых на «К потокам →» нет: отбор падает."""
+    пропущены, «К потокам →» и «Искать прошлые решения» — модели отобрали прошлые решения, если
+    они в каталоге есть. offline — модели (фейк), которых при поиске нет: отбор падает."""
     council_id = grouped()
     get_store().update_council(council_id, {"project": documented(projects, notes)})
     confirm(council_id)
     approve(council_id, "C", IDEA_C)
     skip(council_id, "C")
+    streams_made(council_id)
     if offline is not None:
         offline.online = set()
-    streams_made(council_id)
+    searches(council_id)
     if offline is not None:
         offline.online = {"sol", "fable"}
     return council_id
 
 
-def test_past_decisions_are_selected_on_the_way_to_the_streams(agents, projects):
+def test_past_decisions_are_selected_by_the_button_on_the_step(agents, projects):
     council_id = at_project(projects)
     stream = streams_of(council_id)["C"]
     assert stream.questions is None                     # сначала — решения проекта
@@ -418,6 +426,7 @@ def test_the_failed_selection_runs_again_once_the_models_are_back(agents, projec
 def test_the_trail_comes_from_the_approved_repository_map(agents, projects, repos):
     council_id = coded(projects, repos)
     streams_made(council_id)
+    searches(council_id)
     search = streams_of(council_id)["C"].decisions_search
     assert search.traced == 1
     catalog = section(agents.prompts["project_decisions_discovery"], "PROJECT ADR CATALOG")
@@ -449,6 +458,7 @@ def test_the_trail_is_found_in_the_copy_where_it_is_when_the_selection_runs(agen
     repos.rename(mounted)                                       # прежнего корня больше нет
     app.dependency_overrides[get_repositories] = lambda: mounted
     streams_made(council_id)
+    searches(council_id)
     assert streams_of(council_id)["C"].decisions_search.traced == 1
 
 

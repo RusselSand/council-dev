@@ -9,9 +9,9 @@
 ResearchStage, startStream). По контракту исследования кода и макета независимы, начать их можно
 и до того, как группы подтверждены, а «К потокам →» утверждает всё исследование: каждая группа
 становится потоком, и поток сразу берёт копию исследования — карту кода, описание макета и
-решения по находкам. Есть в каталоге решений проекта прошлые решения — модели сразу отбирают
-для каждого потока те, что относятся к его идее (решение q-005 бекенда, chain.py); нет —
-«Решения проекта» сразу ждут человека.
+решения по находкам. «Решения проекта» потоков ждут человека: прошлые решения модели ищут по
+кнопке на шаге (решение владельца к задаче «…поиск по кнопке и «Искать заново»»,
+web/project_decisions.py).
 
 Исследование кода — по рабочим копиям проекта совета: их inventory берёт уже ход, в фоне
 (pipeline.CodeResearchRun). Скан упал — исследование снова в настройке (research.block_of), в
@@ -29,7 +29,6 @@ from fastapi import APIRouter, HTTPException
 
 from .. import research as domain
 from ..background import Slot, halt, held, launched, reporter
-from ..chain import Launch, begun, selects
 from ..council_tasks import go, plan_begun
 from ..deps import (
     AgentsDep,
@@ -67,10 +66,10 @@ from ..repository import (
     unskipped_since,
     working_copy,
 )
-from ..standing import shown_streams, stream_standing
+from ..standing import shown_streams
 from ..standing import structure_of as groups_stage
 from ..store import council_lock
-from .councils import CouncilAnswer, context_of, folders_of, missing, shown
+from .councils import CouncilAnswer, context_of, missing, shown
 from .errors import ApiError, ContractRoute, not_found
 from .schema import Empty, Schema
 
@@ -362,17 +361,15 @@ def approve(council_id: str, store: StoreDep, agents: AgentsDep, launch: Launche
     не те папки документации и задач проекта, что пропустил бы сейчас (unskipped_since), —
     stale_map, код исследуют заново. Исследование становится взятым, и, если «Потоки» не начаты,
     каждая группа — потоком со своей копией исследования. Потоки уже есть — копию берут только
-    потоки прежней версии, которые не начинали (domain.backfilled): иначе им её не взять. В
-    каталоге решений проекта есть прошлые решения — модели сразу, в фоне, отбирают их для
-    каждого нового потока (решение q-005 бекенда). Потоки уже были и все готовы — модели сразу
-    строят план задач заново: он читал прежнее исследование (решение q-009 бекенда). Уже
-    утверждено — в ответ совет как есть."""
+    потоки прежней версии, которые не начинали (domain.backfilled): иначе им её не взять.
+    «Решения проекта» новых потоков ждут человека: прошлые решения ищут по кнопке. Потоки уже
+    были и все готовы — модели сразу строят план задач заново: он читал прежнее исследование
+    (решение q-009 бекенда). Уже утверждено — в ответ совет как есть."""
     # Сверка карты с папками совета зовёт git в каждой рабочей копии — не под замком советов: до
     # него, а под замком — что сверяли ту же карту и те же папки.
     with council_lock:
         seen = map_of(council_of(store, council_id), notes_of, issues_of)
     stale = seen is not None and unskipped_since(seen[0], repositories, seen[1])
-    starts: list[Launch] = []
     planned = None
     with council_lock:
         council = council_of(store, council_id)
@@ -401,32 +398,15 @@ def approve(council_id: str, store: StoreDep, agents: AgentsDep, launch: Launche
             else:
                 changes["streams"] = domain.backfilled(council.streams or [], research)
             council = store.update_council(council_id, changes) or council
-            notes = folders_of(council, projects, repositories).notes
-            starts = [begun(council, stream, "project", agents, store, notes, repositories)
-                      for stream in council.streams or [] if selecting(stream, notes)]
-            if starts:
-                started = {start.stream.group: start.stream for start in starts}
-                council = store.update_council(council_id, {"streams": [
-                    started.get(stream.group, stream) for stream in council.streams or []]}) \
-                    or council
             # Потоки уже были и все готовы, а исследование прошли заново — план задач читал
             # прежнее: модели строят его заново (решение q-009 бекенда).
             council, planned = plan_begun(
                 council, context_of(store, agents, launch, projects, repositories))
-    # Ходы — в пул после замка: отчёт хода сам берёт замок советов.
-    if not all([launched(launch, start.pipeline, start.report) for start in starts]) \
-            or not go(launch, planned):
+    # Ход — в пул после замка: отчёт хода сам берёт замок советов.
+    if not go(launch, planned):
         raise ApiError(500, "internal",
                        "Сервер останавливается — модели не начали работать")
     return CouncilAnswer(council=shown(council, projects, repositories))
-
-
-def selecting(stream: Stream, notes: str | None) -> bool:
-    """Модели сразу отбирают прошлые решения потока (решение q-005 бекенда): «Решения проекта»
-    ждут отбора, моделей на них ещё не звали, а в каталоге прошлые решения есть. Нет —
-    отбирать нечего, и шаг сразу ждёт вас."""
-    return (stream_standing(stream, notes).steps["project"] == "waiting"
-            and stream.decisions_search is None and selects(stream, notes))
 
 
 # Исследование по контракту.
