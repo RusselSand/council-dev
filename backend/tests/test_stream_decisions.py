@@ -1104,6 +1104,97 @@ def test_a_recheck_of_a_decision_that_rested_on_the_old_choice_takes_the_new_one
     assert found.context == [f"Q3: {own}: {HEADERS}"]
 
 
+# --- unresolved-вопрос помнит, на что опирался
+
+FIRST = "Сначала решите Q1: от того, где ищем, зависит, как мерить."
+
+
+def unresolved(store, pool, agents) -> str:
+    """Q1 и Q2 переданы как unresolved, у Q3 — свой вариант. По Q1 судья взял F2, а по Q2 ответил
+    «сначала решите Q1». Шаг ждёт вас."""
+    council_id = offered(store, pool)
+    own = adds(council_id, "Q3", OWN).json()["option"]["id"]
+    assert chooses(council_id, "Q1").status_code == 200
+    assert chooses(council_id, "Q2").status_code == 200
+    assert chooses(council_id, "Q3", own).status_code == 200
+    assert approves_choice(council_id).status_code == 200
+    agents.judged["Q2"] = {"status": "no_recommendation", "reason": FIRST}
+    pool.run()
+    return council_id
+
+
+def test_an_unresolved_decision_can_be_rechecked_once_what_it_waited_for_is_decided(store, pool,
+                                                                                   agents):
+    """Решение владельца: «сначала решите Q1» у unresolved-вопроса — ответ допустимый; Q1 решили —
+    у вопроса «Пересчитать». Пересчёт — с нынешним выбором других вопросов, и судья рекомендует
+    вариант, если теперь может."""
+    council_id = unresolved(store, pool, agents)
+    q2 = decisions_of(council_id)["Q2"]
+    assert (q2["option"], q2["verdict"], q2["note"], q2["recheck"], q2["stale"]) == (
+        None, "blocked", FIRST, None, [])
+    # «В контексте» — решение Q1, как оно на шаге; проверка помнит, что Q1 был unresolved.
+    assert q2["context"] == [{"question": "Q1", "option": "F2", "text": None}]
+    found = next(f for f in stored(store, council_id).analysis.analyses if f.question_id == "Q2")
+    assert (found.depends_on, found.context) == (["Q1"], ["Q1: -"])
+    # Q1 решили на «Вариантах»: пока его не пересчитали, утверждён прежний выбор.
+    assert chooses(council_id, "Q1", "P1").status_code == 200
+    assert decisions_of(council_id)["Q2"]["recheck"] is None
+    assert rechecks(council_id, "Q1").status_code == 200
+    pool.run()
+    q2 = decisions_of(council_id)["Q2"]
+    assert (q2["recheck"], q2["unchecked"], q2["stale"]) == ("ready", False, [
+        {"question": "Q1", "checked": None, "checkedText": None, "chosen": "P1",
+         "chosenText": None}])
+    asked = len(agents.prompts["decision_judge"])
+    agents.judged["Q2"] = {"status": "recommended", "proposal_id": "P2",
+                           "reason": "Q1 ищет по P1 — с ним подходит P2.",
+                           "rationale": {"text": WHY, "source": "ai"}}
+    assert rechecks(council_id, "Q2").json()["decision"]["recheck"] == "running"
+    pool.run()
+    # Судья сравнивал варианты Q2 с нынешним выбором Q1 — и теперь рекомендует.
+    prompt = judged_prompt(agents, "Q2", asked)
+    assert section(prompt, "USER SELECTION") == "null"
+    assert [(q["id"], q["status"], q["selected_proposal"])
+            for q in json.loads(section(prompt, "RELATED QUESTIONS"))][0] == (
+        "Q1", "selected", {"id": "P1", "text": ONE})
+    q2 = decisions_of(council_id)["Q2"]
+    assert q2["option"] == option_at(council_id, "Q2", "P2")
+    assert (q2["verdict"], q2["rationale"], q2["rationaleBy"], q2["status"], q2["recheck"],
+            q2["stale"], q2["unchecked"]) == (
+        "recommended", WHY, "ai", "draft", None, [], False)
+    assert q2["context"] == [{"question": "Q1", "option": "P1", "text": None}]
+    found = next(f for f in stored(store, council_id).analysis.analyses if f.question_id == "Q2")
+    assert found.context == ["Q1: P1"]
+    # Выбор Q2 так и не выбран: утверждён прежний — unresolved.
+    assert [c.proposal for c in stored(store, council_id).choices if c.question_id == "Q2"] == [
+        None]
+
+
+def test_an_unresolved_decision_that_rests_on_an_old_choice_is_fixed_as_usual(store, pool,
+                                                                             agents):
+    """Сравнение опиралось на свой вариант Q3 (в зависимостях), его текст поправили и Q3
+    пересчитали: у unresolved-решения Q2 «Пересчитать», видно, с каким текстом шла проверка, а
+    решения фиксируют, как обычно: само оно не пересчитывается."""
+    council_id, own = chosen(store, pool)
+    agents.judged["Q2"] = {"status": "no_recommendation", "reason": LACKING,
+                           "depends_on_question_ids": ["Q3"]}
+    pool.run()
+    assert decisions_of(council_id)["Q2"]["context"] == [
+        {"question": "Q3", "option": own, "text": OWN}]
+    assert rewrites(council_id, "Q3", own, HEADERS).status_code == 200
+    asked = len(agents.prompts["decision_analysis"])
+    assert rechecks(council_id, "Q3").status_code == 200
+    pool.run()
+    assert {json.loads(section(prompt, "OPEN QUESTION"))["id"]
+            for prompt in agents.prompts["decision_analysis"][asked:]} == {"Q3"}
+    q2 = edits(council_id, "Q2", MINE, "open").json()["decision"]
+    assert (q2["status"], q2["recheck"], q2["stale"]) == ("open", "ready", [
+        {"question": "Q3", "checked": own, "checkedText": OWN, "chosen": own,
+         "chosenText": HEADERS}])
+    assert approves(council_id).status_code == 200
+    assert decisions_of(council_id)["Q2"]["recheck"] is None
+
+
 # --- вариант решения удалили на «Вариантах»: пересчитать вопрос
 
 def ids_of(prompt) -> list[str]:

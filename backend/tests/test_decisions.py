@@ -103,7 +103,35 @@ def test_a_participant_recommends_one_of_the_options_or_nothing():
     pick = {"status": "unresolved", "recommendation": {"proposal_id": "p1", "reason": "дешевле"}}
     assert analysis_of(pick, OPEN) == Analysis("recommended", "P1", reason="дешевле")
     nothing = {"status": "unresolved", "recommendation": None, "reason": "зависит от Q2"}
-    assert analysis_of(nothing, OPEN) == Analysis("none", None, reason="зависит от Q2")
+    assert analysis_of(nothing, OPEN) == Analysis("none", None, depends_on=("Q2",),
+                                                  reason="зависит от Q2")
+
+
+# Unresolved-вопрос Q1 в потоке с Q2, Q3 и Q12.
+AMONG = Context(constraints=frozenset(), risks=frozenset(),
+                questions=frozenset({"Q2", "Q3", "Q12"}), proposals=frozenset({"P1", "P2"}),
+                selected=None, question="Q1")
+
+
+def test_an_unresolved_comparison_says_what_it_depends_on():
+    """Решение владельца: сравнение вариантов unresolved-вопроса помнит, от каких вопросов оно
+    зависит, как и проверка выбора: названные в зависимостях и в пояснении — «сначала решите
+    Q2», «по Q12 (P3)». Сам вопрос, чужой вопрос и не номер вопроса — не зависимости."""
+    held = judged_analysis({"status": "no_recommendation",
+                            "reason": "Сначала решите Q2: от него зависит Q1.",
+                            "depends_on_question_ids": [" q3 ", "Q9", 7]}, AMONG)
+    assert held == Analysis("none", None, depends_on=("Q2", "Q3"),
+                            reason="Сначала решите Q2: от него зависит Q1.")
+    told = "P2 подходит к Q12 (P3) и к Q1–Q3; FAQ1 и Q2a — не вопросы."
+    pick = judged_analysis({"status": "recommended", "proposal_id": "P2", "reason": told}, AMONG)
+    assert (pick.kind, pick.proposal, pick.depends_on) == ("recommended", "P2", ("Q12", "Q3"))
+    # Участники — так же: и при рекомендации, и без неё.
+    found = analysis_of({"status": "unresolved", "depends_on_question_ids": ["Q2"],
+                         "recommendation": {"proposal_id": "P1", "reason": "как в Q3"}}, AMONG)
+    assert found == Analysis("recommended", "P1", depends_on=("Q2", "Q3"), reason="как в Q3")
+    found = analysis_of({"status": "unresolved", "recommendation": None,
+                         "depends_on_question_ids": "Q2", "reason": "мало данных"}, AMONG)
+    assert found.depends_on == ()
 
 
 @pytest.mark.parametrize(("answer", "where", "problem"), [
@@ -137,7 +165,7 @@ def test_the_judge_validates_flags_a_conflict_recommends_or_holds_back():
     assert recommended == Analysis("recommended", "F3", reason="F4",
                                    rationale="Укладывается в бюджет.")
     held = judged_analysis({"status": "no_recommendation", "reason": "зависит от Q2"}, OPEN)
-    assert held == Analysis("none", None, reason="зависит от Q2")
+    assert held == Analysis("none", None, depends_on=("Q2",), reason="зависит от Q2")
 
 
 def test_the_judge_corrects_the_decision_text_and_it_is_no_problem():
@@ -242,9 +270,12 @@ def test_the_judge_sees_each_analysis_as_the_participants_were_asked_for_it():
     clash = analysis_of(checked(clashes=[{"adr_id": "ADR-5", "text": "сервер"}]), CHOSEN)
     assert as_prompt(clash)["validation"]["adr_conflicts"] == [
         {"adr_id": "ADR-0005", "text": "сервер"}]
-    assert as_prompt(Analysis("recommended", "P1", reason="дешевле")) == {
-        "status": "unresolved", "recommendation": {"proposal_id": "P1", "reason": "дешевле"}}
-    assert as_prompt(Analysis("none", None, reason="мало данных"))["recommendation"] is None
+    assert as_prompt(Analysis("recommended", "P1", depends_on=("Q2",), reason="дешевле")) == {
+        "status": "unresolved", "recommendation": {"proposal_id": "P1", "reason": "дешевле"},
+        "depends_on_question_ids": ["Q2"]}
+    assert as_prompt(Analysis("none", None, reason="мало данных")) == {
+        "status": "unresolved", "recommendation": None, "reason": "мало данных",
+        "depends_on_question_ids": []}
 
 
 def test_the_judge_says_what_to_fix_and_where():

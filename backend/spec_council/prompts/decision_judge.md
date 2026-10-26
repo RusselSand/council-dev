@@ -143,6 +143,10 @@ do not pick an artificial winner.
 
 Return `no_recommendation`.
 
+Either way, list in `depends_on_question_ids` the RELATED QUESTIONS your result depends on: the
+ones whose choice it leans on and the ones the user has to decide first. Every related question
+you name in `reason` is one of them.
+
 Do not create a new PROPOSAL at this stage.
 
 ## Rationale written by AI
@@ -312,7 +316,8 @@ Do not replace the chosen PROPOSAL automatically.
   "status": "recommended",
   "question_id": "Q2",
   "proposal_id": "P3",
-  "reason": "This option matches the IDEA and F4 better.",
+  "reason": "This option matches the IDEA and F4 better, and fits the search chosen in Q1.",
+  "depends_on_question_ids": ["Q1"],
   "decision": null,
   "rationale": {
     "text": "The choice makes it possible to ...",
@@ -325,7 +330,8 @@ Do not replace the chosen PROPOSAL automatically.
 {
   "status": "no_recommendation",
   "question_id": "Q2",
-  "reason": "The choice depends on Q3, which is not resolved yet."
+  "reason": "The choice depends on Q3, which is not resolved yet.",
+  "depends_on_question_ids": ["Q3"]
 }
 
 ## Important rules
