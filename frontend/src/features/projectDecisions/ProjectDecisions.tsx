@@ -5,6 +5,7 @@ import { Button } from '../../ui/Button';
 import { CardFooter } from '../../ui/CardFooter';
 import { Highlight } from '../../ui/Highlight';
 import { Skeleton } from '../../ui/Skeleton';
+import { CatalogLine } from './parts/CatalogLine';
 import { DecisionCard } from './parts/DecisionCard';
 import { SelectionSummary } from './parts/SelectionSummary';
 import styles from './ProjectDecisions.module.css';
@@ -27,8 +28,9 @@ interface ProjectDecisionsProps {
 
 /**
  * Шаг «Решения проекта» внутри карточки шага: идея потока на жёлтой плашке; шаг готов — что учтено и «Изменить
- * отбор»; ждёт вас, остановился или отбор открыт — каталог, прошлые решения с галочками и внизу два перехода к
- * вопросам. Пока модели отбирают прошлые решения — серые строки на месте каталога и решений, кнопок нет.
+ * отбор»; ждёт вас, остановился или отбор открыт — каталог с поиском прошлых решений, прошлые решения с галочками и
+ * внизу два перехода к вопросам. Пока модели ищут прошлые решения — серые строки на месте каталога и решений, кнопок
+ * нет.
  */
 export function ProjectDecisions({
   councilId,
@@ -58,7 +60,13 @@ export function ProjectDecisions({
       ) : (
         <>
           {step.unexported && <p className={styles.unexported}>{step.unexported}</p>}
-          {step.catalog && <p className={styles.catalog}>{step.catalog}</p>}
+          <CatalogLine
+            text={step.catalog}
+            changed={step.changed}
+            search={step.search}
+            disabled={step.busy}
+            onSearch={step.startSearch}
+          />
           {step.decisions.length > 0 && (
             <div className={styles.list}>
               {step.decisions.map((decision) => (

@@ -71,6 +71,11 @@ export interface DataSource {
   /** GET /api/councils/<id>/streams/<streamId>/project-decisions — каталог и прошлые решения потока. */
   getProjectDecisions(id: string, streamId: string): Promise<ProjectDecisions>;
   /**
+   * POST /api/councils/<id>/streams/<streamId>/project-decisions/search — «Искать прошлые решения» и «Искать заново»:
+   * модели ищут их по каталогу, какой он сейчас; ответ — поток.
+   */
+  searchProjectDecisions(id: string, streamId: string): Promise<Stream>;
+  /**
    * POST /api/councils/<id>/streams/<streamId>/project-decisions/approve — учитывать эти прошлые решения (пусто —
    * без прошлых решений) и перейти к вопросам; ответ — поток.
    */

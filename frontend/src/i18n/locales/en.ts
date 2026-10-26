@@ -258,6 +258,10 @@ export const en = translation({
   },
   'projectDecisions.catalog': 'Decisions in catalog: {total}, with a code trail: {traced} · {path}',
   'projectDecisions.catalog.empty': 'Catalog {path} · no past decisions relevant to the idea',
+  'projectDecisions.catalog.unsearched': 'Decisions in catalog: {total} · {path}',
+  'projectDecisions.search': 'Search past decisions',
+  'projectDecisions.searchAgain': 'Search again',
+  'projectDecisions.changed': 'The catalog has changed: was {before}, now {now}',
   'projectDecisions.relation.applicable': 'relevant',
   'projectDecisions.relation.potential_conflict': 'may conflict',
   'projectDecisions.relation.uncertain': 'unclear',
@@ -572,9 +576,10 @@ export const en = translation({
   'error.research_not_ready':
     'The research can’t be approved yet: wait for it to finish, decide on the findings and confirm the groups. The research has been refreshed.',
   'error.stale_map': 'The code map read the council’s folders — research the code again.',
-  'error.unknown_decision': 'One of the checked decisions is no longer in the catalog. The list has been refreshed — check your selection.',
+  'error.unknown_decision':
+    'One of the checked decisions is no longer among the ones found. The list has been refreshed — check your selection.',
   'error.project_not_ready':
-    'The selection can’t be sent right now: the models are selecting past decisions again. The stream has been refreshed.',
+    'The selection and the search wait right now: the models are searching for past decisions. The stream has been refreshed.',
   'error.questions_not_ready':
     'The questions can’t be changed right now: the step hasn’t started or the models are collecting questions again. The stream has been refreshed.',
   'error.text_required': 'Type the text — it can’t be saved empty.',

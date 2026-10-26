@@ -145,10 +145,12 @@ retrying, onBusy, onFocus }) => …}`); шаг не начат — «Шаг от
 Переходы шага — внизу карточки (`ui/CardFooter`), у каждого шага свои.
 
 «Решения проекта» (`features/projectDecisions`) — идея потока на жёлтой плашке (`ui/Highlight`); шаг готов — что учтено
-и «Изменить отбор» (`parts/SelectionSummary`); ждёт вас или отбор открыт — невыгруженные потоки, каталог, прошлые
-решения с галочками (`parts/DecisionCard` на `CheckTile variant="card"`) и два перехода к вопросам. Галочки живут
-в `useProjectDecisionsStep()` рядом с экраном до перехода; переход — `useApproveProjectDecisions()`, потом открываются
-«Вопросы» потока. Экран ставится с `key` по совету и потоку.
+(`taken`) и «Изменить отбор» (`parts/SelectionSummary`); ждёт вас или отбор открыт — невыгруженные потоки, строка
+каталога с поиском прошлых решений (`parts/CatalogLine`: «Искать прошлые решения» / «Искать заново» —
+`useSearchProjectDecisions()`, и «Каталог изменился: …», если каталог изменился после поиска), прошлые решения с
+галочками (`parts/DecisionCard` на `CheckTile variant="card"`) и два перехода к вопросам. Галочки живут
+в `useProjectDecisionsStep()` рядом с экраном до перехода, поиск заново их не сбрасывает; переход —
+`useApproveProjectDecisions()`, потом открываются «Вопросы» потока. Экран ставится с `key` по совету и потоку.
 
 «Вопросы» (`features/questions`) — вопросы строками (`parts/QuestionRow`: id, текст, откуда и «почему», справа «Убрать» /
 «Вернуть»), на строке — «Пересматривает решение проекта» (`parts/RevisitNote`) и «В тексте уже есть ответ»
@@ -434,7 +436,9 @@ id); `QuestionHead` — открытый вопрос крупно, метка �
   заметки — из `data-1.json` макета, остальные советы, их фрагменты, группы, находки, потоки, прошлые решения, вопросы,
   варианты, решения, итоги, заметки и проекты — из `prototype.js`. «Записать в каталог» в моках проставляет решениям и
   итогам потока id в каталоге и меняет статусы прошлых решений того же каталога.
-  «К потокам →» в моках создаёт потоки из групп. План задач в моках — на весь совет, когда готовы все потоки (решение
+  «К потокам →» в моках создаёт потоки из групп; их «Решения проекта» ждут вас, а поиск прошлых решений, как и другая
+  работа моделей в моках, не кончается. У потока A совета c7 каталог пополнили после поиска — видно «Каталог
+  изменился». План задач в моках — на весь совет, когда готовы все потоки (решение
   q-009 бекенда): у g1 — из `data-1.json`, у c1, c4, c7 — `ISSUES` макета (у c1 потоки ещё не готовы — задач нет);
   каталог задач — папка задач проекта совета (`Кромка` — `kromka-api/docs/tasks`, `Сайт` — `site/docs/tasks`,
   `gen_sdk_tooling` — `/repos/tasks`, у looper её нет — «Без папки»). Все потоки стали готовы у совета без плана в моках
@@ -452,7 +456,8 @@ id); `QuestionHead` — открытый вопрос крупно, метка �
   reload }`; хуки действий:
   `useCreateCouncil()`, `useUpdateCouncil()`, `useSaveBrief()`, `useStartSlicing()`, `useStartStructure()`,
   `useConfirmStructure()`, `useRetryStructure()`, `useResearchAction()` (`run(id, { action: 'start' | 'skip' | 'stop' |
-  'reset', kind, … })`), `useApproveResearch()`, `useRetryStream()`, `useApproveProjectDecisions()`, `useAddQuestion()`,
+  'reset', kind, … })`), `useApproveResearch()`, `useRetryStream()`, `useSearchProjectDecisions()`,
+  `useApproveProjectDecisions()`, `useAddQuestion()`,
   `useApproveQuestions()`, `useAddOption()`, `useUpdateOption()`, `useApproveOptions()`, `useApproveDecisions()`,
   `useApproveOutcomes()`, `useApproveNotes()`, `useApproveTasks()`, `useRetryTasks()`, `useCreateProject()`,
   `useUpdateProject()`, `useDeleteProject()` →
@@ -685,6 +690,9 @@ id); `QuestionHead` — открытый вопрос крупно, метка �
 | след в коде     | code trail        |
 | Идея потока     | Stream idea       |
 | Изменить отбор  | Change selection  |
+| Искать прошлые решения | Search past decisions |
+| Искать заново   | Search again      |
+| Каталог изменился | The catalog has changed |
 | Учитываются     | Taken into account |
 | выгружен в заметки | exported to notes |
 | почему          | why               |

@@ -141,6 +141,11 @@ export const httpSource: DataSource = {
     const { projectDecisions } = await request<{ projectDecisions: ProjectDecisions }>('GET', path);
     return projectDecisions;
   },
+  async searchProjectDecisions(id, streamId) {
+    const path = `${streamPath(id, streamId)}/project-decisions/search`;
+    const { stream } = await request<{ stream: Stream }>('POST', path, {});
+    return stream;
+  },
   async approveProjectDecisions(id, streamId, selected) {
     const path = `${streamPath(id, streamId)}/project-decisions/approve`;
     const { stream } = await request<{ stream: Stream }>('POST', path, { selected });
