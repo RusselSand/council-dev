@@ -25,8 +25,8 @@
   font-weight: var(--weight-semibold);
 }
 
-/* Поле «почему» и под ним — кто его написал. */
-.why {
+/* Текст решения или поле «почему» и под ним — кто их написал: «поправил судья», «ИИ», «вы». */
+.authored {
   display: flex;
   flex-direction: column;
   align-items: flex-start;

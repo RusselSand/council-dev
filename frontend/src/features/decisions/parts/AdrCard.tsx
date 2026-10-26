@@ -15,8 +15,9 @@ interface AdrCardProps {
 }
 
 /**
- * Решение (ADR), как в макете: номер, где решение и что о нём думает совет; ниже — контекст, решение, «почему» (поле и
- * кто его написал), в контексте, последствия. У противоречия с решением проекта — отметка «Это решение заменяет
+ * Решение (ADR), как в макете: номер, где решение и что о нём думает совет; ниже — контекст, решение (текст поправил
+ * судья — под ним «поправил судья»), «почему» (поле и кто его написал), в контексте, последствия. У противоречия с
+ * решением проекта — отметка «Это решение заменяет
  * ADR-0003»: отмеченная залита, нет — в рамке. «почему» пусто, а решение не открыто, — «Без обоснования решение не
  * зафиксировать.»
  */
@@ -24,11 +25,23 @@ export function AdrCard({ decision, onRationale, onMark }: AdrCardProps) {
   const { t } = useI18n();
   const facts: Fact[] = [
     { label: t('decisions.fact.context'), value: decision.question },
-    { label: t('decisions.fact.decision'), value: <span className={styles.decision}>{decision.choice}</span> },
+    {
+      label: t('decisions.fact.decision'),
+      value: (
+        <div className={styles.authored}>
+          <span className={styles.decision}>{decision.decision}</span>
+          {decision.byJudge && (
+            <Tag tone="gray" size="md" shape="box">
+              {t('decisions.by.judge')}
+            </Tag>
+          )}
+        </div>
+      ),
+    },
     {
       label: t('decisions.fact.why'),
       value: (
-        <div className={styles.why}>
+        <div className={styles.authored}>
           <TextArea
             variant="outlined"
             rows={3}
