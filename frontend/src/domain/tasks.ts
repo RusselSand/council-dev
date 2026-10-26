@@ -1,5 +1,5 @@
 import type { Catalog } from './notes';
-import type { AdrRef, OutcomeRef } from './outcomes';
+import type { AdrRef } from './outcomes';
 import type { RunStep } from './run';
 
 /**
@@ -12,7 +12,30 @@ export type TaskPhase = (typeof TASK_PHASES)[number];
 /** Часть плана задач и работа моделей в ней. */
 export type TaskStep = RunStep<TaskPhase>;
 
-/** Задача для coding agent — из утверждённого итога потока. */
+/**
+ * Родительская задача — утверждённый итог потока: задачи плана этого итога — её подзадачи (решение владельца к задаче
+ * «Бекенд · Итоги → родительские задачи…»).
+ */
+export interface ParentTask {
+  /** id родительской задачи в плане: на него ссылается parent её подзадач; интерфейс его не разбирает. */
+  id: string;
+  /** Номер в каталоге задач: «ISS-0030»; номера ещё нет — null. */
+  catalogId: string | null;
+  /** Поток итога: «A». */
+  stream: string;
+  /** Итог потока — его id: «O8». */
+  outcome: string;
+  /** Название итога. */
+  title: string;
+  /** Что меняется в системе. */
+  change: string;
+  /** «Готово, когда» — критерии итога; нет — пусто. */
+  criteria: string[];
+  /** Решения потока, которые итог реализует; нет — пусто. */
+  decisions: AdrRef[];
+}
+
+/** Задача для coding agent — подзадача родительской задачи своего итога. */
 export interface Task {
   /** id задачи в плане: «I1»; на него ссылаются зависимости других задач (dependsOn). */
   id: string;
@@ -31,8 +54,8 @@ export interface Task {
   scope: string[];
   /** Открытые вопросы для агента; нет — пусто. */
   openQuestions: string[];
-  /** Итог потока, который задача реализует. */
-  outcome: OutcomeRef;
+  /** id родительской задачи (ParentTask) — итога потока, который задача реализует. */
+  parent: string;
   /** Решения потока, на которых задача стоит; нет — пусто. */
   decisions: AdrRef[];
   /** id задач плана, после которых её брать; нет — пусто: можно брать. */
@@ -59,6 +82,8 @@ export interface TasksPlan {
   catalog: Catalog | null;
   /** Ход последней работы моделей над планом — части по порядку; моделей не звали — пусто. */
   progress: TaskStep[];
+  /** Родительские задачи — по одной на каждый утверждённый итог, по порядку потоков и итогов; плана нет — пусто. */
+  parents: ParentTask[];
   /** Задачи плана, по порядку сервера; плана нет (не все потоки готовы, модели его строят, он остановился) — пусто. */
   tasks: Task[];
   /** Задачи прошлой записи, которых нет в плане; нет или каталога нет — пусто. */
@@ -73,6 +98,31 @@ export interface TasksPlan {
 
 /** Номер задачи на экране — как в макете: в каталоге, а номера нет — в плане. */
 export const taskLabel = (task: Pick<Task, 'id' | 'catalogId'>): string => task.catalogId ?? task.id;
+
+/** Номер родительской задачи на экране: в каталоге, а номера нет — номер её итога. */
+export const parentLabel = (parent: Pick<ParentTask, 'outcome' | 'catalogId'>): string =>
+  parent.catalogId ?? parent.outcome;
+
+/** Родительская задача и её подзадачи — задачи плана с её parent, в порядке плана. */
+export interface TaskBranch {
+  parent: ParentTask;
+  tasks: Task[];
+}
+
+/**
+ * Задачи плана под родительскими, по порядку родительских; задачи, чьей родительской в плане нет, — отдельно, в порядке
+ * плана.
+ */
+export function taskBranches(parents: readonly ParentTask[], tasks: readonly Task[]): {
+  branches: TaskBranch[];
+  orphans: Task[];
+} {
+  const known = new Set(parents.map((p) => p.id));
+  return {
+    branches: parents.map((parent) => ({ parent, tasks: tasks.filter((t) => t.parent === parent.id) })),
+    orphans: tasks.filter((t) => !known.has(t.parent)),
+  };
+}
 
 /** Номера задач, после которых брать эту, по порядку dependsOn; задачи нет в плане — её id. */
 export function dependencyLabels(task: Pick<Task, 'dependsOn'>, tasks: readonly Task[]): string[] {

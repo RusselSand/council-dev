@@ -1,8 +1,12 @@
 import type { State } from './council';
 import type { DecisionStatus } from './stream';
 
-/** Что за заметка — по порядку групп «Документации», как в макете: идея, вопросы, варианты, решения (ADR), итоги. */
-export const NOTE_TYPES = ['idea', 'question', 'option', 'decision', 'outcome'] as const;
+/**
+ * Что за заметка — по порядку групп «Документации», как в макете: идея, вопросы, варианты, решения (ADR). Итогов в
+ * каталоге заметок нет (решение владельца к задаче «Бекенд · Итоги → родительские задачи…»), и группы «Итоги» из макета
+ * тоже.
+ */
+export const NOTE_TYPES = ['idea', 'question', 'option', 'decision'] as const;
 export type NoteType = (typeof NOTE_TYPES)[number];
 
 /**

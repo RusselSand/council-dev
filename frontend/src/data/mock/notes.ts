@@ -2,8 +2,9 @@ import type { Catalog, Note, NotesExport, NoteType, StatusChange } from '../../d
 import { streamKey } from './streams';
 
 /**
- * Выгрузка в моках: как её отдаёт сервер, и ещё — что из потока стало какой заметкой (refs: номер решения или итога в
- * потоке → id в каталоге). Запись в каталог проставляет эти id решениям и итогам потока (catalogId).
+ * Выгрузка в моках: как её отдаёт сервер, и ещё — что из потока стало какой заметкой (refs: номер решения в потоке → id
+ * в каталоге). Запись в каталог проставляет эти id решениям потока (catalogId). Итогов в заметках нет (решение
+ * владельца к задаче «Бекенд · Итоги → родительские задачи…»).
  */
 export interface MockNotes extends NotesExport {
   refs: Record<string, string>;
@@ -27,8 +28,9 @@ const many = (type: NoteType, list: [id: string, title: string][]): Note[] =>
 
 /**
  * Заметки потока A совета g1 — из data-1.json (streams[0].notes): id, type (open_question — вопрос, proposal — вариант,
- * adr — решение), заголовок — первая непустая строка generated, как его берёт макет. Все новые (kept — false). Каталог —
- * root и language; refs — номера решений и итогов в каталоге («ADR-1» → «ADR-0041», «O3» → «OUT-0024»).
+ * adr — решение), заголовок — первая непустая строка generated, как его берёт макет. Все новые (kept — false). Заметок
+ * итогов (outcome) из data-1.json здесь нет: итогов в каталоге не хранят. Каталог — root и language; refs — номера
+ * решений в каталоге («ADR-1» → «ADR-0041»).
  */
 const G1: MockNotes = {
   catalog: { path: '/repos/claude_notes', language: 'English' },
@@ -187,24 +189,11 @@ const G1: MockNotes = {
         'Подпись над списком /generation перечисляет все условия отбора, принятые в ответе на Q1, потому что пользователь сразу видит, почему сервиса из Scan нет в списке, а правило отбора уже определено выбором по Q1.',
       ],
     ]),
-    ...many('outcome', [
-      ['OUT-0024', 'Карточка и вложенные страницы для сервисов из нового списка недоступны'],
-      ['OUT-0025', 'Список обновляется после изменений данных Scan в панели'],
-      ['OUT-0026', 'Состав списка Generation определяется данными Scan'],
-      ['OUT-0027', 'Таблица /generation показывает только названия сервисов'],
-      ['OUT-0028', 'Ошибка получения списка показывается явно и позволяет повторить запрос'],
-      ['OUT-0029', 'Подпись над списком называет условие отбора'],
-    ]),
   ],
   statusChanges: [],
-  refs: {
-    ...Object.fromEntries(
-      Array.from({ length: 12 }, (_, i) => [`ADR-${i + 1}`, `ADR-${String(41 + i).padStart(4, '0')}`]),
-    ),
-    ...Object.fromEntries(
-      Array.from({ length: 6 }, (_, i) => [`O${i + 3}`, `OUT-${String(24 + i).padStart(4, '0')}`]),
-    ),
-  },
+  refs: Object.fromEntries(
+    Array.from({ length: 12 }, (_, i) => [`ADR-${i + 1}`, `ADR-${String(41 + i).padStart(4, '0')}`]),
+  ),
 };
 
 /**
@@ -218,9 +207,9 @@ const protoCatalog = (path: string): Catalog => ({ path, language: 'русски
 
 /**
  * Заметки советов-примеров — NOTES из prototype.js: заголовки и метки как в макете. Вида у них в макете нет (там они
- * одной группой «Заметки») — вид по id: IDEA — идея, OQ — вопрос, ADR — решение, OUT — итог. «новая · пересматривает
- * ADR-0005» — revisits, «новая · заменяет ADR-0005» — supersedes, «superseded → ADR-0010» — superseded с supersededBy,
- * «перепишется» — rewritten, «правили руками» — manual.
+ * одной группой «Заметки») — вид по id: IDEA — идея, OQ — вопрос, ADR — решение. Итога OUT-0005 из макета нет: итогов
+ * в каталоге не хранят. «новая · пересматривает ADR-0005» — revisits, «новая · заменяет ADR-0005» — supersedes,
+ * «superseded → ADR-0010» — superseded с supersededBy, «перепишется» — rewritten, «правили руками» — manual.
  */
 const PROTO_NOTES: Note[] = [
   note('IDEA-0004', 'idea', 'Офлайн-очередь заявок'),
@@ -233,7 +222,6 @@ const PROTO_NOTES: Note[] = [
     supersededBy: 'ADR-0010',
   }),
   note('ADR-0003', 'decision', 'Минимальная версия Android', { change: 'rewritten' }),
-  note('OUT-0005', 'outcome', 'Офлайн-очередь на устройстве'),
   note('ADR-0002', 'decision', 'Формат вложений', { change: 'manual' }),
 ];
 
@@ -251,14 +239,14 @@ const PROTO_STATUS: StatusChange[] = [
 ];
 
 /**
- * Выгрузка совета-примера. Решение ADR-4 потока (Q5 → P41) — ADR-0010, итог OUT-1 — OUT-0005, как в заметках макета;
- * остальные решения и итоги потока в заметках макета не названы.
+ * Выгрузка совета-примера. Решение ADR-4 потока (Q5 → P41) — ADR-0010, как в заметках макета; остальные решения
+ * потока в заметках макета не названы.
  */
 const proto = (path: string): MockNotes => ({
   catalog: protoCatalog(path),
   notes: PROTO_NOTES,
   statusChanges: PROTO_STATUS,
-  refs: { 'ADR-4': 'ADR-0010', 'OUT-1': 'OUT-0005' },
+  refs: { 'ADR-4': 'ADR-0010' },
 });
 
 /**

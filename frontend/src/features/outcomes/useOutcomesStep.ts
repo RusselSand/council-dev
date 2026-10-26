@@ -8,7 +8,6 @@ import {
   firstOutcome,
   nextOutcome,
   outcomeDot,
-  outcomeLabel,
   outcomeReadiness,
   outcomesApprovable,
   outcomesEditable,
@@ -21,7 +20,7 @@ import type { TagTone } from '../../ui/Tag';
 
 /** Открытый итог. */
 export interface OutcomeView {
-  /** Номер итога на экране: «OUT-0024», не выгружен — «O3». */
+  /** Номер итога на экране — в потоке, «O3»: итогов в каталоге заметок нет. */
   label: string;
   title: string;
   /** Метка справа от названия: «готов к разработке», «есть пробелы», «заблокирован Q4». */
@@ -230,7 +229,7 @@ export function useOutcomesStep(
       o.constraints.length ? t('outcomes.constraints', { ids: o.constraints.join(', ') }) : null,
     ];
     return {
-      label: outcomeLabel(o),
+      label: o.id,
       title: o.title,
       tag:
         readiness === 'blocked'
@@ -261,7 +260,6 @@ export function useOutcomesStep(
 
     chips: outcomes.map((o) => ({
       id: o.id,
-      label: outcomeLabel(o),
       dot: outcomeDot(approvedOf(o), outcomeReadiness(o)),
       current: o.id === currentId,
     })),

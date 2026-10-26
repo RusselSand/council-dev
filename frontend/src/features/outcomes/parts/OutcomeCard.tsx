@@ -1,10 +1,10 @@
+import { DoneWhen } from '../../../components/DoneWhen';
 import { QuestionHead } from '../../../components/QuestionHead';
 import { Button } from '../../../ui/Button';
 import { Facts } from '../../../ui/Facts';
 import { Panel } from '../../../ui/Panel';
 import { Tag } from '../../../ui/Tag';
 import type { OutcomeView } from '../useOutcomesStep';
-import { DoneWhen } from './DoneWhen';
 import styles from './OutcomeCard.module.css';
 
 interface OutcomeCardProps {
