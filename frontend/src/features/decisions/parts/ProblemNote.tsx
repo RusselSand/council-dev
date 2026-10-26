@@ -14,7 +14,8 @@ interface ProblemNoteProps {
 
 /**
  * Красная плашка над решением, как в макете: «Проблема: …», «Что поправить» по номерам — вопрос и что сделать, —
- * пояснение, как поправить, «Поправить в «Вариантах»» и, на месте «Перепроверить» макета, «Пересчитать»; под ними — идёт
+ * пояснение, как поправить, «Поправить в «Вариантах»» и, на месте «Перепроверить» макета, «Пересчитать»; под ними —
+ * почему пересчитать есть что (выбор поменяли на «Вариантах», проверка опиралась на прежний выбор другого вопроса), идёт
  * ли пересчёт или он остановился.
  */
 export function ProblemNote({ problem, onFix, recheck, onRecheck }: ProblemNoteProps) {
@@ -52,6 +53,7 @@ export function ProblemNote({ problem, onFix, recheck, onRecheck }: ProblemNoteP
           </Button>
         )}
       </div>
+      {recheck?.reason && <p className={[styles.recheck, styles.ready].join(' ')}>{recheck.reason}</p>}
       {recheck?.note && (
         <p className={[styles.recheck, styles[recheck.note.tone]].join(' ')} role="status">
           {recheck.note.text}

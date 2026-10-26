@@ -336,6 +336,7 @@ export const ru = {
   'options.own': 'Свой вариант',
   'options.own.placeholder': 'Опишите, как должно работать. Совет допишет «почему», «цену» и зависимости.',
   'options.unresolved': 'Пока не решаю — передать как unresolved',
+  'options.unchecked': 'Новый выбор ещё не проверен — пересчитайте его на «Решениях».',
   'options.chosen': 'Выбрано {done} из {total}',
   'options.approve': 'Утвердить выбор → к решениям',
 
@@ -358,6 +359,9 @@ export const ru = {
   'decisions.recheck': 'Пересчитать',
   'decisions.recheck.running': 'ИИ пересчитывает это решение — дождитесь.',
   'decisions.recheck.failed': 'Пересчёт остановился — нажмите «Пересчитать» снова.',
+  'decisions.recheck.unchecked': 'Выбор поменяли на «Вариантах» — пересчитайте решение, чтобы его зафиксировать.',
+  'decisions.recheck.context': 'Проверка опиралась на прежний выбор другого вопроса — решение можно пересчитать.',
+  'decisions.recheck.marks': 'Отмеченные замены ещё не учтены — пересчитайте решение.',
   'decisions.judge': 'Судья:',
   'decisions.adr.catalog': '{id} → {catalog}',
   'decisions.adr.state': '· {state}',
@@ -392,6 +396,7 @@ export const ru = {
   'decisions.accept.open': 'Дальше →',
   'decisions.approve': 'Зафиксировать решения → к итогам',
   'decisions.approve.rechecking': 'Идёт пересчёт решения — зафиксировать решения можно, когда он кончится.',
+  'decisions.approve.unchecked': 'Выбор поменяли на «Вариантах» — пересчитайте {ids}, чтобы зафиксировать решения.',
 
   'outcomes.nav': 'Итоги потока',
   'outcomes.prev': 'Предыдущий итог',

@@ -311,6 +311,7 @@ export const en = translation({
   'options.own': 'Your own option',
   'options.own.placeholder': 'Describe how it should work. The council will add “why”, “cost” and dependencies.',
   'options.unresolved': 'Not deciding yet — pass on as unresolved',
+  'options.unchecked': 'The new choice has not been checked yet — recheck it in “Decisions”.',
   'options.chosen': '{done} of {total} chosen',
   'options.approve': 'Approve choices → to decisions',
 
@@ -333,6 +334,9 @@ export const en = translation({
   'decisions.recheck': 'Recheck',
   'decisions.recheck.running': 'AI is rechecking this decision — please wait.',
   'decisions.recheck.failed': 'The recheck stopped — press “Recheck” again.',
+  'decisions.recheck.unchecked': 'The choice was changed in “Options” — recheck the decision to finalize it.',
+  'decisions.recheck.context': 'The check relied on an earlier choice for another question — you can recheck the decision.',
+  'decisions.recheck.marks': 'The marked replacements are not taken into account yet — recheck the decision.',
   'decisions.judge': 'Judge:',
   'decisions.adr.catalog': '{id} → {catalog}',
   'decisions.adr.state': '· {state}',
@@ -367,6 +371,7 @@ export const en = translation({
   'decisions.accept.open': 'Next →',
   'decisions.approve': 'Finalize decisions → to outcomes',
   'decisions.approve.rechecking': 'A decision is being rechecked — you can finalize decisions once it is done.',
+  'decisions.approve.unchecked': 'The choice was changed in “Options” — recheck {ids} to finalize the decisions.',
 
   'outcomes.nav': 'Stream outcomes',
   'outcomes.prev': 'Previous outcome',

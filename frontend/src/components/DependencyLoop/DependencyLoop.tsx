@@ -1,5 +1,5 @@
 import { useI18n } from '../../i18n';
-import styles from './DependencyLoop.module.css';
+import { NoteLine } from '../../ui/NoteLine';
 
 interface DependencyLoopProps {
   /** Вопросы круга — и открытый тоже — по номерам, как их прислал сервер (`cycle`); пусто — строки нет. */
@@ -13,5 +13,5 @@ interface DependencyLoopProps {
 export function DependencyLoop({ ids }: DependencyLoopProps) {
   const { t, formatList } = useI18n();
   if (ids.length === 0) return null;
-  return <p className={styles.loop}>{t('questions.loop', { ids: formatList(ids) })}</p>;
+  return <NoteLine text={t('questions.loop', { ids: formatList(ids) })} />;
 }

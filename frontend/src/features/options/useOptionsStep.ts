@@ -90,9 +90,10 @@ export interface OptionsStep {
   next: () => void;
   /**
    * Открытый вопрос; вопросов нет — null. cycle — вопросы его круга зависимостей, и он сам, по номерам: «Круг
-   * зависимостей: Q1 и Q2 зависят друг от друга.»; не в круге — пусто.
+   * зависимостей: Q1 и Q2 зависят друг от друга.»; не в круге — пусто. unchecked — выбор не тот, что проверили на
+   * «Решениях»: «Новый выбор ещё не проверен — пересчитайте его на «Решениях».»
    */
-  question: { id: string; text: string; source: string; cycle: string[] } | null;
+  question: { id: string; text: string; source: string; cycle: string[]; unchecked: boolean } | null;
   judge: JudgeView | null;
   toggleDropped: () => void;
 
@@ -400,6 +401,7 @@ export function useOptionsStep(
           text: set.question.text,
           source: t(`questions.source.${set.question.source}`),
           cycle: set.cycle,
+          unchecked: set.unchecked,
         }
       : null,
     judge: set
