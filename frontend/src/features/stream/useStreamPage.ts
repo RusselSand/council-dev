@@ -4,12 +4,16 @@ import { STEPS, type CouncilSummary, type State, type Step } from '../../domain/
 import type { RunState } from '../../domain/run';
 import {
   clock,
+  currentPhase,
   currentStep,
+  phaseStartedAt,
   phaseState,
+  phaseWorker,
   showsRuns,
   stepOf,
   streamState,
   workedSeconds,
+  type StepProgress,
   type Stream,
   type StreamStep,
 } from '../../domain/stream';
@@ -70,6 +74,18 @@ export interface RunGroup {
   runs: RunChip[];
 }
 
+/** Пересчёт решения в «Ходе работы»: строка «Q5 · судья · 0:42» и, если она раскрыта, ход пересчёта по частям. */
+export interface RecheckRow {
+  question: string;
+  /** «Q5 · судья · 0:42»: вопрос, кто сейчас работает и сколько; никто не работает — без времени. */
+  label: string;
+  /** Состояние части, которая идёт: точка пульсирует, пока модели работают. */
+  state: RunState;
+  /** Раскрыта: под строкой — ход пересчёта. */
+  open: boolean;
+  groups: RunGroup[];
+}
+
 /** Что отдаёт экран потока шагу внутри карточки. */
 export interface StepContext {
   stream: Stream;
@@ -79,6 +95,8 @@ export interface StepContext {
   retrying: boolean;
   /** Шаг сообщает, что его переход или правка ждёт ответа: пока да — «Запустить снова» не действует. */
   onBusy: (busy: boolean) => void;
+  /** «Решения» сообщают, какое решение открыто (id вопроса): в «Ходе работы» раскрыт ход его пересчёта. */
+  onFocus: (question: string | null) => void;
 }
 
 export interface StreamPage {
@@ -99,8 +117,12 @@ export interface StreamPage {
   /** Шаг не начат: вместо него — «Шаг откроется, когда пройдены предыдущие.» */
   idle: boolean;
   banner: StepBanner | null;
-  /** «Ход работы» открытого шага; не показывается — null. */
+  /** «Ход работы» открытого шага; не показывается или идут пересчёты решений — null. */
   runs: RunGroup[] | null;
+  /** «Ход работы · пересчёт»: пока у открытого шага идут пересчёты решений — по строке на пересчёт; нет — null. */
+  rechecks: RecheckRow[] | null;
+  /** Щелчок по строке пересчёта: раскрыть её ход, а раскрытый — свернуть. */
+  toggleRecheck: (question: string) => void;
   /** «Запустить снова» шаг с ошибкой. */
   retry: () => void;
   /** «Запустить снова» не действует: ждёт ответа или ответа ждёт переход или правка шага. */
@@ -132,10 +154,12 @@ const stepPath = (council: string, stream: string, step: Step) =>
  * Экран потока — общий для всех шагов, как в макете: вкладки потоков, цепочка шагов, плашка состояния открытого шага
  * и «Запустить снова», «Ход работы» (вид «grouped»), карточка шага с подписью, названием и пояснением. «Запустить
  * снова» и переход или правки шага не уходят вместе: пока ответа ждёт одно, другое не действует. Потока из адреса
- * у совета нет — открывает первый поток на его текущем шаге; потоков нет — «Исследование».
+ * у совета нет — открывает первый поток на его текущем шаге; потоков нет — «Исследование». Пока у «Решений» идут
+ * пересчёты решений, «Ход работы» — их ход, по строке на пересчёт (раскрыт пересчёт решения, открытого на «Решениях»),
+ * а плашка «Решений», которые ждут вас, — «ИИ работает» с вопросами, которые пересчитывают.
  */
 export function useStreamPage(council: CouncilSummary, route: StepRoute): StreamPage {
-  const { t, formatNumber } = useI18n();
+  const { t, formatNumber, formatList } = useI18n();
   const query = useCouncilStreams(council.id, council.stages.streams === 'running');
   const retryAction = useRetryStream();
   const streams = query.data?.streams;
@@ -151,9 +175,18 @@ export function useStreamPage(council: CouncilSummary, route: StepRoute): Stream
   }, [missing, fallback]);
 
   const step = stream ? stepOf(stream, route.step) : undefined;
+  const rechecking = step?.rechecks ?? [];
   const runsShown = step !== undefined && showsRuns(step);
-  const now = useNow(runsShown && step.progress.some((p) => p.runs.some((run) => run.state === 'running')));
+  // Ход на экране: пересчётов решений, пока они идут, иначе — шага; модели в нём работают — время идёт.
+  const shownProgress = rechecking.length > 0 ? rechecking.flatMap((r) => r.progress) : runsShown ? step.progress : [];
+  const now = useNow(shownProgress.some((p) => p.runs.some((run) => run.state === 'running')));
   const stepTitle = t(`step.${route.step}`);
+
+  /** Решение, открытое на «Решениях»: в «Ходе работы» раскрыт ход его пересчёта. */
+  const [focus, setFocus] = useState<string | null>(null);
+  /** Строка, которую раскрыли или свернули щелчком, — пока открыто то же решение; открыли другое — раскрыт его вопрос. */
+  const [picked, setPicked] = useState<{ focus: string | null; question: string | null } | null>(null);
+  const expanded = picked && picked.focus === focus ? picked.question : focus;
 
   const tabs: StreamTab[] = (streams ?? []).map((s) => {
     const current = currentStep(s);
@@ -210,40 +243,73 @@ export function useStreamPage(council: CouncilSummary, route: StepRoute): Stream
         ? t('stream.caps.ai', { step: stepTitle })
         : stepTitle;
 
+  // Ждёт вас, а решения пересчитывают — не «Ход за вами»: ИИ работает (решение владельца).
   const banner: StepBanner | null =
-    state === 'waiting'
-      ? { state, title: t('stream.banner.waiting.title'), text: t('stream.banner.waiting.text', { step: stepTitle }) }
-      : state === 'failed'
-        ? { state, title: t('stream.banner.failed.title', { step: stepTitle }), text: step?.text ?? '' }
-        : state === 'running'
-          ? { state, title: t('state.running'), text: step?.text ?? '' }
-          : null;
+    state === 'waiting' && rechecking.length > 0
+      ? {
+          state: 'running',
+          title: t('state.running'),
+          text: t('stream.banner.rechecking', { ids: formatList(rechecking.map((r) => r.question)) }),
+        }
+      : state === 'waiting'
+        ? { state, title: t('stream.banner.waiting.title'), text: t('stream.banner.waiting.text', { step: stepTitle }) }
+        : state === 'failed'
+          ? { state, title: t('stream.banner.failed.title', { step: stepTitle }), text: step?.text ?? '' }
+          : state === 'running'
+            ? { state, title: t('state.running'), text: step?.text ?? '' }
+            : null;
 
-  const runs: RunGroup[] | null =
-    runsShown && step
-      ? step.progress.map(({ phase, runs: phaseRuns }) => {
-          const groupState = phaseState(phaseRuns);
+  /** Ход по частям: подпись части, её состояние и модели — «sol · думает 0:12». */
+  const groupsOf = (progress: readonly StepProgress[]): RunGroup[] =>
+    progress.map(({ phase, runs: phaseRuns }) => {
+      const groupState = phaseState(phaseRuns);
+      return {
+        phase,
+        label: t(`stream.phase.${phase}`),
+        state: groupState,
+        stateLabel: t(`stream.runs.state.${groupState}`),
+        runs: phaseRuns.map((run) => ({
+          model: run.model,
+          state: run.state,
+          label:
+            run.state === 'running' && run.startedAt
+              ? t('stream.runs.thinking', { model: run.model, time: clock(workedSeconds(run.startedAt, now)) })
+              : run.model,
+        })),
+      };
+    });
+
+  /** Строка пересчёта: вопрос, кто работает в части, которая идёт, и сколько — «Q5 · судья · 0:42». */
+  const recheckLabel = (question: string, progress: readonly StepProgress[]): string => {
+    const part = currentPhase(progress);
+    if (!part) return question;
+    const worker = t(`stream.worker.${phaseWorker(part.phase)}`);
+    const since = phaseStartedAt(part);
+    return since
+      ? t('stream.rechecks.row', { question, worker, time: clock(workedSeconds(since, now)) })
+      : t('stream.rechecks.row.idle', { question, worker });
+  };
+
+  const rechecks: RecheckRow[] | null =
+    rechecking.length > 0
+      ? rechecking.map(({ question, progress }) => {
+          const part = currentPhase(progress);
           return {
-            phase,
-            label: t(`stream.phase.${phase}`),
-            state: groupState,
-            stateLabel: t(`stream.runs.state.${groupState}`),
-            runs: phaseRuns.map((run) => ({
-              model: run.model,
-              state: run.state,
-              label:
-                run.state === 'running' && run.startedAt
-                  ? t('stream.runs.thinking', { model: run.model, time: clock(workedSeconds(run.startedAt, now)) })
-                  : run.model,
-            })),
+            question,
+            label: recheckLabel(question, progress),
+            state: part ? phaseState(part.runs) : 'done',
+            open: question === expanded,
+            groups: groupsOf(progress),
           };
         })
       : null;
 
+  const runs: RunGroup[] | null = !rechecks && runsShown && step ? groupsOf(step.progress) : null;
+
   return {
     context:
       stream && step && streams
-        ? { stream, streams, step, retrying: retryAction.pending, onBusy: setStepBusy }
+        ? { stream, streams, step, retrying: retryAction.pending, onBusy: setStepBusy, onFocus: setFocus }
         : undefined,
     loading: query.loading || missing,
     error: query.error,
@@ -258,6 +324,8 @@ export function useStreamPage(council: CouncilSummary, route: StepRoute): Stream
     idle: state === 'idle',
     banner,
     runs,
+    rechecks,
+    toggleRecheck: (question) => setPicked({ focus, question: expanded === question ? null : question }),
     retry: () => {
       if (state !== 'failed' || retryDisabled) return;
       setRetried(here);

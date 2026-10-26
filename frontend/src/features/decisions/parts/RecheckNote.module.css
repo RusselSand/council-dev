@@ -10,9 +10,16 @@
   background: var(--state-waiting-bg);
 }
 
-.text {
+/* Слева — строки по порядку: на какой выбор опиралась проверка, потом остальное. */
+.body {
+  display: flex;
   flex: 1 1 0;
+  flex-direction: column;
+  gap: var(--space-4);
   min-width: 0;
+}
+
+.text {
   margin: 0;
   font-size: var(--text-sm);
   font-weight: var(--weight-semibold);

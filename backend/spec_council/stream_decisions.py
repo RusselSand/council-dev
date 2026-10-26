@@ -35,7 +35,8 @@
 Пересчёт кончился — этот выбор утверждён (Stream.choices), «почему» и отметки — от новой проверки,
 как у решения, которое модели только что проверили (rechecked). Решения других вопросов, чья
 проверка опиралась на прежний выбор этого (в её контексте он прежний, stale), сами не
-пересчитываются, но «Пересчитать» у них доступна.
+пересчитываются, но «Пересчитать» у них доступна, и видно, на какой выбор проверка опиралась и
+какой он сейчас (shifted; решение владельца к задаче «…ход пересчёта в «Ходе работы»…»).
 
 Поток прежней версии решений на экране отдельно не помнит — только зафиксированные, а до них —
 решения прежней работы к тому же выбору (work.known_decisions): с них начинал и старый фронт.
@@ -179,10 +180,32 @@ def stale(stream: Stream, item: Shown) -> bool:
     """Проверка решения опиралась на выбор другого вопроса, а утверждённый выбор того с тех пор
     другой — его пересчитали с новым выбором: в контексте проверки («Q5: P7») прежний. Само
     решение не пересчитывается, его можно и фиксировать, а «Пересчитать» у него доступна."""
-    checked = {choice.question_id: choice_entry(choice) for choice in stream.choices or []}
-    return any(other != item.question.id and other in checked and checked[other] != entry
-               for entry in item.analysis.context
-               for other in [entry.split(": ", 1)[0]])
+    return bool(shifted(stream, item))
+
+
+def shifted(stream: Stream, item: Shown) -> list[tuple[Choice, Choice]]:
+    """На какой выбор других вопросов опиралась проверка решения и какой у них утверждён сейчас —
+    у тех, чей выбор с тех пор другой (stale), по порядку контекста проверки: «Проверка шла с
+    Q5: P7, а сейчас у Q5 выбран P58» (решение владельца к задаче «…ход пересчёта в «Ходе
+    работы»…»)."""
+    checked = {choice.question_id: choice for choice in stream.choices or []}
+    shifts: dict[str, tuple[Choice, Choice]] = {}
+    for entry in item.analysis.context:
+        was = choice_of(entry)
+        now = checked.get(was.question_id)
+        if (was.question_id != item.question.id and was.question_id not in shifts
+                and now is not None and choice_entry(now) != entry):
+            shifts[was.question_id] = (was, now)
+    return list(shifts.values())
+
+
+def choice_of(entry: str) -> Choice:
+    """Выбор вопроса, как его помнит проверка (pipeline.choice_entry): «Q1: P2», unresolved —
+    «Q1: -», свой вариант — и с текстом: «Q1: P5: текст»."""
+    question, _, rest = entry.partition(": ")
+    option, own, text = rest.partition(": ")
+    return Choice(question_id=question, proposal=option if option not in ("", "-") else None,
+                  text=text if own else None)
 
 
 def due(stream: Stream, item: Shown) -> bool:

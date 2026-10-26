@@ -221,8 +221,15 @@ export const en = translation({
   'stream.banner.waiting.title': 'Your move',
   'stream.banner.waiting.text': 'AI finished the “{step}” step — the decision is yours.',
   'stream.banner.failed.title': 'Failure · {step}',
+  'stream.banner.rechecking':
+    'AI is rechecking {ids}. You can edit the other decisions; finalize them once the recheck is over.',
   'stream.retry': 'Run again',
   'stream.runs.last': 'last run',
+  'stream.runs.rechecks': 'recheck',
+  'stream.rechecks.row': '{question} · {worker} · {time}',
+  'stream.rechecks.row.idle': '{question} · {worker}',
+  'stream.worker.council': 'council models',
+  'stream.worker.judge': 'judge',
   'stream.runs.state.waiting': 'waiting',
   'stream.runs.state.running': 'thinking',
   'stream.runs.state.done': 'done',
@@ -335,7 +342,14 @@ export const en = translation({
   'decisions.recheck.running': 'AI is rechecking this decision — please wait.',
   'decisions.recheck.failed': 'The recheck stopped — press “Recheck” again.',
   'decisions.recheck.unchecked': 'The choice was changed in “Options” — recheck the decision to finalize it.',
-  'decisions.recheck.context': 'The check relied on an earlier choice for another question — you can recheck the decision.',
+  'decisions.stale.problem':
+    'The check went with {question}: {checked}, but {question} now has {chosen} chosen — recheck it, the problem may go away.',
+  'decisions.stale.recheck':
+    'The check went with {question}: {checked}, but {question} now has {chosen} chosen — you can recheck the decision.',
+  'decisions.stale.text.problem':
+    'The check went with the earlier text of {question}: {option} — recheck it, the problem may go away.',
+  'decisions.stale.text.recheck': 'The check went with the earlier text of {question}: {option} — you can recheck the decision.',
+  'decisions.stale.unresolved': 'unresolved',
   'decisions.recheck.marks': 'The marked replacements are not taken into account yet — recheck the decision.',
   'decisions.judge': 'Judge:',
   'decisions.adr.catalog': '{id} → {catalog}',

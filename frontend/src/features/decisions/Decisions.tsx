@@ -25,6 +25,8 @@ interface DecisionsProps {
   retrying: boolean;
   /** Ждут ли ответа «Зафиксировать решения» или правка решения: пока да, «Запустить снова» не действует. */
   onBusy: (busy: boolean) => void;
+  /** Какое решение открыто (id вопроса): в «Ходе работы» раскрыт ход его пересчёта. */
+  onFocus: (question: string | null) => void;
 }
 
 /**
@@ -33,9 +35,9 @@ interface DecisionsProps {
  * открытым · Зафиксировать →»; шаг ждёт вас или остановился — внизу «Зафиксировать решения → к итогам». Пока на шаге
  * работают модели — серые строки на месте решений.
  */
-export function Decisions({ councilId, streamId, state, retrying, onBusy }: DecisionsProps) {
+export function Decisions({ councilId, streamId, state, retrying, onBusy, onFocus }: DecisionsProps) {
   const { t } = useI18n();
-  const step = useDecisionsStep(councilId, streamId, state, retrying, onBusy);
+  const step = useDecisionsStep(councilId, streamId, state, retrying, onBusy, onFocus);
   if (step.running) return <Skeleton />;
   if (!step.loaded) return <LoadState loading={step.loading} error={step.error} onRetry={step.reload} />;
   const { decision } = step;

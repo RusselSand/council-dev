@@ -35,7 +35,15 @@ export interface StepProgress {
   runs: StepRun[];
 }
 
-/** Шаг потока: состояние, строка в цепочке, что на плашке и ход последнего запуска. */
+/** Пересчёт решения, который идёт: вопрос и ход пересчёта по частям — как у шага. */
+export interface StepRecheck {
+  /** id вопроса, решение которого пересчитывают: «Q5». */
+  question: string;
+  /** Ход пересчёта: модели совета проверяют выбор вопроса, судья сводит их проверки. */
+  progress: StepProgress[];
+}
+
+/** Шаг потока: состояние, строка в цепочке, что на плашке, ход последнего запуска и пересчётов. */
 export interface StreamStep {
   step: Step;
   state: State;
@@ -45,6 +53,11 @@ export interface StreamStep {
   text: string | null;
   /** Ход последнего запуска шага по частям; модели на шаге не работали — пусто. */
   progress: StepProgress[];
+  /**
+   * У «Решений» — пересчёты решений, которые идут, в порядке решений; кончился или остановился — его нет. У остальных
+   * шагов и без пересчётов — пусто.
+   */
+  rechecks: StepRecheck[];
 }
 
 /** Поток совета: группа, ставшая потоком, и шесть шагов по порядку. */
@@ -60,7 +73,9 @@ export interface Stream {
 
 /** Шаг потока по ключу; у потока его нет — шаг не начат. */
 export function stepOf(stream: Stream, step: Step): StreamStep {
-  return stream.steps.find((s) => s.step === step) ?? { step, state: 'idle', note: '', text: null, progress: [] };
+  return (
+    stream.steps.find((s) => s.step === step) ?? { step, state: 'idle', note: '', text: null, progress: [], rechecks: [] }
+  );
 }
 
 /** Текущий шаг потока — первый неготовый; все готовы — последний. */
@@ -102,6 +117,29 @@ export function phaseState(runs: readonly Run[]): RunState {
   if (states.includes('waiting')) return 'waiting';
   if (states.length > 0 && states.every((s) => s === 'skipped')) return 'skipped';
   return 'done';
+}
+
+/** Кто работает в части шага — как в контракте: модели совета (сбор, поиск, проверка) или судья. */
+export type PhaseWorker = 'council' | 'judge';
+
+export const phaseWorker = (phase: StepPhase): PhaseWorker =>
+  phase.endsWith('_discovery') || phase === 'decision_analysis' ? 'council' : 'judge';
+
+/** Часть хода, которая идёт: первая, где модель работает; такой нет — первая, где ответили не все; ответили все — нет. */
+export function currentPhase(progress: readonly StepProgress[]): StepProgress | undefined {
+  return (
+    progress.find((p) => p.runs.some((run) => run.state === 'running')) ??
+    progress.find((p) => p.runs.some((run) => run.state !== 'done' && run.state !== 'skipped'))
+  );
+}
+
+/** С какого времени работает часть: самое раннее startedAt её моделей, которые работают; никто не работает — null. */
+export function phaseStartedAt(phase: StepProgress): string | null {
+  const started = phase.runs.flatMap((run) => (run.state === 'running' && run.startedAt ? [run.startedAt] : []));
+  return started.reduce<string | null>(
+    (earliest, at) => (earliest === null || Date.parse(at) < Date.parse(earliest) ? at : earliest),
+    null,
+  );
 }
 
 /** Сколько секунд модель работает к моменту now (мс); время не разобрать — 0. */

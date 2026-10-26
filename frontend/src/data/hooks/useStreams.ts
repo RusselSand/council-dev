@@ -15,13 +15,17 @@ import { useModelsPoll } from './useStageQuery';
 const POLLED_WITH_STREAMS: readonly Topic[] = ['options', 'decisions', 'outcomes'];
 
 /**
- * Потоки совета — GET /api/councils/<id>/streams: потоки и их шаги. Пока хоть на одном шаге работают модели или в списке
- * советов этап «Потоки» ещё идёт (councilRunning), потоки, список советов, варианты, решения и итоги открытого потока
- * перезапрашиваются через 5 с после ответа на потоки — см. useModelsPoll(). Перезапрашиваются и после действий с потоками.
+ * Потоки совета — GET /api/councils/<id>/streams: потоки и их шаги. Пока хоть на одном шаге работают модели или
+ * пересчитывают решения (rechecks) или в списке советов этап «Потоки» ещё идёт (councilRunning), потоки, список советов,
+ * варианты, решения и итоги открытого потока перезапрашиваются через 5 с после ответа на потоки — см. useModelsPoll().
+ * Перезапрашиваются и после действий с потоками.
  */
 export function useCouncilStreams(id: string, councilRunning: boolean): Query<CouncilStreams> {
   const query = useQuery(async () => ({ council: id, streams: await source.listStreams(id) }), [id], 'streams');
-  const running = query.data?.streams.some((stream) => stream.steps.some((step) => step.state === 'running')) ?? false;
+  const running =
+    query.data?.streams.some((stream) =>
+      stream.steps.some((step) => step.state === 'running' || step.rechecks.length > 0),
+    ) ?? false;
   useModelsPoll(councilRunning || running, query, POLLED_WITH_STREAMS);
   return query;
 }

@@ -20,7 +20,10 @@
 Выбор вопроса поменяли на готовых «Вариантах» (решение владельца к задаче «…«Пересчитать» после
 смены выбора…»): у решения unchecked, «Пересчитать» проверяет новый выбор, а пока его не
 пересчитали, решение не фиксируют — ни «Зафиксировать →», ни «Зафиксировать решения»
-(decisions_not_ready).
+(decisions_not_ready). Решение, чья проверка опиралась на прежний выбор другого вопроса, говорит,
+на какой выбор она опиралась и какой он сейчас (stale; решение владельца к задаче «…ход
+пересчёта в «Ходе работы»…»). Ход пересчётов, которые идут, видно у шага «Решения» в потоке
+(web/streams.py, rechecks).
 
 «Зафиксировать решения» у шага, который ждал вас или остановился, кладёт решения шага в
 зафиксированные — шаг готов, — и модели сразу собирают итоги (chain.begun): раньше сборку
@@ -54,6 +57,7 @@ from ..stream_decisions import (
     order_of,
     recheck_of,
     rechecking_questions,
+    shifted,
     shown_of,
     unchecked_questions,
     with_ruling,
@@ -101,6 +105,17 @@ class DecisionConflict(Schema):
     text: str | None
 
 
+class StaleChoice(Schema):
+    """Выбор другого вопроса, на который опиралась проверка решения (checked), и какой у него
+    утверждён сейчас (chosen): вариант — None у unresolved, текст — у своего варианта."""
+
+    question: str
+    checked: str | None
+    checked_text: str | None
+    chosen: str | None
+    chosen_text: str | None
+
+
 class StreamDecision(Schema):
     question: Question
     adr: str
@@ -119,6 +134,7 @@ class StreamDecision(Schema):
     status: Status
     recheck: Recheck | None
     unchecked: bool
+    stale: list[StaleChoice]
     cycle: list[str]
 
 
@@ -318,20 +334,22 @@ def decisions_of(council: Council, stream: Stored, notes: str | None) -> list[St
     done = stream_standing(stream, notes).steps["decisions"] == "done"
     return [decision_of(item, question, options, refs.get(item.adr), past,
                         None if done else recheck_of(stream, item),
+                        [] if done else [stale_of(was, now) for was, now in shifted(stream, item)],
                         looped(order, item.question.id, on_step))
             for item, question in zip(shown, questions, strict=True)]
 
 
 def decision_of(item: Shown, question: Question, options: dict[str, Option | None],
                 catalog_id: str | None, past: dict[str, str], recheck: Recheck | None,
-                cycle: list[str]) -> StreamDecision:
+                stale: list[StaleChoice], cycle: list[str]) -> StreamDecision:
     """Что совет сказал о решении: противоречие — проблемой и что поправить, без заметки судьи;
     иначе — заметкой судьи. Противоречит вариант ограничениям группы или решениям проекта —
     «последствия»: сначала ограничения, потом решения проекта, с тем, чем противоречит. Решения
     проекта, замену которых отметили, — с тем, что в них решено (past — прошлые решения,
     отобранные для потока). recheck — что с «Пересчитать»; у готового шага — ничего: решения
-    ушли в итоги. unchecked — выбор вопроса на «Вариантах» поменяли после проверки. cycle —
-    вопросы круга зависимостей, в который входит этот, и он сам."""
+    ушли в итоги. unchecked — выбор вопроса на «Вариантах» поменяли после проверки. stale — на
+    какой выбор других вопросов проверка опиралась и какой он сейчас; у готового шага — ничего.
+    cycle — вопросы круга зависимостей, в который входит этот, и он сам."""
     found, ruling = item.analysis, item.ruling
     conflict = found.verdict == "conflict"
     problem = DecisionProblem(text=found.reason or "", fixes=[
@@ -351,7 +369,13 @@ def decision_of(item: Shown, question: Question, options: dict[str, Option | Non
         replaces=[DecisionRef(id=adr, decision=past.get(adr, "")) for adr in ruling.replaces],
         risks=[f"F{n}" for n in found.risk_ids], fixes=[], rationale=ruling.rationale,
         rationale_by=AUTHORS[ruling.rationale_by], status=ruling.status, recheck=recheck,
-        unchecked=item.unchecked, cycle=cycle)
+        unchecked=item.unchecked, stale=stale, cycle=cycle)
+
+
+def stale_of(was: Choice, now: Choice) -> StaleChoice:
+    """Выбор другого вопроса, с которым шла проверка, и тот, что утверждён у него сейчас."""
+    return StaleChoice(question=was.question_id, checked=was.proposal, checked_text=was.text,
+                       chosen=now.proposal, chosen_text=now.text)
 
 
 def context_of(question_id: str, options: dict[str, Option | None]) -> DecisionContext:
