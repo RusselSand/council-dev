@@ -4,8 +4,9 @@
 Поток в контракте — Stream: группа, ставшая потоком на «К потокам →» (web/research.py), и шесть
 её шагов. Хранение прежнее — models.Stream с ходами моделей шагов; состояние каждого шага считает
 standing.py, как и состояние совета. Здесь — что видит экран потока: строка шага в цепочке
-(note), что на плашке (text) и ход последнего запуска (progress). Строку и плашку пишет сервер:
-в них числа, номера решений и имена моделей потока.
+(note), что на плашке (text), ход последнего запуска (progress), а у «Решений» — и ход
+пересчётов решений, которые идут (rechecks). Строку и плашку пишет сервер: в них числа, номера
+решений и имена моделей потока.
 
 Как шаги идут друг за другом и как шаг запускают снова — chain.py; перевод заметок на
 «Документации» — stream_notes.py.
@@ -24,6 +25,7 @@ from ..models import Council, StepName
 from ..models import Stream as Stored
 from ..notes import NotesError
 from ..options import counted
+from ..order import placed
 from ..standing import (
     STEP_RUNS,
     STEP_STOPPED,
@@ -43,6 +45,7 @@ from ..standing import (
 )
 from ..store import council_lock
 from ..stream_decisions import counted as decided
+from ..stream_decisions import order_of, rechecking_questions
 from ..stream_notes import retried as retranslated
 from ..stream_notes import written_draft
 from ..stream_outcomes import counted as approved_outcomes
@@ -66,12 +69,20 @@ class StepProgress(Schema):
     runs: list[StepRun]
 
 
+class StepRecheck(Schema):
+    """Пересчёт решения, который идёт: вопрос и ход пересчёта по частям, как у шага."""
+
+    question: str
+    progress: list[StepProgress]
+
+
 class StreamStep(Schema):
     step: Step
     state: State
     note: str
     text: str | None
     progress: list[StepProgress]
+    rechecks: list[StepRecheck]
 
 
 class Stream(Schema):
@@ -152,8 +163,21 @@ def step_of(council: Council, stream: Stored, step: Step, state: State,
             notes: str | None) -> StreamStep:
     run = run_of(stream, step, state, notes)
     return StreamStep(step=step, state=state, note=note_of(stream, step, state, notes),
-                      text=text_of(run, step, state), progress=progress_of(council, run, step,
-                                                                          state))
+                      text=text_of(run, step, state),
+                      progress=progress_of(council, run, step, state),
+                      rechecks=rechecks_of(council, stream) if step == "decisions" else [])
+
+
+def rechecks_of(council: Council, stream: Stored) -> list[StepRecheck]:
+    """Пересчёты решений, которые идут, — у «Решений»: по вопросу, в порядке решений на шаге
+    (stream_decisions.order_of), с ходом каждого по частям, как у шага (решение владельца к задаче
+    «…ход пересчёта в «Ходе работы»…»). Пересчёт, который остановился, сюда не идёт: его видно у
+    решения (recheck — failed)."""
+    going = placed(order_of(stream.analysis), rechecking_questions(stream), lambda one: one)
+    return [StepRecheck(question=question,
+                        progress=progress_of(council, stream.rechecks[question], "decisions",
+                                             "running"))
+            for question in going]
 
 
 def run_of(stream: Stored, step: Step, state: State, notes: str | None) -> Run | None:

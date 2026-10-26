@@ -217,8 +217,9 @@ def test_streams_appear_on_the_research_approval_in_the_order_of_groups(store):
     # «Решения проекта» ждут вас, остальные шаги не начаты.
     assert streams[0]["steps"] == [
         {"step": "project", "state": "waiting", "note": "у проекта нет папки документации",
-         "text": None, "progress": []},
-        *({"step": step, "state": "idle", "note": "", "text": None, "progress": []}
+         "text": None, "progress": [], "rechecks": []},
+        *({"step": step, "state": "idle", "note": "", "text": None, "progress": [],
+           "rechecks": []}
           for step in STEPS[1:])]
     council = summary_of(council_id)
     assert (council["stage"], council["state"], council["stages"]["streams"]) == (

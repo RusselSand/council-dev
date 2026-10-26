@@ -216,7 +216,7 @@ def test_checked_decisions_are_drafts_with_the_councils_rationale(store, pool):
         "option": option_at(council_id, "Q1", "P1"), "verdict": "validated", "note": None,
         "problem": None, "context": [], "conflicts": [], "replaces": [], "risks": [],
         "fixes": [], "rationale": WHY, "rationaleBy": "ai", "status": "draft", "recheck": None,
-        "unchecked": False, "cycle": []}
+        "unchecked": False, "stale": [], "cycle": []}
     # Передан как unresolved — судья взял вариант сам и объяснил почему.
     assert (q2["question"], q2["adr"], q2["option"], q2["verdict"], q2["note"]) == (
         questions["Q2"], "ADR-2", option_at(council_id, "Q2", "P2"), "recommended", "проще")
@@ -440,8 +440,19 @@ def test_a_recheck_checks_only_its_question_and_holds_nothing_else(store, pool, 
     # Вопрос занят: модели проверяют его заново; решение — черновик, «почему» ИИ напишет пересчёт.
     assert (q1["recheck"], q1["status"], q1["rationale"], q1["verdict"]) == (
         "running", "draft", "", "conflict")
-    # Шаг не занят: тот же запуск, решения видны, строка шага и совет — как были.
-    assert stream_of(council_id) == before
+    # Шаг не занят: тот же запуск, решения видны, строка шага, ход последнего запуска и совет — как
+    # были; у шага — ход пересчёта Q1: модели совета проверяют, судья ждёт.
+    after = stream_of(council_id)
+    [going] = steps_of(after)["decisions"]["rechecks"]
+    steps_of(after)["decisions"]["rechecks"] = []
+    assert after == before
+    work, judge = going["progress"]
+    assert (going["question"], work["phase"]) == ("Q1", "decision_analysis")
+    assert [(run["model"], run["state"]) for run in work["runs"]] == [
+        ("sol", "running"), ("fable", "running")]
+    assert all(run["startedAt"].endswith("Z") for run in work["runs"])
+    assert judge == {"phase": "decision_judge",
+                     "runs": [{"model": "fable", "state": "waiting", "startedAt": None}]}
     shown = round_of(council_id)
     assert shown["run"] == 1 and [d["question"]["id"] for d in shown["decisions"]] == [
         "Q1", "Q2", "Q3"]
@@ -478,8 +489,31 @@ def test_a_recheck_checks_only_its_question_and_holds_nothing_else(store, pool, 
     assert {found.question_id: found.replaced for found in after.analysis.analyses} == {
         "Q1": ["ADR-0005"], "Q2": [], "Q3": []}
     assert (after.analysis.launch, after.rechecks) == (1, {})
-    assert steps_of(stream_of(council_id))["decisions"]["state"] == "waiting"
+    decisions = steps_of(stream_of(council_id))["decisions"]
+    assert (decisions["state"], decisions["rechecks"]) == ("waiting", [])
     assert approves(council_id).status_code == 200
+
+
+def test_rechecks_going_side_by_side_are_all_seen_in_the_order_of_decisions(store, pool, agents):
+    """Решение владельца: пересчёты, которые идут параллельно, видны все сразу, в порядке
+    решений, — ход каждого по частям; кончился или остановился — его хода у шага больше нет."""
+    council_id, own = clashing(store, pool, agents)
+    assert marks(council_id, "Q1", "ADR-0005").status_code == 200
+    assert rewrites(council_id, "Q3", own, HEADERS).status_code == 200
+    assert rechecks(council_id, "Q3").status_code == 200
+    assert rechecks(council_id, "Q1").status_code == 200
+    going = steps_of(stream_of(council_id))["decisions"]["rechecks"]
+    assert [one["question"] for one in going] == ["Q1", "Q3"]
+    assert all([part["phase"] for part in one["progress"]] == ["decision_analysis",
+                                                              "decision_judge"]
+               for one in going)
+    agents.stuck = {"Q3"}
+    pool.jobs.pop(0)()                                  # пересчёт Q3 остановился
+    going = steps_of(stream_of(council_id))["decisions"]["rechecks"]
+    assert [one["question"] for one in going] == ["Q1"]
+    assert decisions_of(council_id)["Q3"]["recheck"] == "failed"
+    pool.run()
+    assert steps_of(stream_of(council_id))["decisions"]["rechecks"] == []
 
 
 def test_other_problems_stay_and_ones_own_rationale_too(store, pool, agents):
@@ -885,9 +919,37 @@ def test_decisions_that_rest_on_the_old_choice_can_be_rechecked_and_fixed(store,
     assert q1["context"] == [{"question": "Q3", "option": own, "text": HEADERS}]
     found = next(f for f in stored(store, council_id).analysis.analyses if f.question_id == "Q1")
     assert found.context == [f"Q3: {own}: {OWN}"]
+    # Решение владельца: видно, на какой выбор проверка опиралась и какой он сейчас.
+    assert q1["stale"] == [{"question": "Q3", "checked": own, "checkedText": OWN,
+                            "chosen": own, "chosenText": HEADERS}]
     assert sets_of(council_id)["Q1"]["unchecked"] is False
     assert edits(council_id, "Q1", MINE, "fixed").status_code == 200
     assert approves(council_id).status_code == 200
+    # Шаг готов: решения ушли в итоги — пересчитывать нечего.
+    assert decisions_of(council_id)["Q1"]["stale"] == []
+
+
+def test_a_check_that_rested_on_an_unresolved_question_names_its_new_option(store, pool, agents):
+    """Проверка Q1 шла, когда Q2 был передан как unresolved; Q2 пересчитали с P2 — у Q1 видно,
+    с каким выбором Q2 она шла и какой выбор у него сейчас."""
+    agents.judged["Q1"] = {"status": "validated", "proposal_id": "P1",
+                           "rationale": {"text": WHY, "source": "ai"},
+                           "validation": {"depends_on_question_ids": ["Q2"]}}
+    council_id, _ = checked(store, pool)
+    assert decisions_of(council_id)["Q1"]["stale"] == []
+    assert chooses(council_id, "Q2", "P2").status_code == 200
+    # Пока Q2 не пересчитали, утверждён прежний выбор: проверка Q1 опирается на него.
+    assert decisions_of(council_id)["Q1"]["stale"] == []
+    assert rechecks(council_id, "Q2").status_code == 200
+    pool.run()
+    q1 = decisions_of(council_id)["Q1"]
+    assert (q1["recheck"], q1["stale"]) == ("ready", [
+        {"question": "Q2", "checked": None, "checkedText": None, "chosen": "P2",
+         "chosenText": None}])
+    assert rechecks(council_id, "Q1").status_code == 200
+    pool.run()
+    q1 = decisions_of(council_id)["Q1"]
+    assert (q1["recheck"], q1["stale"]) == (None, [])
 
 
 def test_a_recheck_of_a_decision_that_rested_on_the_old_choice_takes_the_new_one(store, pool,
@@ -925,8 +987,9 @@ def test_a_stream_of_the_prior_version_has_no_changed_choice(store):
             QuestionAnalysis(question_id="Q2", verdict="validated", proposal="P3",
                              rationale=WHY)]))
     shown = decisions_of(council_id)
-    assert {q: (d["recheck"], d["unchecked"]) for q, d in shown.items()} == {
-        "Q1": (None, False), "Q2": (None, False)}
+    assert {q: (d["recheck"], d["unchecked"], d["stale"]) for q, d in shown.items()} == {
+        "Q1": (None, False, []), "Q2": (None, False, [])}
+    assert steps_of(stream_of(council_id))["decisions"]["rechecks"] == []
     assert {q: item["unchecked"] for q, item in sets_of(council_id).items()} == {
         "Q1": False, "Q2": False}
 
