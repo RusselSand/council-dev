@@ -105,6 +105,11 @@ const questionByKey = new Map<string, { stream: string; id: string }>();
 const options = new Map(Object.entries(OPTIONS).map(([key, sets]) => [key, copy(sets)]));
 /** Idempotency-Key → ключ потока, вопрос и id созданного по нему варианта. */
 const optionByKey = new Map<string, { stream: string; question: string; id: string }>();
+/**
+ * Удалённые варианты по совету и потоку (streamKey): «вопрос/вариант». В вариантах потока они остаются — по ним видно
+ * вариант решения, которое их брало, и номер удалённого новому варианту не достаётся, — а на «Вариантах» их нет.
+ */
+const removedOptions = new Map<string, Set<string>>();
 /** Номер запуска шага «Варианты» по совету и потоку (streamKey): утверждение вопросов и «Запустить снова» растят его. */
 const optionRuns = new Map<string, number>();
 /** Решения по совету и потоку (streamKey), по id вопроса: правки решений меняют их здесь. */
@@ -165,7 +170,17 @@ function checkNoModelsPastSlicing(council: CouncilSummary) {
 function forgetGroups(id: string) {
   structures.delete(id);
   streams.delete(id);
-  const byStream = [projectDecisions, questions, options, optionRuns, decisions, decisionRuns, outcomes, outcomeRuns];
+  const byStream = [
+    projectDecisions,
+    questions,
+    options,
+    removedOptions,
+    optionRuns,
+    decisions,
+    decisionRuns,
+    outcomes,
+    outcomeRuns,
+  ];
   for (const stored of [...byStream, notesExports]) {
     for (const key of [...stored.keys()]) if (key.startsWith(streamKey(id, ''))) stored.delete(key);
   }
@@ -281,10 +296,17 @@ function optionSetsOf(id: string, streamId: string): OptionSet[] {
     return {
       question,
       ...sets[question.id],
+      // Удалённых вариантов на «Вариантах» нет.
+      options: sets[question.id].options.filter((o) => !isRemoved(id, streamId, question.id, o.id)),
       unchecked: changed.has(question.id),
       cycle: cycleOf(order, question.id, shown),
     };
   });
+}
+
+/** Вариант вопроса удалили на «Вариантах». */
+function isRemoved(id: string, streamId: string, questionId: string, optionId: string | null): boolean {
+  return optionId !== null && (removedOptions.get(streamKey(id, streamId))?.has(`${questionId}/${optionId}`) ?? false);
 }
 
 /**
@@ -317,15 +339,19 @@ function rememberChecked(id: string, streamId: string, questionId: string) {
 }
 
 /**
- * Вопросы, у решений которых выбор на «Вариантах» не тот, что проверили модели (unchecked), — пока решения правят и
- * пересчитывают. Пересчёт в моках не кончается, поэтому выбор, который проверили, до нового запуска шага тот же.
+ * Вопросы, у решений которых выбор на «Вариантах» не тот, что проверили модели, или вариант решения там удалили
+ * (unchecked), — пока решения правят и пересчитывают. Пересчёт в моках не кончается, поэтому выбор, который проверили,
+ * до нового запуска шага тот же.
  */
 function uncheckedOf(id: string, streamId: string): Set<string> {
   if (!decisionsOpen(id, streamId)) return new Set();
   const sets = optionsOf(id, streamId);
   return new Set(
     Object.entries(storedDecisions(id, streamId))
-      .filter(([question, { checked }]) => checked !== undefined && checked !== choiceKey(sets[question]))
+      .filter(
+        ([question, { checked, option }]) =>
+          (checked !== undefined && checked !== choiceKey(sets[question])) || isRemoved(id, streamId, question, option),
+      )
       .map(([question]) => question),
   );
 }
@@ -1032,6 +1058,7 @@ export const mockSource: DataSource = {
     const existing =
       created?.stream === stream &&
       created.question === questionId &&
+      !isRemoved(id, streamId, questionId, created.id) &&
       optionsOf(id, streamId)[questionId]?.options.find((o) => o.id === created.id);
     if (existing) return copy(existing);
     if (!canSaveOption(text)) throw new ApiError('text_required', 'Пустой вариант не сохранить', 422);
@@ -1054,7 +1081,9 @@ export const mockSource: DataSource = {
     optionSetAt(id, streamId, questionId);
     const list = optionsOf(id, streamId)[questionId].options;
     const found = list.findIndex((o) => o.id === optionId);
-    if (found < 0) throw new ApiError('not_found', `Варианта ${optionId} у вопроса ${questionId} нет`, 404);
+    if (found < 0 || isRemoved(id, streamId, questionId, optionId)) {
+      throw new ApiError('not_found', `Варианта ${optionId} у вопроса ${questionId} нет`, 404);
+    }
     if (list[found].source !== 'user') throw new ApiError('not_own_option', `Вариант ${optionId} — совета`, 422);
     if (!canSaveOption(text)) throw new ApiError('text_required', 'Пустой вариант не сохранить', 422);
     // «Почему», цену и зависимости совет пересмотрит под новый текст — пока их нет. Вариант выбран — это и смена выбора.
@@ -1063,6 +1092,24 @@ export const mockSource: DataSource = {
     touch(index);
     if (decisionsOpen(id, streamId)) decisionsChanged(index, id, streamId);
     return copy(list[found]);
+  },
+  async deleteOption(id, streamId, run, questionId, optionId) {
+    const index = councilAt(id);
+    const at = streamAt(id, streamId);
+    checkOptionsReady(id, streamId, at, run);
+    const found = optionSetAt(id, streamId, questionId);
+    if (!found.options.some((o) => o.id === optionId)) {
+      throw new ApiError('not_found', `Варианта ${optionId} у вопроса ${questionId} нет`, 404);
+    }
+    if (found.choice?.kind === 'option' && found.choice.option === optionId) {
+      throw new ApiError('option_chosen', `Вариант ${optionId} выбран по ${questionId}`, 409);
+    }
+    const key = streamKey(id, streamId);
+    removedOptions.set(key, new Set(removedOptions.get(key)).add(`${questionId}/${optionId}`));
+    // Выбор и шаги потока удаление не меняет; решение, которое брало этот вариант, ждёт «Пересчитать», как после смены
+    // выбора, — и зафиксированное снова черновик.
+    touch(index);
+    if (decisionsOpen(id, streamId)) decisionsChanged(index, id, streamId);
   },
   async approveOptions(id, streamId, run) {
     const index = councilAt(id);

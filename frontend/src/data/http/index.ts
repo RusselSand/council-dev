@@ -190,6 +190,10 @@ export const httpSource: DataSource = {
     const { option } = await request<{ option: Option }>('PATCH', path, { run, text });
     return option;
   },
+  async deleteOption(id, streamId, run, questionId, optionId) {
+    const path = `${optionsPath(id, streamId, questionId)}/${encodeURIComponent(optionId)}`;
+    await request<void>('DELETE', path, { run });
+  },
   async approveOptions(id, streamId, run) {
     const path = `${streamPath(id, streamId)}/options/approve`;
     const { stream } = await request<{ stream: Stream }>('POST', path, { run });

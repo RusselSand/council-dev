@@ -193,3 +193,9 @@
 .link:disabled {
   color: var(--color-text-ghost);
 }
+
+/* «Да, удалить» у варианта: красная и под курсором. */
+.danger.link,
+.danger.link:not(:disabled):hover {
+  color: var(--state-failed);
+}

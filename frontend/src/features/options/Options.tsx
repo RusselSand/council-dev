@@ -31,8 +31,8 @@ interface OptionsProps {
 }
 
 /**
- * Шаг «Варианты» внутри карточки шага: вопросы по одному, плашка судьи, варианты с кружком выбора, «Свой вариант» и
- * «Пока не решаю»; шаг ждёт вас или остановился — внизу «Выбрано 2 из 4» и «Утвердить выбор → к решениям». Пока на
+ * Шаг «Варианты» внутри карточки шага: вопросы по одному, плашка судьи, варианты с кружком выбора, «Поправить» и
+ * «Удалить», «Свой вариант» и «Пока не решаю»; шаг ждёт вас или остановился — внизу «Выбрано 2 из 4» и «Утвердить выбор → к решениям». Пока на
  * шаге работают модели — серые строки на месте вариантов.
  */
 export function Options({ councilId, streamId, state, judge, retrying, onBusy }: OptionsProps) {
@@ -69,9 +69,11 @@ export function Options({ councilId, streamId, state, judge, retrying, onBusy }:
               <OptionCard
                 key={option.id}
                 option={option}
-                disabled={step.locked}
+                disabled={step.locked || option.deleting}
                 onPick={step.pick}
                 onEdit={step.startEdit}
+                onDelete={step.deleteOption}
+                onRetryDelete={step.retryDelete}
                 onShowQuestion={step.show}
                 editor={
                   <OptionEditor
