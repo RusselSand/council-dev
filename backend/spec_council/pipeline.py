@@ -1588,7 +1588,10 @@ class TaskRun(CouncilRun[TaskPlan]):
         candidates = shuffled([plan_prompt(plan) for plan in plans])
         prompt = render("task_plan_judge", **values, plan_candidates=as_json(
             [{"candidate": n, "issues": plan} for n, plan in enumerate(candidates, 1)]))
-        return self._ask_judge(StepName.task_plan_judge, prompt, parse)
+        # Судья нумерует задачи заново: ссылка на задачу, которой нет в его плане, — негодный
+        # ответ, и повтор спрашивает его снова.
+        return self._ask_judge(StepName.task_plan_judge, prompt,
+                               partial(plan_of, context=self.inputs.context, judged=True))
 
     def _code_note(self) -> str:
         """Где код: снимок — текущий каталог хода; без скана его нет."""

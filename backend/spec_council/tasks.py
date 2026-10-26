@@ -9,7 +9,9 @@
 Ответ модели проверяет код: у задачи ровно один итог — из плана; решения, ограничения и риски —
 только те, что есть у её итога; зависимости — только на задачи раньше неё по плану (на задачу
 дальше — негодный ответ: порядок плана и есть порядок работы). Номера задач код раздаёт заново по
-порядку плана: I1, I2…
+порядку плана: I1, I2… Судья ссылается в тексте задач только на задачи своего плана: I-номер,
+которого в нём нет, — негодный ответ, судья отвечает заново (решение владельца к задаче «Бекенд ·
+Задачи: номера задач в тексте»).
 """
 
 import json
@@ -44,6 +46,8 @@ from .slicing import BadAnswer
 
 TEXT_MAX = 4000
 ITEMS_MAX = 20
+# Номер задачи плана в тексте: I1, I12 — целиком (I1 — не начало I12 или I1-a).
+TASK_NUMBER = re.compile(r"(?<![\w-])I[1-9]\d*(?![\w-])")
 
 
 @dataclass(frozen=True)
@@ -439,11 +443,26 @@ def relabeled(text: str, names: Mapping[str, str], keep: Collection[str] = ()) -
     return in_prose(text, renamed, keep)
 
 
-def plan_of(data: dict, context: Context) -> list[Issue]:
+def tasks_named(text: str, keep: Collection[str] = ()) -> list[str]:
+    """Номера задач плана (I1, I2…), что называет проза текста: в коде, адресах ссылок и
+    сочетаниях keep («I1 cache») номер — не ссылка, как и для relabeled."""
+    found: list[str] = []
+
+    def collect(part: str) -> str:
+        found.extend(TASK_NUMBER.findall(part))
+        return part
+
+    in_prose(text, collect, keep)
+    return found
+
+
+def plan_of(data: dict, context: Context, judged: bool = False) -> list[Issue]:
     """План из ответа модели: задачи по порядку, с номерами I1, I2… — и в тексте задач тоже.
     Задача, чей итог не из плана, отбрасывается — как и ссылки на решения, ограничения и риски,
     которых у её итога нет. Задача ждёт только задачи раньше себя: зависимость от задачи дальше
-    по плану — негодный ответ, порядок плана и есть порядок работы."""
+    по плану — негодный ответ, порядок плана и есть порядок работы. judged — ответ судьи: он
+    нумерует задачи заново, и номер задачи в тексте (в любом его поле), которой в его плане нет, —
+    негодный ответ: судья перенёс ссылку с номером плана модели или отброшенной задачи."""
     items = data.get("issues")
     if not isinstance(items, list):
         raise BadAnswer("нет списка issues")
@@ -460,7 +479,7 @@ def plan_of(data: dict, context: Context) -> list[Issue]:
         kept.append((name, item))
     renamed = {name: f"I{n}" for n, (name, _) in enumerate(kept, 1) if name}
     issues = []
-    for n, (_, item) in enumerate(kept, 1):
+    for n, (answered, item) in enumerate(kept, 1):
         issue_id = f"I{n}"
         after = [renamed[d] for d in texts_of(item.get("depends_on"))
                  if d in renamed and renamed[d] != issue_id]
@@ -470,14 +489,17 @@ def plan_of(data: dict, context: Context) -> list[Issue]:
                             "плана и есть порядок работы")
         own = context.outcomes[item["outcome_id"]]
         keep = context.phrases.get(item["outcome_id"], frozenset())
+        stray: list[str] = []
 
-        def text(value: str, keep: frozenset[str] = keep) -> str:
+        def text(value: str, keep: frozenset[str] = keep, stray: list[str] = stray) -> str:
+            stray.extend(name for name in tasks_named(value, keep) if name not in renamed)
             return relabeled(value, renamed, keep)
 
-        issues.append(Issue(
+        issue = Issue(
             id=issue_id, title=text(line(text_of(item.get("title"), "названия"))),
             user_story=text(text_of(item.get("user_story"), "user story")),
-            main_entry_points=texts_of(item.get("main_entry_points")),
+            main_entry_points=[text(line(entry))
+                               for entry in texts_of(item.get("main_entry_points"))],
             current_state=text(text_of(item.get("current_state"), "нынешнего состояния", False)),
             scope=[text(line(entry)) for entry in texts_of(item.get("scope"))],
             outcome_id=item["outcome_id"],
@@ -486,7 +508,12 @@ def plan_of(data: dict, context: Context) -> list[Issue]:
             risk_ids=ints_in(item.get("risk_ids"), own.risks),
             depends_on=list(dict.fromkeys(after)),
             open_questions=[text(line(entry))
-                            for entry in texts_of(item.get("open_questions"))]))
+                            for entry in texts_of(item.get("open_questions"))])
+        # Задачу и ссылку называют номерами ответа: план из него не построен.
+        if judged and stray:
+            raise BadAnswer(f"в тексте {answered or issue_id} — "
+                            f"{', '.join(dict.fromkeys(stray))}: таких задач в плане нет")
+        issues.append(issue)
     return issues
 
 

@@ -803,3 +803,60 @@ def test_a_stopped_translation_is_run_again(english, base):
     finally:
         app.dependency_overrides.pop(get_agents)
         app.dependency_overrides.pop(get_launcher)
+
+
+# --- номера задач в тексте
+
+class Judging(Agents):
+    """Планы моделей разошлись — их сводит судья: на итог две задачи, вторая — после первой, и
+    «Где менять» у неё называет первую. stray — сколько раз судья назовёт там задачу плана модели
+    (I3), которой в его плане нет."""
+
+    def __init__(self):
+        super().__init__()
+        self.stray = 1
+
+    def ask(self, model, prompt, key, workspace=None, stop=None):
+        reply = super().ask(model, prompt, key, workspace)
+        if "-task_plan-" in key and model == "fable":
+            return json.dumps(two_tasks(prompt))
+        if "-task_plan_judge-" in key:
+            plan = two_tasks(prompt)
+            named = "I3" if self.stray else "I1"
+            self.stray = max(self.stray - 1, 0)
+            plan["issues"][1]["main_entry_points"] = [f"app.py: рядом с правкой из {named}"]
+            return json.dumps(plan)
+        return reply
+
+
+def test_a_judge_naming_a_task_not_in_its_plan_stops_the_plan_and_answers_again(base):
+    """Решение владельца к задаче «Бекенд · Задачи: номера задач в тексте»: I-номер, которого в
+    плане нет, — ответ судьи не принимается, судья отвечает заново; «Где менять» в файле задачи —
+    номерами задач в каталоге, как остальной текст."""
+    fake = Judging()
+    app.dependency_overrides[get_agents] = lambda: fake
+    app.dependency_overrides[get_launcher] = lambda: lambda job: job()
+    try:
+        council_id = ready()
+        shown = plan_of(council_id)
+        assert shown["tasks"] == []
+        assert shown["progress"][1] == {"phase": "task_plan_judge",
+                                        "runs": [{"model": "fable", "state": "failed"}]}
+        assert shown["error"] == ("fable не справилась: негодный ответ: в тексте I2 — I3: таких "
+                                  "задач в плане нет.")
+        assert tasks_of(council_id)["stages"]["tasks"] == "failed"
+        assert error_of(writes(council_id)) == (409, "tasks_not_ready")
+
+        assert retries(council_id).status_code == 200
+        shown = plan_of(council_id)
+        assert shown["error"] is None and shown["progress"][1]["runs"][0]["state"] == "done"
+        # На экране — как написали модели, в файле задачи — номерами задач в каталоге.
+        assert [(task["id"], task["catalogId"], task["entries"]) for task in shown["tasks"]] == [
+            ("I1", "ISS-0001", ["app.py"]),
+            ("I2", "ISS-0002", ["app.py: рядом с правкой из I1"])]
+        assert writes(council_id).json()["council"]["stages"]["tasks"] == "done"
+        text = (base / "issues" / "ISS-0002.md").read_text(encoding="utf-8")
+        assert "- app.py: рядом с правкой из ISS-0001\n" in text and "I1" not in text
+    finally:
+        app.dependency_overrides.pop(get_agents)
+        app.dependency_overrides.pop(get_launcher)

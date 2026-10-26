@@ -124,7 +124,7 @@ def issue_text(issue: Issue, number: str, outcome: tuple[str, str],
             lines.extend(["", f"## {title}", *items])
 
     now = issue.current_state.strip()
-    section(words["entry"], (f"- {line(item)}" for item in issue.main_entry_points))
+    section(words["entry"], (f"- {named(line(item))}" for item in issue.main_entry_points))
     section(words["now"], [named(now)] if now else [])
     # Пункт ляжет одной строкой — номера в нём ищут уже в ней: «Пример:\n\n    Q1» станет
     # прозой, а не блоком кода.
