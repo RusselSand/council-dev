@@ -11,6 +11,12 @@ unresolved, сравнивают его варианты и, если один �
 меняется: проверка не того варианта или рекомендация вместо проверки — негодный ответ. Ссылки
 вторичны: чужой номер просто отбрасывается.
 
+Сравнение вариантов unresolved-вопроса, как и проверка выбора, говорит, от каких других вопросов
+оно зависит (решение владельца к задаче «…unresolved-вопрос помнит, на что опирался…»): «сначала
+решите Q1» — ответ допустимый, а когда Q1 решат, вопрос можно пересчитать
+(stream_decisions.stale). Зависит оно и от вопросов, которые называет его пояснение («по Q2
+(P3)…»), даже если в зависимостях их не назвали (rests_of).
+
 «Почему» пишут модели, и судья его проверяет: что сказано о коде — по карте кода, и не спорит ли
 оно с другими решениями потока и проекта. Нашёл неправду — пишет исправленное «почему» сам:
 это не проблема решения, и фиксировать его она не мешает (решение владельца к задаче «…«почему»
@@ -46,6 +52,8 @@ FIX_MAX = 1000
 CLASH_MAX = 500
 # Номер решения потока в тексте: «ADR-3» — не «ADR-30» и не «ADR-0003».
 ADR_REF = re.compile(r"(?<![\w-])ADR-[1-9]\d*(?![\w-])")
+# Номер вопроса потока в тексте: «Q1», «Q12», оба в «Q1–Q3» — но не в «FAQ1» и не в «Q1a».
+QUESTION_REF = re.compile(r"(?<!\w)Q\d+(?!\w)")
 
 # Ответы участника и судьи — в своих словах (decision_analysis.md, decision_judge.md).
 JUDGED = {"validated": "validated", "conflict": "conflict", "recommended": "recommended",
@@ -93,7 +101,8 @@ class Clash:
 @dataclass(frozen=True)
 class Analysis:
     """Анализ участника или итог судьи. kind — validated или conflict про выбор человека,
-    recommended или none про unresolved; proposal — проверенный или рекомендованный вариант."""
+    recommended или none про unresolved; proposal — проверенный или рекомендованный вариант;
+    depends_on — от каких других вопросов зависит выбор или сравнение вариантов."""
 
     kind: str
     proposal: str | None
@@ -245,6 +254,15 @@ def recommended(value: object, context: Context) -> str:
     return named
 
 
+def rests_of(data: dict, context: Context, reason: str) -> tuple[str, ...]:
+    """Другие вопросы потока, от выбора по которым зависит сравнение вариантов unresolved-вопроса:
+    названные в зависимостях (depends_on_question_ids) и в пояснении — «сначала решите Q1»,
+    «по Q2 (P3)…»: на их выбор сравнение опирается, даже если в зависимостях их забыли."""
+    listed = data.get("depends_on_question_ids")
+    named = [*(listed if isinstance(listed, list) else []), *QUESTION_REF.findall(reason)]
+    return questions_in(named, context.questions)
+
+
 def analysis_of(data: dict, context: Context) -> Analysis:
     """Анализ участника: проверка выбора (user_selected) или сравнение вариантов (unresolved)."""
     status = data.get("status")
@@ -260,15 +278,19 @@ def analysis_of(data: dict, context: Context) -> Analysis:
             raise BadAnswer(f"вопрос unresolved, а выбран {context.selected}")
         pick = data.get("recommendation")
         if not isinstance(pick, dict):
-            return Analysis("none", None, reason=reason_of(data.get("reason")))
+            reason = reason_of(data.get("reason"))
+            return Analysis("none", None, depends_on=rests_of(data, context, reason),
+                            reason=reason)
+        reason = reason_of(pick.get("reason"))
         return Analysis("recommended", recommended(pick.get("proposal_id"), context),
-                        reason=reason_of(pick.get("reason")))
+                        depends_on=rests_of(data, context, reason), reason=reason)
     raise BadAnswer(f"неизвестный status: {status!r}")
 
 
 def judged_analysis(data: dict, context: Context) -> Analysis:
     """Итог судьи по вопросу. У варианта, который проверили или рекомендовали, — и текст решения,
-    если судья его поправил."""
+    если судья его поправил. У unresolved — и от каких вопросов зависит сравнение (rests_of),
+    рекомендовал судья вариант или нет."""
     status = data.get("status")
     kind = JUDGED.get(status) if isinstance(status, str) else None
     if kind is None:
@@ -287,11 +309,12 @@ def judged_analysis(data: dict, context: Context) -> Analysis:
         return Analysis(kind, found.proposal, found.conflicts, found.risks, found.depends_on,
                         reason, rationale, fixes, found.clashes, decision)
     if kind == "recommended":
-        return Analysis(kind, recommended(data.get("proposal_id"), context), reason=reason,
+        return Analysis(kind, recommended(data.get("proposal_id"), context),
+                        depends_on=rests_of(data, context, reason), reason=reason,
                         rationale=rationale, decision=decision)
     if context.selected is not None:
         raise BadAnswer(f"no_recommendation вместо проверки выбранного {context.selected}")
-    return Analysis("none", None, reason=reason)
+    return Analysis("none", None, depends_on=rests_of(data, context, reason), reason=reason)
 
 
 def as_prompt(analysis: Analysis) -> dict:
@@ -309,5 +332,7 @@ def as_prompt(analysis: Analysis) -> dict:
                               "rationale_source": "ai_suggested" if analysis.rationale else None}}
     if analysis.kind == "recommended":
         return {"status": "unresolved",
-                "recommendation": {"proposal_id": analysis.proposal, "reason": analysis.reason}}
-    return {"status": "unresolved", "recommendation": None, "reason": analysis.reason}
+                "recommendation": {"proposal_id": analysis.proposal, "reason": analysis.reason},
+                "depends_on_question_ids": list(analysis.depends_on)}
+    return {"status": "unresolved", "recommendation": None, "reason": analysis.reason,
+            "depends_on_question_ids": list(analysis.depends_on)}

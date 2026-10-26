@@ -775,6 +775,26 @@ def test_a_choice_is_checked_and_an_unresolved_question_gets_a_recommendation():
     assert '"recommendation"' in judge_prompt
 
 
+def test_an_unresolved_question_remembers_the_choices_its_comparison_rests_on():
+    """Решение владельца: сравнение вариантов unresolved-вопроса, как и проверка выбора, помнит,
+    от каких вопросов оно зависит и какой выбор был у них при нём («сначала решите Q1» —
+    допустимый ответ). Судья видит, от чего зависят сравнения участников."""
+    analysis = by_question(checked_by("P1"),
+                           {**recommends("P2"), "depends_on_question_ids": ["Q1"]})
+    judge = by_question({"status": "validated", "proposal_id": "P1"},
+                        {"status": "no_recommendation",
+                         "reason": "Сначала решите, где ищет Q1: от этого зависит база."})
+    result, runner, _ = check({("decision_analysis", "sol"): analysis,
+                               ("decision_analysis", "fable"): analysis,
+                               ("decision_judge", "fable"): judge})
+    q2 = result.analyses[1]
+    assert (q2.question_id, q2.verdict, q2.proposal, q2.depends_on, q2.context) == (
+        "Q2", "none", None, ["Q1"], ["Q1: P1"])
+    analyses = json.loads(section(runner.asked["decision_judge", "fable"],
+                                  "INDEPENDENT DECISION ANALYSES"))
+    assert [found["depends_on_question_ids"] for found in analyses] == [["Q1"]]
+
+
 def test_the_other_questions_come_with_the_adr_their_choice_becomes():
     """«Почему» называет другие решения потока номерами ADR, а не вопросы и варианты: у другого
     вопроса — номер решения, которым станет выбор по нему (ADR-n по порядку отбора); у unresolved

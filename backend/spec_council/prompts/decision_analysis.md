@@ -83,6 +83,10 @@ It is not an ADR and it is not the user's decision.
 If there are not enough grounds to choose one option, do not choose artificially.
 Leave recommendation = null and explain what is missing.
 
+Either way, list in `depends_on_question_ids` the related OPEN QUESTIONS your comparison
+depends on: the ones whose choice it leans on and the ones that have to be decided first. Every
+related question you name in the reason is one of them.
+
 ## Rationale
 
 The rationale goes into the ADR, and the ADR goes into the project notes. Everything in it must be
@@ -156,6 +160,7 @@ If the question is unresolved:
     "proposal_id": "P3",
     "reason": "Paraphrasing fits within F4 and does not require a vector database for the whole corpus."
   },
+  "depends_on_question_ids": [],
   "adr_draft": {
     "decision": null,
     "rationale": null
@@ -168,6 +173,7 @@ If there is no confident recommendation:
   "status": "unresolved",
   "recommendation": null,
   "reason": "The choice depends on Q3, which is not resolved yet.",
+  "depends_on_question_ids": ["Q3"],
   "adr_draft": {
     "decision": null,
     "rationale": null
