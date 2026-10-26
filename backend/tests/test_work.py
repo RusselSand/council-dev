@@ -84,7 +84,7 @@ def test_a_carried_check_names_decisions_by_the_new_scope():
     choices = [Choice(question_id=f"Q{n}", proposal=f"P{n}") for n in (2, 3)]
     leaning = QuestionAnalysis(question_id="Q2", verdict="validated", proposal="P2",
                                rationale="ADR-3 уже ищет на сервере, как ADR-0003.",
-                               adrs={"ADR-3": "Q3"})
+                               adrs={"ADR-3": "Q3"}, context=["Q3: P3"])
     earlier = [QuestionWork(key=question_key(question(2)), choice=choices[0], analysis=leaning)]
     stream = Stream(group="C", scope=[question(2), question(3)], choices=choices, earlier=earlier)
     assert carried_analyses(stream, choices) == {"Q2": leaning.model_copy(update={
@@ -96,6 +96,24 @@ def test_a_carried_check_names_decisions_by_the_new_scope():
     alone = alone.model_copy(update={"earlier": [earlier[0].model_copy(
         update={"analysis": plain})]})
     assert carried_analyses(alone, choices[:1]) == {"Q2": plain}
+
+
+def test_a_check_rests_on_the_choice_of_the_decisions_its_rationale_names():
+    """«Почему» проверки Q1 называет решение по Q2 (ADR-2), хотя от Q2 она не зависит: она
+    помнит выбор по Q2 и опирается на него. По Q2 выбрали другое или передали его как
+    unresolved — «почему» могло стать неправдой, и проверку повторяют."""
+    verdict = Analysis("validated", "P1", rationale="Как решает ADR-2.")
+    found = analysis_of_question(question(1), verdict, {"Q1": "Q1: P1", "Q2": "Q2: P2"},
+                                 adrs={"ADR-2": "Q2"})
+    assert found.context == ["Q2: P2"]
+    choices = [Choice(question_id="Q1", proposal="P1"), Choice(question_id="Q2", proposal="P2")]
+    stream = Stream(group="C", scope=[question(1), question(2)], choices=choices,
+                    analysis=DecisionAnalysis(state="done", choices=["Q1: P1", "Q2: P2"], steps=[],
+                                              analyses=[found]))
+    assert carried_analyses(stream, choices) == {"Q1": found}
+    for other in ("P3", None):
+        assert carried_analyses(
+            stream, [choices[0], Choice(question_id="Q2", proposal=other)]) == {}
 
 
 def test_a_decision_of_earlier_work_names_decisions_by_the_new_scope():

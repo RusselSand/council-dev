@@ -1105,10 +1105,10 @@ class DecisionRun(CouncilRun[DecisionAnalysis]):
     согласных — не довод.
 
     carried — проверка того же выбора по тем же вопросам: её не повторяют, если выбор по
-    вопросам, от которых она зависит, тот же (work.carried_analyses), — проверяют только новое.
-    Поэтому каждая проверка помнит, каким был этот выбор (QuestionAnalysis.context), и по каким
-    вопросам решения, которые называет её «почему» (QuestionAnalysis.adrs): номера ADR в
-    перенесённой проверке ставят по новому отбору.
+    вопросам, на которые она опирается (rests_on), тот же (work.carried_analyses), — проверяют
+    только новое. Поэтому каждая проверка помнит, каким был этот выбор (QuestionAnalysis.context),
+    и по каким вопросам решения, которые называет её «почему» (QuestionAnalysis.adrs): на их выбор
+    она тоже опирается, а номера ADR в перенесённой проверке ставят по новому отбору.
 
     replaced — по вопросу: решения проекта, замену которых решением этого вопроса подтвердил
     человек. Для проверки этого вопроса они уже не действуют — с ними выбор не расходится, и
@@ -1235,10 +1235,10 @@ def analysis_of_question(question: OpenQuestion, verdict: Analysis,
                          entries: Mapping[str, str], replaced: Sequence[str] = (),
                          adrs: Mapping[str, str] | None = None) -> QuestionAnalysis:
     """Проверка вопроса — и выбор по вопросам, на которые она опирается, как он был при ней
-    (entries — выбор по каждому вопросу потока, «Q2: P5»): от которых зависит и где судья велел
-    что-то поправить. Там выбрали другое — проверку повторяют (work.holds). replaced — решения
-    проекта, замену которых к ней подтвердили; adrs — решения потока, которые называет её
-    «почему» (decisions.adrs_named)."""
+    (entries — выбор по каждому вопросу потока, «Q2: P5»): от которых зависит, где судья велел
+    что-то поправить и чьи решения называет её «почему» (rests_on). Там выбрали другое —
+    проверку повторяют (work.holds). replaced — решения проекта, замену которых к ней
+    подтвердили; adrs — решения потока, которые называет её «почему» (decisions.adrs_named)."""
     found = QuestionAnalysis(
         question_id=question.id, verdict=verdict.kind, proposal=verdict.proposal,
         constraint_conflicts=list(verdict.conflicts), risk_ids=list(verdict.risks),
@@ -1254,10 +1254,11 @@ def analysis_of_question(question: OpenQuestion, verdict: Analysis,
 
 
 def rests_on(found: QuestionAnalysis) -> list[str]:
-    """Другие вопросы, на выбор по которым опирается проверка: от которых зависит и где судья
-    велел что-то поправить."""
+    """Другие вопросы, на выбор по которым опирается проверка: от которых зависит, где судья
+    велел что-то поправить и чьи решения называет её «почему» (QuestionAnalysis.adrs) — там
+    выбрали другое, и «почему» могло стать неправдой."""
     fixed = [fix.question_id for fix in found.fixes if fix.question_id != found.question_id]
-    return list(dict.fromkeys([*found.depends_on, *fixed]))
+    return list(dict.fromkeys([*found.depends_on, *fixed, *found.adrs.values()]))
 
 
 def offered(question: OpenQuestion, fragments: dict[int, LabeledFragment],

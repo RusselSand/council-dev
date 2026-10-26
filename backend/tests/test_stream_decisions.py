@@ -1020,6 +1020,30 @@ def test_a_check_that_rested_on_an_unresolved_question_names_its_new_option(stor
     assert (q1["recheck"], q1["stale"]) == (None, [])
 
 
+def test_a_decision_rests_on_the_choice_of_the_decisions_its_rationale_names(store, pool, agents):
+    """«Почему» ИИ решения Q1 называет решение по Q3 (ADR-3), хотя от Q3 проверка не зависит:
+    она опирается и на его выбор — он «в контексте». Q3 пересчитали с другим текстом своего
+    варианта — у Q1 видно, на какой выбор опиралась проверка, и «Пересчитать» доступна: «почему»
+    могло стать неправдой."""
+    agents.judged["Q1"] = {"status": "validated", "proposal_id": "P1",
+                           "rationale": {"text": CORRECTED, "source": "ai"}}
+    council_id, own = checked(store, pool)
+    q1 = decisions_of(council_id)["Q1"]
+    assert (q1["context"], q1["stale"], q1["recheck"]) == (
+        [{"question": "Q3", "option": own, "text": OWN}], [], None)
+    assert rewrites(council_id, "Q3", own, HEADERS).status_code == 200
+    assert rechecks(council_id, "Q3").status_code == 200
+    pool.run()
+    q1 = decisions_of(council_id)["Q1"]
+    assert (q1["recheck"], q1["stale"]) == ("ready", [
+        {"question": "Q3", "checked": own, "checkedText": OWN, "chosen": own,
+         "chosenText": HEADERS}])
+    assert rechecks(council_id, "Q1").status_code == 200
+    pool.run()
+    q1 = decisions_of(council_id)["Q1"]
+    assert (q1["rationale"], q1["recheck"], q1["stale"]) == (CORRECTED, None, [])
+
+
 def test_a_recheck_of_a_decision_that_rested_on_the_old_choice_takes_the_new_one(store, pool,
                                                                                agents):
     council_id, own = rested(store, pool, agents)
