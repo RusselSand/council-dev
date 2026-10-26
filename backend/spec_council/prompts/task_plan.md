@@ -14,8 +14,10 @@ You are given:
 ## What an OUTCOME and an ISSUE are
 
 An OUTCOME is an observable state of the system that the human has already approved. Every
-OUTCOME, decision and ADR here is already written into the project notes and has a note ID
-(`OUT-0031`, `ADR-0046`): use exactly these IDs.
+decision and ADR here is already written into the project notes and has a note ID (`ADR-0046`):
+use exactly these IDs. OUTCOMES are not in the project notes: an OUTCOME has an ID in this council
+— its group and its number in the group (`A-O1`). Each OUTCOME becomes a parent issue, and its
+ISSUES become the sub-issues of that parent.
 
 An ISSUE is a part of one OUTCOME that one coding agent does in one change. It says who needs it
 and why, where in the code it starts, what changes, at the level of the contract and the
@@ -113,9 +115,10 @@ or a verified need to change the existing code.
 
 ## IDs in the text
 
-In every free-text field refer to OUTCOMES and decisions only by their note IDs (`OUT-0031`,
-`ADR-0046`) and to other ISSUES of the plan by their IDs (`I2`). Never mention fragment numbers
-(`F3`), question numbers or any other internal number: the coding agent will not find them.
+In every free-text field refer to decisions only by their note IDs (`ADR-0046`), to OUTCOMES by
+their IDs (`A-O1`) and to other ISSUES of the plan by their IDs (`I2`). Never mention fragment
+numbers (`F3`), question numbers or any other internal number: the coding agent will not find
+them.
 
 ## Language
 
@@ -141,7 +144,7 @@ Return only JSON. The ISSUES go in the order they are to be done:
         "Set only active_snapshot_id: never change latest_snapshot_id, never touch documents; activating the already active Snapshot changes nothing.",
         "No new frontend controls."
       ],
-      "outcome_id": "OUT-0031",
+      "outcome_id": "A-O1",
       "adr_ids": ["ADR-0046"],
       "constraint_ids": [],
       "risk_ids": [],
@@ -167,7 +170,7 @@ Before answering, check that:
 - no implementation is decided that the human has not set and the code does not already have —
   such choices are in `open_questions`;
 - paths, fields and mechanisms are confirmed by the repository;
-- the free text names only note IDs and ISSUE IDs.
+- the free text names only note IDs, OUTCOME IDs and ISSUE IDs.
 
 ## IDEAS
 

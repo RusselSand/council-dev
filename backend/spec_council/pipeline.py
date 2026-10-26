@@ -156,7 +156,6 @@ from .project import (
     catalog_prompt,
     evidence_files,
     fingerprint,
-    issue_outcomes,
     records,
     same_selection,
     scanned_commits,
@@ -1576,8 +1575,7 @@ class TaskRun(CouncilRun[TaskPlan]):
             chosen = self._planned()
         covered = {issue.outcome_id for issue in chosen}
         return {"issues": chosen,
-                "uncovered": [name for name in self.inputs.outcomes if name not in covered],
-                "skipped": self.inputs.skipped}
+                "uncovered": [name for name in self.inputs.outcomes if name not in covered]}
 
     def _planned(self) -> list[Issue]:
         values = {**self.inputs.values,
@@ -1659,10 +1657,11 @@ class DecisionsRun(CouncilRun[DecisionsSearch]):
     """Отбор прошлых решений проекта для потока. Каталог — ADR из заметок с идеей, вопросом и
     статусом; след в коде к ним совет собирает сам, git log по файлам утверждённой карты
     репозитория — в рабочих копиях там, где они сейчас (repositories — каталог репозиториев:
-    его могли увидеть по-другому, снаружи докера и в нём). Ищется уже в ходе, вне замка советов:
-    git на медленной рабочей копии не держит остальных. Участники по отдельности отбирают
-    относящиеся к идее, судья проверяет только их кандидатов; одинаковый отбор — судья не нужен.
-    Решения, которые выгрузил сам поток, — не «прошлые»: их в каталоге нет."""
+    его могли увидеть по-другому, снаружи докера и в нём), а решения задач из коммитов — по их
+    файлам в папке задач проекта (issues — задача → её решения, project.issue_decisions). Ищется
+    уже в ходе, вне замка советов: git на медленной рабочей копии не держит остальных. Участники по
+    отдельности отбирают относящиеся к идее, судья проверяет только их кандидатов; одинаковый отбор
+    — судья не нужен. Решения, которые выгрузил сам поток, — не «прошлые»: их в каталоге нет."""
 
     what = "отбор решений проекта"
 
@@ -1670,7 +1669,8 @@ class DecisionsRun(CouncilRun[DecisionsSearch]):
                  participants: list[str], judge: str, runner: Runner,
                  report: Callable[[DecisionsSearch], None], *, catalog: Catalog,
                  scan: RepositoryScan | None, own: Sequence[str] = (),
-                 repositories: Path | None = None) -> None:
+                 repositories: Path | None = None,
+                 issues: Mapping[str, Sequence[str]] | None = None) -> None:
         # У потока прежней версии идею могли не утвердить — она пустая.
         idea = stream.idea.text if stream.idea is not None else ""
         super().__init__(council_id, participants, judge, runner, report, start_decisions(
@@ -1681,12 +1681,13 @@ class DecisionsRun(CouncilRun[DecisionsSearch]):
         self.scan = scan
         self.own = list(own)
         self.repositories = repositories
+        self.issues = dict(issues or {})
 
     def work(self) -> dict[str, Any]:
         scan = rerooted(self.scan, self.repositories) if self.scan and self.scan.result else None
         commits = scanned_commits(scan) if scan else {}
-        files = evidence_files(scan, commits) if scan and commits else []
-        trails = trails_of(files, issue_outcomes(self.catalog), commits) if files else {}
+        files = evidence_files(scan, commits) if scan and commits and self.issues else []
+        trails = trails_of(files, self.issues, commits) if files else {}
         catalog = records(self.catalog, trails, self.own)
         with self._lock:
             self.state.catalog = len(catalog)

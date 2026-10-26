@@ -3,9 +3,11 @@
 
 Каталог — по одной записи на ADR: к какой идее, на какой вопрос, что решено, действует ли оно.
 След в коде собирает код, а не модель: по файлам, на которые опирается утверждённая карта
-репозитория, `git log` находит коммиты с номерами задач (ISS-0012), по заметкам — итог этой
-задачи, а по итогу — его ADR. Модель номер не придумает. Коммитов с номерами может и не быть
-(код старше, клон без истории) — тогда следа нет, и остаётся отбор по смыслу.
+репозитория, `git log` находит коммиты с номерами задач (ISS-0012), а решения задачи — в её файле
+в папке задач проекта, во frontmatter (adrs; решение владельца к задаче «Бекенд · Итоги →
+родительские задачи…»): заметок итогов совет больше не читает. Модель номер не придумает.
+Коммитов с номерами может и не быть (код старше, клон без истории) или файла задачи — тогда следа
+нет, и остаётся отбор по смыслу.
 """
 
 import hashlib
@@ -16,8 +18,9 @@ from collections.abc import Collection, Iterable, Mapping, Sequence
 from pathlib import Path
 
 from .export import export_in
+from .issue_files import decisions_of, loaded
 from .models import CodeTrail, DecisionsSearch, ProjectDecision, RepositoryScan, Stream
-from .notes import Catalog, NotesError, declared_issues, issues_in
+from .notes import Catalog, NotesError, issues_in
 from .repository import RepositoryError, git_bytes, has_commit
 from .repository import text_of as reason_text
 from .slicing import BadAnswer
@@ -98,18 +101,15 @@ def fingerprint(decisions: Sequence[ProjectDecision]) -> str:
 
 
 def catalog_print(catalog: Catalog | None, own: Iterable[str] = ()) -> str:
-    """Отпечаток того, на что опирается отбор: решения каталога, какими их видят модели, и
-    какие задачи каких итогов к ним ведут — по ним ищется след в коде (история git — со
-    сканированного коммита, она не меняется). Решений нет — пустая строка."""
+    """Отпечаток каталога, на который опирается отбор: решения, какими их видят модели. Решений
+    нет — пустая строка. Второй список — след прежней версии через задачи итогов каталога: итогов
+    совет больше не читает, а отпечатки поисков, где таких задач не было, — те же, что и раньше."""
     decisions = records(catalog, {}, own) if catalog is not None else []
     if not decisions:
         return ""
-    ids = {decision.adr_id for decision in decisions}
     rows = [[d.adr_id, d.idea, d.question, d.decision, d.status, d.superseded_by]
             for d in decisions]
-    links = sorted([issue, outcome, adr] for issue, found in issue_outcomes(catalog).items()
-                   for outcome, adrs in found for adr in adrs if adr in ids)
-    return hashlib.sha256(json.dumps([rows, links], ensure_ascii=False).encode()
+    return hashlib.sha256(json.dumps([rows, []], ensure_ascii=False).encode()
                           ).hexdigest()[:16]
 
 
@@ -120,15 +120,14 @@ def question_of(catalog: Catalog, links: Sequence[str]) -> str:
     return question.body if question is not None else ""
 
 
-def issue_outcomes(catalog: Catalog) -> dict[str, list[tuple[str, tuple[str, ...]]]]:
-    """Задача → её итоги и решения каждого — по строкам задач в заметках итогов. Задача может
-    делать несколько итогов: тогда в каждом строка с её номером."""
-    found: dict[str, list[tuple[str, tuple[str, ...]]]] = {}
-    for note in sorted(catalog.notes.values(), key=lambda note: note.id):
-        if note.type == "outcome":
-            for issue in declared_issues(note.body):
-                found.setdefault(issue, []).append((note.id, note.links))
-    return found
+def issue_decisions(issues: Path | None) -> dict[str, tuple[str, ...]]:
+    """Задача → решения, на которых она стоит, — по файлам задач в папке задач проекта (их
+    frontmatter, issue_files.decisions_of). Папки нет или её не прочитать — следа нет."""
+    try:
+        return decisions_of(loaded(issues))
+    except NotesError as exc:
+        log.warning("Папка задач %s не прочитана, следа решений в коде нет: %s", issues, exc)
+        return {}
 
 
 def evidence_files(scan: RepositoryScan,
@@ -184,12 +183,13 @@ def located(shown: str, roots: Mapping[str, Path | None]) -> tuple[Path, str, st
 
 
 def trails_of(files: Sequence[tuple[Path, str, str]],
-              outcomes: Mapping[str, Sequence[tuple[str, tuple[str, ...]]]],
+              decisions: Mapping[str, Sequence[str]],
               commits: Mapping[Path, str] | None = None) -> dict[str, list[CodeTrail]]:
-    """След решений в коде: коммиты по файлам карты с номерами задач, которые есть в заметках.
-    commits — с какого коммита каждой рабочей копии читать историю: со сканированного — карта
-    о нём, и новый коммит потом не поменяет след, на который опирался отбор. git не запускается
-    или файла нет в истории — у этого файла следа просто нет."""
+    """След решений в коде: коммиты по файлам карты с номерами задач, у которых есть файл в папке
+    задач (decisions — решения каждой задачи, issue_decisions). commits — с какого коммита каждой
+    рабочей копии читать историю: со сканированного — карта о нём, и новый коммит потом не
+    поменяет след, на который опирался отбор. git не запускается или файла нет в истории — у этого
+    файла следа просто нет."""
     found: dict[str, dict[tuple[str, str], CodeTrail]] = {}
     for root, path, shown in files:
         since = (commits or {}).get(root)
@@ -203,11 +203,9 @@ def trails_of(files: Sequence[tuple[Path, str, str]],
         for record in output.decode("utf-8", "replace").split("\x1e"):
             commit, _, message = record.strip().partition("\x1f")
             for issue in issues_in(message):
-                for outcome, adrs in outcomes.get(issue, ()):
-                    for adr in adrs:
-                        found.setdefault(adr, {}).setdefault(
-                            (issue, shown), CodeTrail(issue=issue, outcome=outcome,
-                                                      commit=commit, file=shown))
+                for adr in decisions.get(issue, ()):
+                    found.setdefault(adr, {}).setdefault(
+                        (issue, shown), CodeTrail(issue=issue, commit=commit, file=shown))
     return {adr: list(trail.values()) for adr, trail in found.items()}
 
 

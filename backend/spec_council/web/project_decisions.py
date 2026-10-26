@@ -117,7 +117,8 @@ def search(council_id: str, stream_id: str, store: StoreDep, agents: AgentsDep,
         if state == "running":
             raise not_ready(stream_id)
         start = searched(council, stream, agents, store, folders.notes, repositories,
-                         finished=lambda: plan_later(council_id, context))
+                         finished=lambda: plan_later(council_id, context),
+                         issues=folders.issues)
         council = store.update_council(council_id, {"streams": replaced(council, start.stream)}) \
             or council
         if start.pipeline is None and state == "failed":

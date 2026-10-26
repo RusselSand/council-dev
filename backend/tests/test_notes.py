@@ -8,7 +8,6 @@ from spec_council.notes import (
     Catalog,
     Note,
     NotesError,
-    declared_issues,
     declared_replacements,
     issues_in,
     main,
@@ -31,9 +30,11 @@ PROPOSAL = Note("PRO-0001", "proposal", "Деплой запускается с�
 OTHER = Note("PRO-0002", "proposal", "Деплой запускают руками.", ("OQ-0001",))
 ADR = Note("ADR-0001", "adr", "Деплой запускается сам после merge, потому что рутинные шаги "
            "не должны требовать ручной координации.", ("PRO-0001",))
-OUTCOME = Note("OUT-0001", "outcome", "После merge система сама собирает и выкладывает.\n\n"
-               "Задачи:\n- ISS-0012: Запуск деплоя по merge", ("ADR-0001",))
-CHAIN = (IDEA, QUESTION, PROPOSAL, OTHER, ADR, OUTCOME)
+CHAIN = (IDEA, QUESTION, PROPOSAL, OTHER, ADR)
+# Итог, что выгрузила прежняя версия: совет его больше не читает.
+OUTCOME = ("---\nid: OUT-0001\ntype: outcome\nlinks:\n- ADR-0001\n---\n\n"
+           "После merge система сама собирает и выкладывает.\n\n"
+           "Задачи:\n- ISS-0012: Запуск деплоя по merge\n")
 
 
 def test_a_note_is_written_and_read_as_causa_does():
@@ -46,15 +47,16 @@ def test_a_note_is_written_and_read_as_causa_does():
 
 
 def test_links_written_by_hand_in_flow_style_are_read_too():
-    note = parsed("---\nid: 'OUT-0002'\ntype: outcome\nlinks: [ADR-0001, \"ADR-0002\"]\n---\n"
-                  "Итог.\n")
-    assert (note.id, note.links, note.body) == ("OUT-0002", ("ADR-0001", "ADR-0002"), "Итог.")
+    note = parsed("---\nid: 'ADR-0002'\ntype: adr\nlinks: [PRO-0001, \"PRO-0002\"]\n---\n"
+                  "Решение.\n")
+    assert (note.id, note.links, note.body) == ("ADR-0002", ("PRO-0001", "PRO-0002"), "Решение.")
 
 
 @pytest.mark.parametrize(("text", "problem"), [
     ("Без frontmatter", "нет frontmatter"),
     ("---\ntype: idea\n---\nтекст", "нет id"),
     ("---\nid: X-1\ntype: issue\n---\nтекст", "неизвестный type"),
+    ("---\nid: OUT-0001\ntype: outcome\n---\nтекст", "неизвестный type"),
     ("---\nid: X-1\ntype: idea\nlinks: ADR-1\n---\n", "не список"),
     ("---\nid: ADR-current\ntype: adr\n---\nтекст", "ADR-current: номер не по формату ADR-"),
     ("---\nid: OQ-0001\ntype: adr\n---\nтекст", "OQ-0001: номер не по формату ADR-"),
@@ -78,12 +80,6 @@ def test_the_next_number_skips_a_file_name_already_taken(tmp_path):
     assert Catalog.load(tmp_path).next_id("adr") == "ADR-0003"
 
 
-def test_an_issue_list_followed_by_a_paragraph_is_still_the_issue_list():
-    body = ("Поиск\n\nЗадачи:\n- ISS-0010: Поправить поиск\n\n"
-            "Заметки реализации: ISS-0042 — не наша, её не трогали.")
-    assert declared_issues(body) == ["ISS-0010"]
-
-
 def test_a_file_name_in_lower_case_still_takes_its_number(tmp_path):
     # ADR-0001 лежит в adr-0002.md: на Windows и macOS это тот же файл, что ADR-0002.md.
     (tmp_path / "adrs").mkdir()
@@ -100,16 +96,6 @@ def test_one_number_written_another_way_takes_the_place_too(tmp_path):
 
 def test_an_issue_number_is_read_in_one_spelling():
     assert issues_in("Сделано ISS-7, а ISS-0007 — то же") == ["ISS-0007"]
-    assert declared_issues("Поиск\n\nЗадачи:\n- ISS-12: Поиск") == ["ISS-0012"]
-
-
-def test_issues_of_an_outcome_are_the_lines_of_its_issue_list():
-    body = ("Поиск\n\nКритерии готовности:\n- ISS-0042: регресс не вернулся\n\n"
-            "Задачи:\n- ISS-0010: Поправить поиск\n- ISS-0011: Тесты поиска")
-    assert declared_issues(body) == ["ISS-0010", "ISS-0011"]
-    assert declared_issues("Поиск\n\nКритерии готовности:\n- Ищется за секунду") == []
-    # Задач у итога нет, а критерии — сплошь строки с номерами: это всё равно критерии.
-    assert declared_issues("Поиск\n\nAcceptance criteria:\n- ISS-0042: regression stays") == []
 
 
 def test_a_number_without_leading_zeros_is_still_a_number():
@@ -119,13 +105,18 @@ def test_a_number_without_leading_zeros_is_still_a_number():
 def test_the_catalog_reads_the_type_folders_and_follows_links(tmp_path):
     put(tmp_path, *CHAIN)
     (tmp_path / "README.md").write_text("не заметка", encoding="utf-8")
+    # Итоги прежней версии лежат в outcomes/ — их совет больше не читает.
+    (tmp_path / "outcomes").mkdir()
+    (tmp_path / "outcomes" / "OUT-0001.md").write_text(OUTCOME, encoding="utf-8")
     catalog = Catalog.load(tmp_path)
     assert set(catalog.notes) == {note.id for note in CHAIN}
     assert catalog.problems() == []
     assert [note.id for note in catalog.children("OQ-0001")] == ["PRO-0001", "PRO-0002"]
-    assert catalog.roots("OUT-0001") == {"IDEA-0001"}
+    assert catalog.children("ADR-0001") == []
+    assert catalog.roots("ADR-0001") == {"IDEA-0001"}
     assert [note.id for note in catalog.chain("IDEA-0001")] == [
-        "IDEA-0001", "OQ-0001", "PRO-0001", "PRO-0002", "ADR-0001", "OUT-0001"]
+        "IDEA-0001", "OQ-0001", "PRO-0001", "PRO-0002", "ADR-0001"]
+    assert catalog.next_id("adr") == "ADR-0002"
 
 
 def test_a_note_in_the_wrong_folder_or_twice_is_refused(tmp_path):
@@ -142,14 +133,12 @@ def test_the_graph_rules_are_checked():
         Note("OQ-0002", "open_question", "Вопрос без связи."),
         Note("PRO-0003", "proposal", "Вариант к идее.", ("IDEA-0001",)),
         Note("ADR-0002", "adr", "Решение без варианта.", ("PRO-0404",)),
-        Note("OUT-0002", "outcome", "Итог без решений."),
         Note("OQ-0003", "open_question", "Вопрос к двум.", ("IDEA-0001", "IDEA-0002")),
     ]}
     problems = Catalog(notes).problems()
     assert "OQ-0002: нужна ровно одна вышестоящая заметка, а их 0" in problems
     assert "PRO-0003: proposal не может ссылаться на idea (IDEA-0001)" in problems
     assert "ADR-0002: ссылка на несуществующую заметку PRO-0404" in problems
-    assert "OUT-0002: OUTCOME ссылается хотя бы на один ADR" in problems
     assert "OQ-0003: несколько корневых IDEA (IDEA-0001, IDEA-0002)" in problems
 
 
@@ -232,7 +221,7 @@ def test_a_replaces_line_outside_a_decision_or_naming_itself_replaces_nothing():
 
 
 def test_issue_numbers_are_found_in_texts():
-    assert issues_in(OUTCOME.body) == ["ISS-0012"]
+    assert issues_in("Задачи:\n- ISS-0012: Запуск деплоя по merge") == ["ISS-0012"]
     assert issues_in("Fix deploy trigger ISS-0012, see ISS-0030 and ISS-0012") == [
         "ISS-0012", "ISS-0030"]
 
@@ -247,10 +236,9 @@ def test_agents_query_the_notes_as_json(tmp_path, capsys):
     put(tmp_path, *CHAIN)
     code, adr = ask(tmp_path, "get", "ADR-0001", capsys=capsys)
     assert code == 0
-    assert (adr["links"], adr["downstream"], adr["status"]) == (["PRO-0001"], ["OUT-0001"],
-                                                                "active")
+    assert (adr["links"], adr["downstream"], adr["status"]) == (["PRO-0001"], [], "active")
     _, chain = ask(tmp_path, "chain", "IDEA-0001", capsys=capsys)
-    assert [note["id"] for note in chain][-1] == "OUT-0001"
+    assert [note["id"] for note in chain][-1] == "ADR-0001"
     _, links = ask(tmp_path, "links", "OQ-0001", capsys=capsys)
     assert links == {"id": "OQ-0001", "upstream": ["IDEA-0001"],
                      "downstream": ["PRO-0001", "PRO-0002"]}

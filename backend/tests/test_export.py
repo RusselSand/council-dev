@@ -12,7 +12,6 @@ from spec_council.export import (
     drafted,
     export_in,
     graph_problems,
-    outcome_text,
     phrases_of,
     renumbered,
     replacing,
@@ -41,7 +40,7 @@ from spec_council.models import (
     Stream,
     StreamIdea,
 )
-from spec_council.notes import Catalog, Note, NotesError, declared_issues, path_of, rendered
+from spec_council.notes import Catalog, Note, NotesError, path_of, rendered
 from spec_council.slicing import BadAnswer
 
 WORDS = words_for("Russian")
@@ -81,13 +80,16 @@ OUTCOMES = OutcomeDiscovery(state="done", run="o1", steps=[], outcomes=[
 STREAM = Stream(group="A", idea=StreamIdea(text="Деплой требует меньше ручной работы.",
                                            by="human"),
                 scope=SCOPE, proposals=FOUND, decisions=DECIDED, outcomes=OUTCOMES)
-# В каталоге уже есть прошлый совет: его решение пересматривает Q3, и задача ISS-0007.
+# В каталоге уже есть прошлый совет: его решение пересматривает Q3. И итог прежней версии с
+# задачей ISS-0007 — его совет больше не читает.
 PAST = [Note("IDEA-0001", "idea", "Откаты делаются быстро."),
         Note("OQ-0001", "open_question", "Как откатывать?", ("IDEA-0001",)),
         Note("PRO-0001", "proposal", "Откат руками.", ("OQ-0001",)),
-        Note("ADR-0001", "adr", "Откат руками, потому что так проще.", ("PRO-0001",)),
-        Note("OUT-0001", "outcome", "Откат\n\nЗадачи:\n- ISS-0007: Кнопка отката",
-             ("ADR-0001",))]
+        Note("ADR-0001", "adr", "Откат руками, потому что так проще.", ("PRO-0001",))]
+PAST_OUTCOME = ("---\nid: OUT-0001\ntype: outcome\nlinks:\n- ADR-0001\n---\n\n"
+                "Откат\n\nЗадачи:\n- ISS-0007: Кнопка отката\n")
+# Решение по Q3 заменяет решение проекта, которое Q3 пересматривает: строка замен в его заметке.
+REPLACES = "\n\nЗаменяет: ADR-0001."
 
 
 @pytest.fixture
@@ -96,6 +98,8 @@ def root(tmp_path):
         path = path_of(tmp_path, note)
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(rendered(note), encoding="utf-8")
+    (tmp_path / "outcomes").mkdir()
+    (tmp_path / "outcomes" / "OUT-0001.md").write_text(PAST_OUTCOME, encoding="utf-8")
     return tmp_path
 
 
@@ -104,21 +108,20 @@ def shelf(root):
 
 
 def draft(root, stream=STREAM, previous=None, language="Russian"):
-    """Черновик без номеров по именам совета: их проверяет refs_of."""
-    return drafted(stream, FRAGMENTS, shelf(root), previous, WORDS, language)[:3]
+    """Черновик: заметки, исчезнувшие и номера по именам совета (их проверяет refs_of)."""
+    return drafted(stream, FRAGMENTS, shelf(root), previous, WORDS, language)
 
 
 def refs_of(root, stream=STREAM, previous=None):
-    return drafted(stream, FRAGMENTS, shelf(root), previous, WORDS, "Russian")[3]
+    return drafted(stream, FRAGMENTS, shelf(root), previous, WORDS, "Russian")[2]
 
 
 def export(root, stream=STREAM, previous=None, edits=None, delete=()):
-    notes, vanished, skipped, refs = drafted(stream, FRAGMENTS, shelf(root), previous, WORDS,
-                                             "Russian")
+    notes, vanished, refs = drafted(stream, FRAGMENTS, shelf(root), previous, WORDS, "Russian")
     graph_problems(Catalog.load(root), notes, vanished, edits or {}, delete)
     done = written(notes, vanished, edits or {}, delete, shelf(root), previous)
     return NotesExport(run="r", outcomes=stream.outcomes.run, language="Russian",
-                       root=str(root), notes=done, refs=refs), notes, vanished, skipped
+                       root=str(root), notes=done, refs=refs), notes, vanished, refs
 
 
 def by_id(notes):
@@ -126,50 +129,70 @@ def by_id(notes):
 
 
 def test_a_stream_becomes_linked_notes_with_numbers_after_the_catalog(root):
-    notes, vanished, skipped = draft(root)
+    notes, vanished, _ = draft(root)
     assert vanished == []
+    # Итогов в заметках нет: итог — родительская задача в папке задач.
     assert [(n.id, n.type, n.action) for n in notes] == [
         ("IDEA-0002", "idea", "create"),
         ("OQ-0002", "open_question", "create"), ("OQ-0003", "open_question", "create"),
         ("OQ-0004", "open_question", "create"),
         ("PRO-0002", "proposal", "create"), ("PRO-0003", "proposal", "create"),
         ("PRO-0004", "proposal", "create"), ("PRO-0005", "proposal", "create"),
-        ("ADR-0002", "adr", "create"), ("ADR-0003", "adr", "create"),
-        ("OUT-0002", "outcome", "create")]
+        ("ADR-0002", "adr", "create"), ("ADR-0003", "adr", "create")]
     note = by_id(notes)
-    # Имена совета — номерами заметок: так план задач называет итоги и решения, а тексты задач —
-    # и всё остальное.
+    # Имена совета — номерами заметок: так план задач называет решения, а тексты задач — и всё
+    # остальное.
     assert refs_of(root) == {
         "I1": "IDEA-0002", "Q1": "OQ-0002", "F5": "OQ-0002", "Q2": "OQ-0003", "Q3": "OQ-0004",
         "F3": "PRO-0002",
         "P1": "PRO-0003", "P2": "PRO-0004", "P3": "PRO-0005", "ADR-1": "ADR-0002",
-        "ADR-3": "ADR-0003", "O1": "OUT-0002"}
+        "ADR-3": "ADR-0003"}
     assert note["OQ-0002"].text == "Что запускает деплой?"            # формулировка заметки
     assert note["OQ-0002"].links == ["IDEA-0002"]
-    assert note["OQ-0004"].links == ["ADR-0001"]                       # пересматривает прошлое
+    # Вопрос, что пересматривает прошлое решение, — в ветке своей идеи, как при отмеченной
+    # замене; пересматриваемое — в строке замен его решения.
+    assert note["OQ-0004"].links == ["IDEA-0002"]
+    assert note["OQ-0004"].revisits == "ADR-0001"
+    assert note["ADR-0003"].text == "Ручной откат остаётся, потому что откат нужен при сбое.\n\n" \
+                                    "Заменяет: ADR-0001."
     assert note["PRO-0002"].links == ["OQ-0002"]
     assert note["ADR-0002"].text == ("Деплой запускает CI после merge, потому что рутинные "
                                      "шаги не должны требовать ручной координации.")
     assert note["ADR-0002"].links == ["PRO-0002"]
-    # Решение по Q3 — в цепочке прошлой идеи: итог связан только с решениями своей.
-    assert note["OUT-0002"].links == ["ADR-0002"]
-    assert note["OUT-0002"].text == (
-        "Деплой по merge\n\nПосле merge CI сам выкладывает.\n\nКритерии готовности:\n"
-        "- Merge в main выкладывает сборку.")          # задач в итоге нет: их режут потом
-    assert any("O2" in reason and "не выгружается" in reason for reason in skipped)
-    assert any("O1" in reason and "пересматривают" in reason for reason in skipped)
 
 
 def test_written_notes_make_a_valid_graph_with_the_past_one(root):
     record, _, _, _ = export(root)
     catalog = Catalog.load(root)
     assert catalog.problems() == []
+    # Пересмотр решён — прошлое решение заменено строкой замен; итог прежней версии в каталоге
+    # совет не читает.
     assert catalog.status("ADR-0001") == ("superseded", "ADR-0003")
+    assert "OUT-0001" not in catalog.notes
     assert {note.id for note in record.notes} == {
         "IDEA-0002", "OQ-0002", "OQ-0003", "OQ-0004", "PRO-0002", "PRO-0003", "PRO-0004",
-        "PRO-0005", "ADR-0002", "ADR-0003", "OUT-0002"}
+        "PRO-0005", "ADR-0002", "ADR-0003"}
     assert (root / "adrs" / "ADR-0002.md").read_text(encoding="utf-8").startswith(
         "---\nid: ADR-0002\ntype: adr\nlinks:\n- PRO-0002\n---\n")
+    assert (root / "outcomes" / "OUT-0001.md").read_text(encoding="utf-8") == PAST_OUTCOME
+    assert not (root / "outcomes" / "OUT-0002.md").exists()
+
+
+def test_an_open_revisiting_question_replaces_nothing(root):
+    # Вопрос оставили открытым — решения нет, и оно ничего не заменяет: прошлое решение
+    # действует, как при отмеченной замене (решение q-011 бекенда).
+    stream = STREAM.model_copy(update={"decisions": [*DECIDED[:2],
+                                                     Decision(question_id="Q3", proposal=None)]})
+    export(root, stream)
+    catalog = Catalog.load(root)
+    assert catalog.status("ADR-0001") == ("active", None)
+    assert catalog.notes["OQ-0004"].links == ("IDEA-0002",)
+
+
+def test_the_revisited_decision_and_the_marked_ones_share_one_replaces_line(root):
+    stream = STREAM.model_copy(update={"decisions": [*DECIDED[:2], DECIDED[2].model_copy(
+        update={"replaces": ["ADR-0001"]})]})
+    assert by_id(draft(root, stream)[0])["ADR-0003"].text.endswith("\n\nЗаменяет: ADR-0001.")
 
 
 def test_exporting_again_keeps_numbers_and_human_edits(root):
@@ -273,12 +296,9 @@ def test_stream_numbers_in_texts_become_note_numbers_or_go(root):
                 "rationale": "рутина не требует ручной работы (F4), а тег (P1) нужен лишь по Q2"}),
             DECIDED[1],
             DECIDED[2].model_copy(update={
-                "rationale": "так велит F4, как и ADR-1 (Q2, F4), а P9 и ADR-0001 — чужие"})],
-        "outcomes": OUTCOMES.model_copy(update={"outcomes": [
-            OUTCOMES.outcomes[0].model_copy(update={
-                "behavior": "CI выкладывает сам (I1), секреты — в O2 (R7)."}),
-            *OUTCOMES.outcomes[1:]]})})
-    notes = by_id(drafted(stream, FRAGMENTS | {4: LIMIT}, shelf(root), None, WORDS, "Russian")[0])
+                "rationale": "так велит F4, как и ADR-1 (Q2, F4), а P9 и ADR-0001 — чужие"})]})
+    drafted_now = drafted(stream, FRAGMENTS | {4: LIMIT}, shelf(root), None, WORDS, "Russian")
+    notes = by_id(drafted_now[0])
     # Номер с заметкой — её номером; ограничение без заметки в скобках выпадает: фраза его
     # пересказывает, — а посреди фразы встаёт его текст. Номера заметок и незнакомые — как есть.
     assert notes["ADR-0002"].text == (
@@ -286,9 +306,10 @@ def test_stream_numbers_in_texts_become_note_numbers_or_go(root):
         "(PRO-0003) нужен лишь по OQ-0003")
     assert notes["ADR-0003"].text == (
         "Ручной откат остаётся, потому что так велит «Секреты не уходят в репозиторий», как и "
-        "ADR-0002 (OQ-0003), а P9 и ADR-0001 — чужие")
-    # Итог, который не выгружается, — своим названием; незнакомая находка R7 — как есть.
-    assert notes["OUT-0002"].text.splitlines()[2] == (
+        "ADR-0002 (OQ-0003), а P9 и ADR-0001 — чужие\n\nЗаменяет: ADR-0001.")
+    # Итогов в заметках нет — итог своим названием; незнакомая находка R7 — как есть.
+    assert renumbered("CI выкладывает сам (I1), секреты — в O2 (R7).", drafted_now[2],
+                      stream_texts(stream, FRAGMENTS)) == (
         "CI выкладывает сам (IDEA-0002), секреты — в «Хранение секретов» (R7).")
     # Код в обратных кавычках — как есть: `Q1` там — не вопрос.
     assert renumbered("`Q1` и Q1 (`F4`)", {"Q1": "OQ-0002"}, {"F4": LIMIT.text}) == (
@@ -494,7 +515,7 @@ def test_an_adr_number_a_past_decision_shares_stays_as_it_is(root):
     notes = by_id(draft(root, stream)[0])
     assert notes["ADR-0003"].text == (
         "Ручной откат остаётся, потому что так велит ADR-1: P1 incidents — первыми, а OQ-0003 "
-        "открыт")
+        f"открыт{REPLACES}")
 
 
 def test_a_question_from_the_group_text_is_named_by_its_fragment_too_and_terms_stay(root):
@@ -611,14 +632,14 @@ def test_a_legacy_export_keeps_its_human_edits_when_numbers_become_note_numbers(
     first, _, _, _ = export(root, stream)
     adr = next(note for note in first.notes if note.type == "adr" and "Q2" not in note.generated
                and "откат нужен" in note.generated)
-    old = "Ручной откат остаётся, потому что откат нужен, пока Q2 открыт"
+    old = f"Ручной откат остаётся, потому что откат нужен, пока Q2 открыт{REPLACES}"
     legacy = first.model_copy(update={"notes": [
         note.model_copy(update={"generated": old,
                                 "written": old.replace("остаётся", "остаётся по кнопке")})
         if note is adr else note for note in first.notes]})
     notes, _, _ = draft(root, stream, previous=legacy)
     assert by_id(notes)[adr.id].text == (
-        "Ручной откат остаётся по кнопке, потому что откат нужен, пока OQ-0003 открыт")
+        f"Ручной откат остаётся по кнопке, потому что откат нужен, пока OQ-0003 открыт{REPLACES}")
 
 
 def test_a_legacy_export_migrates_an_edit_where_the_council_text_had_no_numbers(root):
@@ -646,16 +667,17 @@ def test_a_record_keeps_which_of_its_numbers_were_catalog_notes(root):
 
 
 def test_a_record_keeps_its_references_after_the_note_is_deleted(root):
-    # OUT-0001 был в каталоге, когда решение записали: ссылка. Заметку удалили — при повторной
-    # выгрузке номер всё ещё ссылка, пока текст его называет.
+    # PRO-0001 был в каталоге, когда решение записали: ссылка. Заметку удалили — при повторной
+    # выгрузке номер всё ещё ссылка, пока текст его называет. Итог прежней версии в каталоге
+    # (OUT-0001) совет не читает — и в тексте это не ссылка.
     stream = STREAM.model_copy(update={"decisions": [*DECIDED[:2], DECIDED[2].model_copy(
-        update={"rationale": "так велит OUT-0001 validation"})]})
+        update={"rationale": "так велит PRO-0001 validation и OUT-0001"})]})
     first, _, _, _ = export(root, stream)
-    adr = next(note for note in first.notes if "OUT-0001" in note.written)
-    assert adr.references == ["OUT-0001"]
-    (root / "outcomes" / "OUT-0001.md").unlink()
+    adr = next(note for note in first.notes if "PRO-0001" in note.written)
+    assert adr.references == ["ADR-0001", "PRO-0001"]
+    (root / "proposals" / "PRO-0001.md").unlink()
     second, _, _, _ = export(root, stream, previous=first)
-    assert by_id(second.notes)[adr.id].references == ["OUT-0001"]
+    assert by_id(second.notes)[adr.id].references == ["ADR-0001", "PRO-0001"]
 
 
 def test_a_legacy_record_kept_for_a_hand_edited_file_stays_legacy(root):
@@ -704,7 +726,7 @@ def test_a_refined_option_is_named_by_its_refinement(root):
     notes, _, _ = draft(root, stream)
     refined = next(n for n in notes if n.type == "proposal" and n.text == own)
     adr = next(n for n in notes if n.type == "adr" and n.text.startswith("Ручной откат"))
-    assert adr.text == f"Ручной откат остаётся, потому что откат нужен и при {refined.id}"
+    assert adr.text == f"Ручной откат остаётся, потому что откат нужен и при {refined.id}{REPLACES}"
     # Заметки нет (удалили) — за номером исходного уже текст правки, а не прежний; за номером
     # вопроса и его фрагмента — его формулировка в заметке.
     texts = stream_texts(stream, FRAGMENTS)
@@ -778,28 +800,25 @@ def test_a_vanished_note_linked_from_outside_is_not_deleted(root):
 
 
 def test_a_vanished_parent_is_not_deleted_while_a_vanished_child_links_to_it(root):
-    first, _, _, _ = export(root)
-    # Выбрали другой вариант, а итог переназвали: прежние ADR и итог исчезли из потока оба.
-    retitled = OUTCOMES.model_copy(update={"outcomes": [
-        OUTCOMES.outcomes[0].model_copy(update={"title": "Деплой по тегу"}),
-        *OUTCOMES.outcomes[1:]]})
-    other = STREAM.model_copy(update={"outcomes": retitled, "decisions": [
-        DECIDED[0].model_copy(update={"proposal": "P1"}), *DECIDED[1:]]})
-    _, vanished, _ = draft(root, other, previous=first)
-    assert [(v.id, v.linked_from) for v in vanished] == [("ADR-0002", []), ("OUT-0002", [])]
-    with pytest.raises(NotesError, match="OUT-0002: ссылка на несуществующую заметку ADR-0002"):
-        export(root, other, previous=first, delete=["ADR-0002"])
-    assert (root / "adrs" / "ADR-0002.md").exists()                     # файлы не тронуты
-    export(root, other, previous=first, delete=["ADR-0002", "OUT-0002"])
+    own = "Секреты лежат в переменных окружения."
+    with_own = STREAM.model_copy(update={
+        "choices": [Choice(question_id="Q1", proposal="F3"),
+                    Choice(question_id="Q2", proposal="P4", text=own),
+                    Choice(question_id="Q3", proposal="P3")],
+        "decisions": [DECIDED[0], Decision(question_id="Q2", proposal="P4", rationale="Так проще.",
+                                           rationale_by="human"), DECIDED[2]]})
+    first, _, _, _ = export(root, with_own)
+    proposal = next(note.id for note in first.notes if note.written == own)
+    adr = next(note.id for note in first.notes if note.type == "adr"
+               and note.links == [proposal])
+    # Свой вариант убрали, а вопрос оставили открытым: исчезли и вариант, и его решение.
+    _, vanished, _ = draft(root, previous=first)
+    assert [(v.id, v.linked_from) for v in vanished] == [(proposal, []), (adr, [])]
+    with pytest.raises(NotesError, match=f"{adr}: ссылка на несуществующую заметку {proposal}"):
+        export(root, previous=first, delete=[proposal])
+    assert (root / "proposals" / f"{proposal}.md").exists()            # файлы не тронуты
+    export(root, previous=first, delete=[proposal, adr])
     assert Catalog.load(root).problems() == []
-
-
-def twins(order=(0, 1)):
-    twin = OUTCOMES.outcomes[0].model_copy(update={"id": "O3", "behavior": "И откат по merge."})
-    outcomes = [OUTCOMES.outcomes[0], twin]
-    return STREAM.model_copy(update={
-        "outcomes": OUTCOMES.model_copy(update={"outcomes": [
-            *(outcomes[i] for i in order), OUTCOMES.outcomes[1]]})})
 
 
 def snapshot(root):
@@ -836,45 +855,26 @@ def test_a_note_that_cannot_be_deleted_leaves_the_catalog_as_it_was(root, monkey
 def test_a_note_that_cannot_be_replaced_rolls_the_whole_export_back(root, monkeypatch):
     first, _, _, _ = export(root)
     before = snapshot(root)
-    refusing(monkeypatch, "OUT-0002.md.part")          # новый ADR уже встал, итог — нет
-    with pytest.raises(NotesError, match="OUT-0002.md не записать"):
-        export(root, chose_p1(), previous=first, delete=["ADR-0002"])
+    refusing(monkeypatch, "ADR-0004.md.part")          # идея уже встала, новый ADR — нет
+    with pytest.raises(NotesError, match="ADR-0004.md не записать"):
+        export(root, chose_p1(), previous=first, edits={"idea": "Деплой без ручной работы."},
+               delete=["ADR-0002"])
     assert snapshot(root) == before                     # и удалённое вернулось
 
 
-def test_outcomes_with_the_same_title_stay_separate(root):
-    first, notes, _, _ = export(root, twins())
-    assert len({note.key for note in notes}) == len(notes)
-    assert [n.id for n in notes if n.type == "outcome"] == ["OUT-0002", "OUT-0003"]
-    assert "И откат по merge." in (root / "outcomes" / "OUT-0003.md").read_text(encoding="utf-8")
-    again, _, _ = draft(root, twins(), previous=first)
-    assert {note.action for note in again} == {"same"}
-    # Модель отдала их в другом порядке — номера держатся за суть, а не за место в списке.
-    swapped, _, _ = draft(root, twins((1, 0)), previous=first)
-    assert {n.id: n.text.split("\n")[2] for n in swapped if n.type == "outcome"} == {
-        "OUT-0002": "После merge CI сам выкладывает.", "OUT-0003": "И откат по merge."}
-
-
-def test_a_second_outcome_with_the_same_title_keeps_the_first_ones_numbers(root):
-    first, _, _, _ = export(root)                       # итог «Деплой по merge» один
-    notes, vanished, _ = draft(root, twins(), previous=first)
-    assert vanished == []
-    assert {n.text.split("\n")[2]: n.id for n in notes if n.type == "outcome"} == {
-        "После merge CI сам выкладывает.": "OUT-0002", "И откат по merge.": "OUT-0003"}
-    second, _, _, _ = export(root, twins(), previous=first)
-    notes, vanished, _ = draft(root, previous=second)   # двойник ушёл
-    assert [n.id for n in notes if n.type == "outcome"] == ["OUT-0002"]
-    assert [v.id for v in vanished] == ["OUT-0003"]
-
-
-def test_an_outcome_reworded_under_the_same_title_keeps_its_number(root):
+def test_outcomes_of_an_old_export_are_no_longer_the_streams(root):
+    # Выгрузка прежней версии записала итог: поток его больше не держит — он не исчезает и не
+    # удаляется, а повторная выгрузка его не пишет.
     first, _, _, _ = export(root)
-    reworded = OUTCOMES.model_copy(update={"outcomes": [OUTCOMES.outcomes[0].model_copy(
-        update={"behavior": "CI выкладывает сборку после merge."}), *OUTCOMES.outcomes[1:]]})
-    notes, vanished, _ = draft(root, STREAM.model_copy(update={"outcomes": reworded}),
-                                  previous=first)
-    assert vanished == []
-    assert by_id(notes)["OUT-0002"].action == "update"
+    old = first.model_copy(update={"notes": [*first.notes, ExportedNote(
+        key="o:деплой по merge", id="OUT-0001", type="outcome", generated="…", written="…",
+        links=["ADR-0002"], digest="")]})
+    assert [note.id for note in export_in(old, root).notes] == [note.id for note in first.notes]
+    notes, vanished, _ = draft(root, previous=old)
+    assert vanished == [] and {note.action for note in notes} == {"same"}
+    record, _, _, _ = export(root, previous=old)
+    assert "OUT-0001" not in {note.id for note in record.notes}
+    assert (root / "outcomes" / "OUT-0001.md").read_text(encoding="utf-8") == PAST_OUTCOME
 
 
 def test_another_notes_language_translates_the_notes_again(root):
@@ -944,48 +944,29 @@ def test_an_empty_text_anywhere_leaves_the_catalog_as_it_was(root):
 
 
 def test_a_revisited_decision_gone_from_the_catalog_stops_the_draft(root):
+    # Решение вопроса заменило бы решение проекта, которого в каталоге уже нет.
     (root / "adrs" / "ADR-0001.md").unlink()
-    (root / "outcomes" / "OUT-0001.md").unlink()
     with pytest.raises(NotesError, match="Q3 пересматривает ADR-0001"):
         draft(root)
-
-
-@pytest.mark.parametrize("language", sorted(LANGUAGES))
-def test_criteria_with_issue_numbers_are_not_the_issue_list(language):
-    words = LANGUAGES[language]
-    text = outcome_text("Поиск", "Ищется.", ["ISS-0042: регресс не вернулся"], words)
-    assert declared_issues(text) == []
-    # И на языке, подписи которого совет не знает: критерий — не строка задачи.
-    foreign = text.replace(f"{words['criteria']}:", "Criterios de aceptación:")
-    assert declared_issues(foreign) == [] and "- ISS-0042 — регресс не вернулся" in foreign
-
-
-def test_a_translation_does_not_turn_a_criterion_into_an_issue_line():
-    source = outcome_text("Поиск", "Ищется.", ["ISS-0042: регресс не вернулся"],
-                          LANGUAGES["russian"])
-    turned = {"notes": [{"key": "o", "text": "Búsqueda\n\nSe busca.\n\nCriterios de aceptación:\n"
-                                             "- ISS-0042: la regresión no vuelve"}]}
-    with pytest.raises(BadAnswer, match="строки задач"):
-        translations(turned, {"o": source})
+    # Вопрос оставили открытым — его решения нет, и заменять нечего: выгрузка собирается.
+    open_q3 = STREAM.model_copy(update={"decisions": [*DECIDED[:2],
+                                                      Decision(question_id="Q3", proposal=None)]})
+    assert by_id(draft(root, open_q3)[0])["OQ-0004"].revisits == "ADR-0001"
 
 
 def test_a_translation_keeps_exactly_the_numbers_of_the_source():
-    sources = {"o": "Итог\n\nЗадачи:\n- ISS-0001: Кнопка", "a": "Откат, потому что ADR-0001."}
-    good = {"notes": [{"key": "o", "text": "Outcome\n\nIssues:\n- ISS-0001: Button"},
+    sources = {"t": "# Кнопка\n\n## После задач\n- ISS-0001: Кнопка",
+               "a": "Откат, потому что ADR-0001."}
+    good = {"notes": [{"key": "t", "text": "# Button\n\n## After the issues\n- ISS-0001: Button"},
                       {"key": "a", "text": "Rollback, because of ADR-0001."}]}
-    assert translations(good, sources)["o"].endswith("ISS-0001: Button")
+    assert translations(good, sources)["t"].endswith("ISS-0001: Button")
     lost = {"notes": [good["notes"][0], {"key": "a", "text": "Rollback."}]}
     with pytest.raises(BadAnswer, match="потеряны номера ADR-0001"):
         translations(lost, sources)
-    added = {"notes": [{"key": "o", "text": "Outcome\n\nIssues:\n- ISS-0001: Button\n"
+    added = {"notes": [{"key": "t", "text": "# Button\n\n## After the issues\n- ISS-0001: Button\n"
                                             "- ISS-9999: Extra"}, good["notes"][1]]}
     with pytest.raises(BadAnswer, match="лишние номера ISS-9999"):
         translations(added, sources)
-    # Номер на месте, но строка задачи — уже не строка задачи: итог её бы потерял.
-    reworded = {"notes": [{"key": "o", "text": "Outcome\n\nIssues: ISS-0001 (Button)"},
-                          good["notes"][1]]}
-    with pytest.raises(BadAnswer, match="строки задач"):
-        translations(reworded, sources)
 
 
 def test_a_translation_keeps_the_replaces_line_of_a_decision():
@@ -1030,7 +1011,17 @@ def test_two_files_of_one_issue_stop_the_reading(issues):
 
 
 def test_an_issue_file_reads_back_as_written():
-    note = Note("ISS-0012", "issue", "# Поиск\n\nИщется.", ("OUT-0003", "ADR-0007", "ISS-0011"))
-    back = issue_parsed(issue_rendered(note))
+    links = ("parent:ISS-0010", "ADR-0007", "ISS-0011")
+    note = Note("ISS-0012", "issue", "# Поиск\n\nИщется.", links)
+    text = issue_rendered(note)
+    # Родитель и решения — только номерами, во frontmatter; поля итогов нет.
+    assert text.startswith("---\nid: ISS-0012\nparent: ISS-0010\nadrs: [ADR-0007]\n"
+                           "depends_on: [ISS-0011]\n---\n")
+    back = issue_parsed(text)
     assert (back.id, back.type, back.body, back.links) == (
-        "ISS-0012", "issue", "# Поиск\n\nИщется.", ("OUT-0003", "ADR-0007", "ISS-0011"))
+        "ISS-0012", "issue", "# Поиск\n\nИщется.", links)
+
+
+def test_an_issue_file_of_the_old_version_reads_without_its_outcomes():
+    back = issue_parsed("---\nid: ISS-0012\noutcomes: [OUT-0003]\nadrs: [ADR-0007]\n---\n\n# Поиск")
+    assert back.links == ("ADR-0007",)

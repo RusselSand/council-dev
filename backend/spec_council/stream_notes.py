@@ -71,14 +71,13 @@ def draft_of(council: Council, stream: Stream, root: Path,
     fragments = {fragment.id: fragment for fragment in fragments_of(council, stream)}
     previous = export_in(stream.notes, root)
     view = seen(stream)
-    notes, vanished, skipped, refs = drafted(
+    notes, vanished, refs = drafted(
         view, fragments, shelf, previous, words_for(language()), notes_language(),
         reserved(councils, council.id, stream.group, root))
     own = {note.id for note in [*notes, *(previous.notes if previous else ())]}
     return NotesDraft(
         state="done", run=uuid4().hex[:8], outcomes=stream.outcomes.run if stream.outcomes else "",
-        language=notes_language(), root=str(root), notes=notes, vanished=vanished,
-        skipped=skipped, refs=refs,
+        language=notes_language(), root=str(root), notes=notes, vanished=vanished, refs=refs,
         cited=cited_in(view, fragments, shelf.catalog.notes, previous.cited if previous else ()),
         shifts=shifts_of(shelf.catalog, notes, own)), shelf
 
@@ -237,8 +236,8 @@ def launch_of(council: Council, stream: Stream, draft: NotesDraft, shelf: Shelf,
 def shifts_of(catalog: Catalog, notes: Sequence[NotePlan],
               own: Collection[str]) -> list[StatusShift]:
     """Решения проекта (ADR каталога, кроме заметок самого потока — own), чей статус станет
-    другим, когда черновик запишут: из них растут вопросы потока, а на вопрос есть новое
-    решение, или новое решение потока называет их строкой замен (решение q-011 бекенда). Файл,
+    другим, когда черновик запишут: новое решение потока называет их строкой замен — их
+    пересматривает его вопрос или их замену подтвердил человек (решение q-011 бекенда). Файл,
     правленный руками, запись не трогает — в графе он остаётся как есть."""
     after = dict(catalog.notes)
     for plan in notes:
@@ -261,7 +260,8 @@ def shifts_of(catalog: Catalog, notes: Sequence[NotePlan],
 
 def chain_of(catalog: Catalog, adr_id: str, by: str | None, ours: Collection[str]) -> list[str]:
     """Откуда смена статуса решения adr_id: вопрос потока, его вариант и новое решение (by),
-    что его заменяет; замены нет — вопрос, который его пересматривает."""
+    что его заменяет; замены нет — вопрос, который из него растёт (так — только в каталогах
+    прежней версии)."""
     if by is not None and by in ours:
         proposal = next(iter(catalog.notes[by].links), None)
         question = next(iter(catalog.notes[proposal].links), None) \

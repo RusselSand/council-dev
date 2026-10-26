@@ -1,10 +1,13 @@
 """План задач на весь совет: что видят модели и как проверяется их ответ.
 
 План строят, когда во всех потоках итоги утверждены и выгружены в заметки: тогда у каждого
-итога и решения есть номер заметки (OUT-…, ADR-…), и модели называют их им — те же номера ложатся
-в файлы задач, и ссылки в тексте задачи сразу верные. Итог, что в заметки не лёг (у него нет
-решений своей идеи), в план не входит — это видно. Не входит и итог, которого человек не утвердил:
-«Утвердить итоги» оставляет неутверждённые и заблокированные такими, а в задачи уходят утверждённые.
+решения есть номер заметки (ADR-…), и модели называют его им — те же номера ложатся в файлы
+задач, и ссылки в тексте задачи сразу верные. Итогов в заметках нет (решение владельца к задаче
+«Бекенд · Итоги → родительские задачи…»): итог в плане зовут номером в совете — поток и номер
+итога в нём («A-O1», outcome_name), а при записи итог становится родительской задачей, и задачи
+плана этого итога — её подзадачи (tasks_export.py). В план не входит итог, которого человек не
+утвердил: «Утвердить итоги» оставляет неутверждённые и заблокированные такими, а в задачи уходят
+утверждённые.
 
 Ответ модели проверяет код: у задачи ровно один итог — из плана; решения, ограничения и риски —
 только те, что есть у её итога; зависимости — только на задачи раньше неё по плану (на задачу
@@ -62,9 +65,9 @@ class Allowed:
 
 @dataclass(frozen=True)
 class Context:
-    """Итоги плана — номерами заметок — и на что может сослаться задача каждого из них. И
-    сочетания исходных текстов у потока каждого итога (Names.phrases): номер задачи в «I1
-    cache» — слово, и новым номером он не становится."""
+    """Итоги плана — номерами в совете (outcome_name) — и на что может сослаться задача каждого
+    из них. И сочетания исходных текстов у потока каждого итога (Names.phrases): номер задачи в
+    «I1 cache» — слово, и новым номером он не становится."""
 
     outcomes: Mapping[str, Allowed]
     phrases: Mapping[str, frozenset[str]] = field(default_factory=dict)
@@ -179,14 +182,51 @@ def planned_outcomes(stream: Stream) -> list[Outcome]:
     return [outcome for outcome in run.outcomes if outcome.id in approved]
 
 
+def outcome_name(group: str, outcome_id: str) -> str:
+    """Итог в плане задач — номер в совете: поток и номер итога в нём, «A-O1». В каталоге заметок
+    итогов нет, а номера итогов у потоков совпадают."""
+    return f"{group}-{outcome_id}"
+
+
+@dataclass(frozen=True)
+class Parent:
+    """Родительская задача — утверждённый итог потока (решение владельца к задаче «Бекенд ·
+    Итоги → родительские задачи…»): задачи плана этого итога — её подзадачи. name — итог в
+    плане (outcome_name); names — им и тем, как его звал план прежней версии: номером его
+    заметки (OUT-…), пока выгрузка потока его помнит."""
+
+    name: str
+    names: tuple[str, ...]
+    stream: Stream
+    outcome: Outcome
+
+
+def parents_of(council: Council) -> list[Parent]:
+    """Родительские задачи совета: утверждённые итоги — по порядку потоков, а в потоке — по
+    порядку сборки."""
+    found: list[Parent] = []
+    for stream in council.streams or []:
+        refs = stream.notes.refs if stream.notes else {}
+        for outcome in planned_outcomes(stream):
+            name = outcome_name(stream.group, outcome.id)
+            found.append(Parent(name, (name, *([refs[outcome.id]] if outcome.id in refs else [])),
+                                stream, outcome))
+    return found
+
+
+def parent_by_name(parents: Iterable[Parent]) -> dict[str, Parent]:
+    """Родительская задача по имени итога в плане — и в плане прежней версии."""
+    return {name: parent for parent in parents for name in parent.names}
+
+
 def planner_notes(stream: Stream) -> set[str]:
     """Заметки потока, чьи тексты видит план (inputs_of → adr_entry): решения, что итоги
-    реализуют или на которые опираются, и вопросы этих решений. Итог, что в заметки не лёг или
-    не утверждён, в план не входит — и его решения план не видит."""
+    реализуют или на которые опираются, и вопросы этих решений. Итог, что не утверждён, в план
+    не входит — и его решения план не видит."""
     refs = stream.notes.refs if stream.notes else {}
     scope = stream.scope or []
     adrs = {name for outcome in planned_outcomes(stream)
-            if outcome.id in refs for name in (*outcome.adr_ids, *outcome.relies_on_adr_ids)}
+            for name in (*outcome.adr_ids, *outcome.relies_on_adr_ids)}
     asked = [scope[n - 1].id for name in adrs
              if (n := int(name.split("-")[1])) and 0 < n <= len(scope)]
     return {refs[name] for name in [*adrs, *asked] if name in refs}
@@ -216,31 +256,31 @@ def own_fragments(council: Council, stream: Stream,
 
 def outcome_names(council: Council, fragments: Mapping[int, LabeledFragment],
                   cited: Collection[str] = ()) -> dict[str, Names]:
-    """Номера потока у каждого итога плана — по номеру заметки итога: файл задачи называет
-    части потока своего итога. cited — номера каталога, что называло исследование, когда
-    строили план (TaskPlan.cited)."""
+    """Номера потока у каждого итога плана — по имени итога в плане (Parent.names, и как его
+    звал план прежней версии): файл задачи называет части потока своего итога. cited — номера
+    каталога, что называло исследование, когда строили план (TaskPlan.cited)."""
     research = research_texts(council)
     maps = research_maps(council)
     exported = exported_of(council)
+    streams: dict[str, Names] = {}
     found: dict[str, Names] = {}
-    for stream in council.streams or []:
-        names = names_of(stream, own_fragments(council, stream, fragments), research, exported,
-                         cited, maps)
-        for outcome in planned_outcomes(stream):
-            if outcome.id in names.numbers:
-                found[names.numbers[outcome.id]] = names
+    for parent in parents_of(council):
+        stream = parent.stream
+        if stream.group not in streams:
+            streams[stream.group] = names_of(stream, own_fragments(council, stream, fragments),
+                                             research, exported, cited, maps)
+        found |= dict.fromkeys(parent.names, streams[stream.group])
     return found
 
 
 @dataclass(frozen=True)
 class Inputs:
     """Что видят модели (values — подстановки промптов, кроме кода и макета), на что можно
-    сослаться, итоги плана по порядку, что в план не вошло и к чему он (basis)."""
+    сослаться, итоги плана по порядку и к чему он (basis)."""
 
     values: dict[str, str]
     context: Context
     outcomes: list[str]
-    skipped: list[str]
     basis: dict[str, str]
     # Номера каталога, что называет исследование, — пока они в каталоге (research_cited).
     cited: list[str] = field(default_factory=list)
@@ -322,29 +362,24 @@ def ideas_text(council: Council) -> str:
 
 
 def inputs_of(council: Council) -> Inputs:
-    """Утверждённые итоги всех потоков с номерами заметок, их решения, решения проекта, на
-    которые они опираются, ограничения и риски."""
+    """Утверждённые итоги всех потоков — номерами в совете (outcome_name), их решения — номерами
+    заметок, решения проекта, на которые они опираются, ограничения и риски."""
     fragments = {f.id: f for f in council.slicing.fragments} if council.slicing else {}
     outcomes: list[dict] = []
     allowed: dict[str, Allowed] = {}
     decisions: dict[str, dict] = {}
     constraints: set[int] = set()
     risks: set[int] = set()
-    skipped: list[str] = []
     exported = exported_of(council)
     for stream in council.streams or []:
         refs = stream.notes.refs if stream.notes else {}
         names = names_of(stream, own_fragments(council, stream, fragments), exported=exported)
         written = {note.id: note.written for note in stream.notes.notes} if stream.notes else {}
         for outcome in planned_outcomes(stream):
-            note = refs.get(outcome.id)
-            if note is None:
-                skipped.append(f"Поток {stream.group}: {outcome.id} «{outcome.title}» не лёг в "
-                               "заметки — в план не входит")
-                continue
-            entry = outcome_entry(outcome, note, stream.group, refs, names)
+            name = outcome_name(stream.group, outcome.id)
+            entry = outcome_entry(outcome, name, stream.group, refs, names)
             outcomes.append(entry)
-            allowed[note] = Allowed(
+            allowed[name] = Allowed(
                 frozenset([*entry["implements"], *entry["relies_on"],
                            *entry["project_decisions"]]),
                 frozenset(outcome.constraint_ids), frozenset(outcome.risk_ids))
@@ -365,17 +400,18 @@ def inputs_of(council: Council) -> Inputs:
     values = {"ideas": ideas_text(council), "outcomes": as_json(outcomes),
               "decisions": as_json(list(decisions.values())),
               "constraints_and_risks": as_json(limits_prompt(fragments, constraints | risks))}
-    context = Context(allowed, {note: names.phrases
-                                for note, names in outcome_names(council, fragments).items()})
-    return Inputs(values, context, [o["id"] for o in outcomes], skipped, basis_of(council))
+    context = Context(allowed, {name: names.phrases
+                                for name, names in outcome_names(council, fragments).items()
+                                if name in allowed})
+    return Inputs(values, context, [o["id"] for o in outcomes], basis_of(council))
 
 
-def outcome_entry(outcome: Outcome, note: str, group: str, refs: Mapping[str, str],
+def outcome_entry(outcome: Outcome, name: str, group: str, refs: Mapping[str, str],
                   named: Names) -> dict:
-    """Итог, как его видят модели: номер заметки, поток, что меняется и чем проверить, какие
-    решения он реализует и на какие опирается, — номерами заметок, и в тексте тоже (names):
-    что модели прочтут, то и перепишут в задачи."""
-    return {"id": note, "group": group, "title": named(outcome.title),
+    """Итог, как его видят модели: номер в совете (outcome_name), поток, что меняется и чем
+    проверить, какие решения он реализует и на какие опирается, — номерами заметок, и в тексте
+    тоже (names): что модели прочтут, то и перепишут в задачи."""
+    return {"id": name, "group": group, "title": named(outcome.title),
             "behavior": named(outcome.behavior),
             "acceptance_criteria": [named(item) for item in outcome.acceptance_criteria],
             "implements": [refs[name] for name in outcome.adr_ids if name in refs],

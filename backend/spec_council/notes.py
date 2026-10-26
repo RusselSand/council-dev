@@ -1,18 +1,23 @@
-"""Заметки проекта: IDEA → OPEN QUESTION → PROPOSAL → ADR → OUTCOME файлами Markdown.
+"""Заметки проекта: IDEA → OPEN QUESTION → PROPOSAL → ADR файлами Markdown.
 
 Формат — как в Causa, чтобы граф читали и её инструменты: файл на заметку в папке своего типа
 (`ideas/IDEA-0001.md`, `open_questions/OQ-0001.md`, `proposals/PRO-0001.md`,
-`adrs/ADR-0001.md`, `outcomes/OUT-0001.md`), во frontmatter `id`, `type` и `links` —
-ближайшие вышестоящие заметки, в теле — текст. Правила графа — тоже её:
+`adrs/ADR-0001.md`), во frontmatter `id`, `type` и `links` — ближайшие вышестоящие заметки, в
+теле — текст. Правила графа — тоже её:
 - IDEA ни на что не ссылается;
 - OPEN QUESTION — ровно на одну IDEA, PROPOSAL или ADR (вопрос может вырасти из решения);
 - PROPOSAL — ровно на один OPEN QUESTION, ADR — ровно на один PROPOSAL;
-- OUTCOME — на один или несколько ADR одной и той же корневой IDEA;
 - у каждой заметки одна корневая IDEA.
 
-ADR заменён, когда из него вырос вопрос и на вопрос есть новое ADR, — или когда новое ADR называет
-его своей строкой замен: «Заменяет: ADR-0003, ADR-0005.» (так совет пишет решение, замену которым
-подтвердил человек, — решение q-011 бекенда; вопрос этого решения остаётся в цепочке своей идеи).
+Итогов (OUT) в каталоге совет не держит (решение владельца к задаче «Бекенд · Итоги →
+родительские задачи…»): итог становится родительской задачей в папке задач (tasks_export.py).
+OUT, что уже лежат в каталогах (папка outcomes/), совет не читает и не пишет — их перенос —
+работа владельца.
+
+ADR заменён, когда из него вырос вопрос и на вопрос есть новое ADR (так растут вопросы в каталогах
+прежней версии), — или когда новое ADR называет его своей строкой замен: «Заменяет: ADR-0003,
+ADR-0005.» Так совет пишет решение, замену которым подтвердил человек (решение q-011 бекенда), и
+решение вопроса, который пересматривает решение проекта: вопрос остаётся в цепочке своей идеи.
 
 Номера — общие на весь каталог: следующий свободный номер типа, с нулями до четырёх знаков.
 
@@ -34,20 +39,13 @@ from dataclasses import dataclass, field
 from functools import cached_property
 from pathlib import Path
 
-TYPES = ("idea", "open_question", "proposal", "adr", "outcome")
-PREFIXES = {"idea": "IDEA", "open_question": "OQ", "proposal": "PRO", "adr": "ADR",
-            "outcome": "OUT"}
+TYPES = ("idea", "open_question", "proposal", "adr")
+PREFIXES = {"idea": "IDEA", "open_question": "OQ", "proposal": "PRO", "adr": "ADR"}
 FOLDERS = {"idea": "ideas", "open_question": "open_questions", "proposal": "proposals",
-           "adr": "adrs", "outcome": "outcomes"}
+           "adr": "adrs"}
 UPSTREAM = {"idea": frozenset(), "open_question": frozenset({"idea", "proposal", "adr"}),
-            "proposal": frozenset({"open_question"}), "adr": frozenset({"proposal"}),
-            "outcome": frozenset({"adr"})}
+            "proposal": frozenset({"open_question"}), "adr": frozenset({"proposal"})}
 ISSUE_ID = re.compile(r"\bISS-\d+\b")
-# Строка задачи в теле итога: «- ISS-0012: название». Номер в другом месте — упоминание.
-ISSUE_LINE = re.compile(r"- (ISS-\d+):")
-# Подписи критериев готовности в итоге (export.WORDS): список под ними — критерии, пусть и из
-# строк «- ISS-…:».
-CRITERIA = frozenset({"критерии готовности", "acceptance criteria"})
 # Строка замен в теле ADR — отдельный абзац: подпись на языке заметок («Заменяет», «Supersedes»),
 # двоеточие и только номера решений через запятую.
 REPLACES_LINE = re.compile(r"[^\W\d_]+(?:[ \t-][^\W\d_]+)*[ \t]*:[ \t]*"
@@ -289,8 +287,6 @@ def link_problems(note: Note, notes: Mapping[str, Note]) -> list[str]:
         found.append(f"{note.id}: IDEA ни на что не ссылается")
     if note.type in ("open_question", "proposal", "adr") and count != 1:
         found.append(f"{note.id}: нужна ровно одна вышестоящая заметка, а их {count}")
-    if note.type == "outcome" and not count:
-        found.append(f"{note.id}: OUTCOME ссылается хотя бы на один ADR")
     for link in note.links:
         target = notes.get(link)
         if target is None:
@@ -301,8 +297,8 @@ def link_problems(note: Note, notes: Mapping[str, Note]) -> list[str]:
 
 
 def issues_in(text: str) -> list[str]:
-    """Номера задач (ISS-…) в тексте — в заметке итога или сообщении коммита — в одном
-    написании (issue_key)."""
+    """Номера задач (ISS-…) в тексте — в заметке или сообщении коммита — в одном написании
+    (issue_key)."""
     return list(dict.fromkeys(issue_key(issue) for issue in ISSUE_ID.findall(text)))
 
 
@@ -311,35 +307,9 @@ def issue_key(issue: str) -> str:
     return f"ISS-{int(issue[4:]):04d}"
 
 
-def declared_issues(text: str) -> list[str]:
-    """Задачи итога — его список задач: блок со строкой-подписью («Задачи:», «Issues:» — на
-    любом языке, только не подпись критериев) и под ней только строками «- ISS-…: название»;
-    таких несколько — последний (ниже могли дописать абзац руками). Номер в другом месте, и в
-    критериях готовности тоже, — упоминание, а не задача итога: критерий совет так не пишет
-    (export.criterion)."""
-    blocks = [block for block in re.split(r"\n\s*\n", text.strip()) if block.strip()]
-    for block in reversed(blocks):
-        found = issue_list(block)
-        if found is not None:
-            return found
-    return []
-
-
-def issue_list(block: str) -> list[str] | None:
-    """Номера задач блока, если он — список задач. Нет — None."""
-    lines = [line.strip() for line in block.splitlines()]
-    if (len(lines) < 2 or not lines[0].endswith(":")
-            or lines[0][:-1].strip().casefold() in CRITERIA):
-        return None
-    found = [ISSUE_LINE.match(line) for line in lines[1:]]
-    if not all(found):
-        return None
-    return list(dict.fromkeys(issue_key(match.group(1)) for match in found if match))
-
-
 def declared_replacements(text: str) -> list[str]:
     """Решения, которые заменяет ADR, — его строка замен: абзац из одной строки «Заменяет:
-    ADR-0003, ADR-0005.» (подпись на любом языке — её переводят, как подписи итога); таких
+    ADR-0003, ADR-0005.» (подпись на любом языке — её переводят, как остальной текст); таких
     несколько — последний (ниже могли дописать абзац руками). Номера — как написаны."""
     for block in reversed(re.split(r"\n\s*\n", text.strip())):
         found = REPLACES_LINE.fullmatch(block.strip())

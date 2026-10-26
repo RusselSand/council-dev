@@ -1,8 +1,9 @@
-"""Выгрузка потока в заметки проекта (notes.py): IDEA, отобранные вопросы, их варианты,
-принятые решения и утверждённые итоги — каждое своей заметкой, со ссылками на ближайшие
-вышестоящие. Поток выгружают, как только утвердили итоги, до задач: так следующий поток видит
-его решения через «решения проекта». Задач в заметках потока нет — связь у них односторонняя:
-файл задачи называет свой итог, а заметка итога задач не перечисляет.
+"""Выгрузка потока в заметки проекта (notes.py): IDEA, отобранные вопросы, их варианты и
+принятые решения — каждое своей заметкой, со ссылками на ближайшие вышестоящие. Поток выгружают,
+как только утвердили итоги, до задач: так следующий поток видит его решения через «решения
+проекта». Итогов в заметках нет (решение владельца к задаче «Бекенд · Итоги → родительские
+задачи…»): итог нужен для работы над задачами и становится родительской задачей в папке задач
+(tasks_export.py), а в каталоге решений не хранится.
 
 Выгрузка — в два хода. Черновик (drafted): какие заметки лягут, под какими номерами, с каким
 текстом и что с ними будет — новая, перепишется, уже такая, правили руками. Запись (written):
@@ -11,10 +12,11 @@
 Повторная выгрузка узнаёт свои прежние заметки по ключу части потока: вопрос из текста — по
 фрагменту, остальные — по формулировке; вариант — по вопросу и фрагменту или формулировке;
 решение — по вопросу и выбранному варианту (выбрали другой — это другое решение и новая
-заметка); итог — по названию. Правка варианта — по вопросу и исходному варианту: сколько её
-ни правь, это его заметка, и её решение — решение исходного. Совет написал бы то же, что в
-прошлый раз, — остаётся то, что тогда записали, с правками человека. Файл, который правили
-руками после выгрузки, совет не трогает. Исчезнувшее само не удаляется.
+заметка). Правка варианта — по вопросу и исходному варианту: сколько её ни правь, это его
+заметка, и её решение — решение исходного. Совет написал бы то же, что в прошлый раз, —
+остаётся то, что тогда записали, с правками человека. Файл, который правили руками после
+выгрузки, совет не трогает. Исчезнувшее само не удаляется. Итоги, что выгружали раньше, потоку
+больше не принадлежат: их совет не читает и не пишет.
 
 Тексты потока называют его части его же номерами: «по Q1», «(F3)». В заметки они ложатся
 номерами заметок, а у чего заметки нет — без номера (renumbered).
@@ -58,7 +60,6 @@ from .notes import (
     Catalog,
     Note,
     NotesError,
-    declared_issues,
     declared_replacements,
     path_of,
     rendered,
@@ -71,16 +72,16 @@ from .slicing import BadAnswer
 # Связки в тексте заметок и файлов задач — на языке работы; перевод, если нужен, — потом,
 # целиком.
 WORDS = {
-    "russian": {"because": "потому что", "criteria": "Критерии готовности", "issues": "Задачи",
+    "russian": {"because": "потому что", "criteria": "Критерии готовности",
                 "entry": "Где менять", "now": "Что там сейчас", "scope": "Что сделать",
-                "outcomes": "Итоги", "decisions": "Решения", "keep": "Соблюдать",
-                "risks": "Риски", "after": "После задач", "open": "Открытые вопросы",
+                "keep": "Соблюдать", "risks": "Риски", "after": "После задач",
+                "open": "Открытые вопросы",
                 "commit": "В финальном коммите укажите номер задачи — {id}.",
                 "replaces": "Заменяет", "quote": "«{}»"},
-    "english": {"because": "because", "criteria": "Acceptance criteria", "issues": "Issues",
+    "english": {"because": "because", "criteria": "Acceptance criteria",
                 "entry": "Where to change", "now": "What is there now", "scope": "To do",
-                "outcomes": "Outcomes", "decisions": "Decisions", "keep": "Keep",
-                "risks": "Risks", "after": "After the issues", "open": "Open questions",
+                "keep": "Keep", "risks": "Risks", "after": "After the issues",
+                "open": "Open questions",
                 "commit": "Put the issue number {id} into the final commit.",
                 "replaces": "Supersedes", "quote": "“{}”"},
 }
@@ -131,8 +132,6 @@ CITED_NUMBER = r"(?:(?:IDEA|OQ|PRO|ADR|OUT|ISS)-\d+|[IQPFORD][1-9]\d*)(?![\w-])"
 MARKED_NUMBER = (rf"(?:[*_\[]|{MASKED.pattern})*{CITED_NUMBER}"
                  rf"(?:[*_\]]|{MASKED.pattern})*")
 CITED = re.compile(rf"\(\s*{MARKED_NUMBER}(?:(?:\s*[,;/]|\s+(?:and|и))\s*{MARKED_NUMBER})*\s*\)")
-# Критерий, что начинается как строка задачи: «ISS-0042: …».
-ISSUE_START = re.compile(r"\s*(ISS-\d+)\s*:")
 
 
 def words_for(language: str) -> dict[str, str]:
@@ -195,23 +194,25 @@ def unique(key: str, taken: set[str]) -> str:
 
 @dataclass(frozen=True)
 class Part:
-    """Часть потока, которая станет заметкой. links — ключи других частей или номера заметок
-    каталога (у вопроса, который пересматривает прошлое решение, — этот ADR). was — под каким
-    ключом часть могла лечь в прошлый раз, если не под своим: правка варианта, которую выгрузили
-    своим вариантом до того, как отметили, — под ключом своей формулировки, и её решение — тоже."""
+    """Часть потока, которая станет заметкой. links — ключи других частей (у файла задачи —
+    номера заметок и задач). was — под каким ключом часть могла лечь в прошлый раз, если не под
+    своим: правка варианта, которую выгрузили своим вариантом до того, как отметили, — под ключом
+    своей формулировки, и её решение — тоже. revisits — у вопроса, который пересматривает решение
+    проекта, — это ADR: вопрос растёт из своей идеи, а ADR заменяет его решение."""
 
     key: str
     type: str
     text: str
     links: tuple[str, ...]
     was: str | None = None
+    revisits: str | None = None
 
 
 @dataclass(frozen=True)
 class Shelf:
-    """Куда ложится выгрузка: заметки — в каталог root, файлы задач — в папку issues (None — у
-    проекта её нет: задачи только строками в итогах). files — файлы задач, что в ней уже лежат,
-    по номеру."""
+    """Куда ложится выгрузка: заметки — в каталог root, файлы задач — в папку issues (None —
+    выгружают заметки потока, а не задачи). files — файлы задач, что в ней уже лежат, по
+    номеру."""
 
     catalog: Catalog
     root: Path
@@ -284,39 +285,23 @@ def because(decision: str, rationale: str | None, words: Mapping[str, str]) -> s
 
 def replacing(text: str, adrs: Sequence[str], words: Mapping[str, str]) -> str:
     """ADR и его строка замен (notes.declared_replacements): решения проекта, которые оно
-    заменяет, — замену подтвердил человек; по ней каталог считает их заменёнными (решение q-011
-    бекенда). Замен нет — ADR как есть."""
+    заменяет, — то, что пересматривает его вопрос, и те, замену которых подтвердил человек; по
+    ней каталог считает их заменёнными (решение q-011 бекенда). Замен нет — ADR как есть."""
     if not adrs:
         return text
     return f"{text}\n\n{words['replaces']}: {', '.join(adrs)}."
 
 
-def outcome_text(title: str, behavior: str, criteria: Sequence[str],
-                 words: Mapping[str, str]) -> str:
-    lines = [title.strip(), "", behavior.strip()]
-    if criteria:
-        lines += ["", f"{words['criteria']}:", *(f"- {criterion(item)}" for item in criteria)]
-    return "\n".join(lines)
-
-
-def criterion(item: str) -> str:
-    """Критерий готовности строкой списка — никогда не строкой задачи. «- ISS-0042: …» под
-    критериями итога без задач — последним блоком — прочли бы задачей итога, а подпись
-    критериев на языке заметок узнать нельзя: двоеточие после номера — тире. Перевод строк
-    задач не добавит: их сверяет translations."""
-    return ISSUE_START.sub(r"\1 —", item, count=1) if ISSUE_START.match(item) else item
-
-
 def parts_of(stream: Stream, fragments: Mapping[int, LabeledFragment], catalog: Catalog,
              words: Mapping[str, str]
-             ) -> tuple[list[Part], list[str], dict[str, str], dict[str, dict[str, str]]]:
-    """Части потока в порядке заметок: идея, вопросы, варианты, решения, итоги. И что не
-    выгружается — с причиной, и какой частью ложится всё, что тексты потока называют его
-    номерами: идея (I1), вопрос, вариант (Pn и Fn), решение (ADR-n), итог (O1). По ним план
-    задач называет итоги и решения номерами заметок, а тексты заметок и задач — всё остальное.
-    Фрагмент текста группы бывает вариантом нескольких вопросов: «F3» в решении вопроса — его
-    вариант, а вне вопросов такой номер ничей. Потому и номера вариантов у частей каждого
-    вопроса — по ключу части."""
+             ) -> tuple[list[Part], dict[str, str], dict[str, dict[str, str]]]:
+    """Части потока в порядке заметок: идея, вопросы, варианты, решения. И какой частью ложится
+    всё, что тексты потока называют его номерами: идея (I1), вопрос, вариант (Pn и Fn), решение
+    (ADR-n). По ним план задач называет решения номерами заметок, а тексты заметок и задач — всё
+    остальное. Итогов в заметках нет: «O1» в тексте — его название (stream_texts). Фрагмент
+    текста группы бывает вариантом нескольких вопросов: «F3» в решении вопроса — его вариант, а
+    вне вопросов такой номер ничей. Потому и номера вариантов у частей каждого вопроса — по ключу
+    части."""
     found = found_by_question(stream.proposals, stream.choices)
     choices = {choice.question_id: choice for choice in stream.choices or []}
     decisions = {decision.question_id: decision for decision in stream.decisions or []}
@@ -327,7 +312,6 @@ def parts_of(stream: Stream, fragments: Mapping[int, LabeledFragment], catalog: 
     named: dict[str, str] = {"I1": "idea"}
     local: dict[str, dict[str, str]] = {}  # ключ части → номера вариантов её вопроса
     offered_in: Counter[str] = Counter()   # у скольких вопросов такой вариант
-    external: set[str] = set()           # решения вопросов, что растут из прошлых решений
     taken: set[str] = set()
     for n, question in enumerate(stream.scope or [], 1):
         decision = decisions.get(question.id)
@@ -352,14 +336,11 @@ def parts_of(stream: Stream, fragments: Mapping[int, LabeledFragment], catalog: 
         if adr is not None:
             adrs.append(adr)
             adr_of[f"ADR-{n}"] = adr.key
-            if asked.links != ("idea",):
-                external.add(adr.key)
     for name, count in offered_in.items():
         if count > 1:
             named.pop(name, None)
-    outcomes, skipped, outcome_of = outcome_parts(stream, adr_of, external, words, taken)
-    return ([Part("idea", "idea", stream.idea.text, ()), *questions, *proposals, *adrs,
-             *outcomes], skipped, named | adr_of | outcome_of, local)
+    return ([Part("idea", "idea", stream.idea.text, ()), *questions, *proposals, *adrs],
+            named | adr_of, local)
 
 
 def stream_texts(stream: Stream, fragments: Mapping[int, LabeledFragment]) -> dict[str, str]:
@@ -1000,23 +981,26 @@ def renumbered(text: str, numbers: Mapping[str, str], texts: Mapping[str, str],
 def question_parts(question: OpenQuestion, options: list[dict[str, str]],
                    decision: Decision | None, catalog: Catalog, words: Mapping[str, str],
                    taken: set[str]) -> tuple[Part, list[Part], Part | None]:
-    """Вопрос, его варианты и решение, если оно принято. Вопрос, который пересматривает
-    прошлое решение, растёт из того ADR, а не из идеи. Решение, замену которым прошлых решений
-    подтвердил человек (Decision.replaces), называет их строкой замен (replacing), и они
-    становятся заменёнными (Catalog.status), а вопрос остаётся в цепочке своей идеи (решение q-011
-    бекенда). ADR из каталога пропал — выгружать нельзя: вопрос и его решение молча легли бы в
-    цепочку новой идеи, а строка замен назвала бы решение, которого нет."""
+    """Вопрос, его варианты и решение, если оно принято. Вопрос растёт из своей идеи — и тот,
+    что пересматривает решение проекта (revisits): как при отмеченной замене (решение q-011
+    бекенда и решение владельца к задаче «Бекенд · Итоги → родительские задачи…»). Решение
+    вопроса называет строкой замен (replacing) решение проекта, которое вопрос пересматривает, и
+    те, замену которых подтвердил человек (Decision.replaces), — они становятся заменёнными
+    (Catalog.status). Вопрос оставили открытым — решения нет, и оно ничего не заменяет. ADR,
+    которое заменяет решение, из каталога пропал — выгружать нельзя: строка замен назвала бы
+    решение, которого нет."""
     key = unique(question_key(question), taken)
-    revisited = catalog.notes.get(question.revisits or "")
-    replaced = decision.replaces if decision is not None and decision.proposal is not None else []
-    for adr, verb in [*([(question.revisits, "пересматривает")] if question.revisits else []),
-                      *((adr, "заменяет") for adr in replaced)]:
+    decided = decision is not None and decision.proposal is not None
+    replaced = list(dict.fromkeys([*([question.revisits] if question.revisits else []),
+                                   *decision.replaces])) if decided else []
+    for adr in replaced:
         found = catalog.notes.get(adr)
         if found is None or found.type != "adr":
+            verb = "пересматривает" if adr == question.revisits else "заменяет"
             raise NotesError(f"{question.id} {verb} {adr}, а такого решения в каталоге заметок "
                              "уже нет: верните заметку или отберите решения проекта заново")
-    links = (revisited.id,) if revisited is not None else ("idea",)
-    asked = Part(key, "open_question", question.note or question.text, links)
+    asked = Part(key, "open_question", question.note or question.text, ("idea",),
+                 revisits=question.revisits)
     offered: list[Part] = []
     adr = None
     for option in options:
@@ -1032,33 +1016,6 @@ def question_parts(question: OpenQuestion, options: list[dict[str, str]],
     return asked, offered, adr
 
 
-def outcome_parts(stream: Stream, adr_of: Mapping[str, str], external: set[str],
-                  words: Mapping[str, str], taken: set[str]
-                  ) -> tuple[list[Part], list[str], dict[str, str]]:
-    """Итоги, что лягут, — и ключ части каждого. Итог ссылается только на решения своей идеи:
-    без них он не выгружается."""
-    parts: list[Part] = []
-    skipped: list[str] = []
-    outcome_of: dict[str, str] = {}
-    outcomes = stream.outcomes.outcomes if stream.outcomes else []
-    keys = keyed([f"o:{same_question(outcome.title)}" for outcome in outcomes],
-                 [same_question(outcome.behavior) for outcome in outcomes], taken)
-    for outcome, key in zip(outcomes, keys, strict=True):
-        linked = [adr_of[name] for name in outcome.adr_ids if name in adr_of]
-        own = [key for key in linked if key not in external]
-        if len(own) < len(linked):
-            skipped.append(f"{outcome.id}: решения, которые пересматривают прошлые, в итоге не "
-                           "связаны — итог стоит на решениях своей идеи")
-        if not own:
-            skipped.append(f"{outcome.id} «{outcome.title}» не выгружается: у него нет решений "
-                           "этой идеи, а итог ссылается хотя бы на одно")
-            continue
-        text = outcome_text(outcome.title, outcome.behavior, outcome.acceptance_criteria, words)
-        parts.append(Part(key, "outcome", text, tuple(dict.fromkeys(own))))
-        outcome_of[outcome.id] = key
-    return parts, skipped, outcome_of
-
-
 def digest_of(path: Path) -> str:
     try:
         return hashlib.sha256(path.read_bytes()).hexdigest()
@@ -1069,17 +1026,18 @@ def digest_of(path: Path) -> str:
 def drafted(stream: Stream, fragments: Mapping[int, LabeledFragment], shelf: Shelf,
             previous: NotesExport | None, words: Mapping[str, str],
             language: str, reserved: Collection[str] = ()
-            ) -> tuple[list[NotePlan], list[VanishedNote], list[str], dict[str, str]]:
-    """Черновик выгрузки: заметки с номерами, текстом и тем, что с ними будет; исчезнувшие; что
-    не выгружается; номер заметки у всего, что тексты потока называют его номерами (parts_of).
-    language — язык заметок: не тот, что у прошлой выгрузки, — прежние тексты не берутся, их
-    напишет перевод заново (файлы, правленные руками, — нет). reserved — номера
-    заметок из выгрузок других потоков: их заметку могли удалить руками, но номер всё ещё их —
-    новой заметке его не дают, а прежний номер потока, который записан и за другим, — уже не
-    его."""
+            ) -> tuple[list[NotePlan], list[VanishedNote], dict[str, str]]:
+    """Черновик выгрузки: заметки с номерами, текстом и тем, что с ними будет; исчезнувшие; номер
+    заметки у всего, что тексты потока называют его номерами (parts_of). language — язык заметок:
+    не тот, что у прошлой выгрузки, — прежние тексты не берутся, их напишет перевод заново (файлы,
+    правленные руками, — нет). reserved — номера заметок из выгрузок других потоков: их заметку
+    могли удалить руками, но номер всё ещё их — новой заметке его не дают, а прежний номер потока,
+    который записан и за другим, — уже не его. Итоги прошлой выгрузки — не заметки потока
+    (export_in): они не исчезают и не удаляются."""
     catalog = shelf.catalog
-    parts, skipped, named, local = parts_of(stream, fragments, catalog, words)
-    before = {note.key: note for note in previous.notes if note.type != "issue"} if previous else {}
+    parts, named, local = parts_of(stream, fragments, catalog, words)
+    before = {note.key: note for note in previous.notes
+              if note.type not in NOT_NOTES} if previous else {}
     alias = matched([part.key for part in parts], before)
     # Правка, которую выгрузили своим вариантом до пометки, а заметки исходного уже нет, —
     # продолжает свою прежнюю заметку.
@@ -1126,7 +1084,7 @@ def drafted(stream: Stream, fragments: Mapping[int, LabeledFragment], shelf: She
                                                 if old.id in note.links and note.id not in ours))
                 for key, old in before.items()
                 if key not in claimed and old.id in catalog.notes and old.id not in reserved]
-    return notes, vanished, skipped, numbers
+    return notes, vanished, numbers
 
 
 def migrated(old: ExportedNote | None, text: str,
@@ -1150,19 +1108,24 @@ def planned(part: Part, ids: Mapping[str, str], old: ExportedNote | None, was: s
     links = [ids.get(link, link) for link in part.links]
     text = old.written if old and reuse and old.generated == part.text else part.text
     plan = NotePlan(key=part.key, id=note_id, type=part.type, text=text, generated=part.text,
-                    links=links, action="create", was=was)
+                    links=links, action="create", was=was, revisits=part.revisits)
     return settled(plan, old, shelf)
+
+
+# Что выгрузка потока прежней версии клала рядом с заметками, а теперь не её: файлы задач (их
+# пишут «Задачи») и итоги (их совет больше не читает и не пишет).
+NOT_NOTES = ("issue", "outcome")
 
 
 def export_in(record: NotesExport | None, root: Path | None) -> NotesExport | None:
     """Выгрузка потока — если она в этот каталог. В другой (проект или его папку сменили) — её
-    номера здесь ничего не значат: под ними тут чужие заметки. Файлы задач, что выгружали
-    раньше вместе с потоком, ему больше не принадлежат: их выгружает этап «Задачи»."""
+    номера здесь ничего не значат: под ними тут чужие заметки. Файлы задач и итоги, что
+    выгружали раньше вместе с потоком, ему больше не принадлежат (NOT_NOTES)."""
     if record is None or root is None or record.root != str(root):
         return None
-    if any(note.type == "issue" for note in record.notes):
+    if any(note.type in NOT_NOTES for note in record.notes):
         return record.model_copy(update={
-            "notes": [note for note in record.notes if note.type != "issue"]})
+            "notes": [note for note in record.notes if note.type not in NOT_NOTES]})
     return record
 
 
@@ -1304,7 +1267,7 @@ def portions(notes: Sequence[NotePlan]) -> list[dict[str, str]]:
 
 def translations(data: dict, sources: Mapping[str, str]) -> dict[str, str]:
     """Перевод заметок из ответа: каждая — и ровно с теми же номерами заметок и задач внутри.
-    Лишний номер тоже негоден: ISS-… в итоге — задача, по нему считают след и новые номера."""
+    Лишний номер тоже негоден: ISS-… в тексте занимает номер задачи (tasks_export.numbered)."""
     items = data.get("notes")
     if not isinstance(items, list):
         raise BadAnswer("нет списка notes")
@@ -1323,8 +1286,8 @@ def translations(data: dict, sources: Mapping[str, str]) -> dict[str, str]:
 
 def numbered_edits(notes: Sequence[NotePlan], edits: Mapping[str, str],
                    texts: Mapping[str, str]) -> None:
-    """Правка человека — с теми же номерами, что и перевод: номер задачи с экрана уже ушёл в
-    коммиты, и без строки задачи в итоге у них не было бы следа."""
+    """Правка человека — с теми же номерами, что и перевод: номера держат граф, замены решений и
+    ссылки задач."""
     for plan in notes:
         if plan.key in edits and plan.key in texts:
             problem = numbering_problem(plan.text, texts[plan.key])
@@ -1333,17 +1296,14 @@ def numbered_edits(notes: Sequence[NotePlan], edits: Mapping[str, str],
 
 
 def numbering_problem(source: str, text: str) -> str | None:
-    """Чем текст расходится с исходным в номерах: потерян или лишний номер заметки или задачи,
-    не те строки задач итога или строка замен решения. Номера держат граф и след в коде: ISS-… в
-    итоге — задача, по нему считают след и раздают новые номера; строка замен делает решения
-    заменёнными. Те же — None."""
+    """Чем текст расходится с исходным в номерах: потерян или лишний номер заметки или задачи
+    или не та строка замен решения. Номера держат граф и ссылки задач, а строка замен делает
+    решения заменёнными. Те же — None."""
     was, now = set(NUMBER.findall(source)), set(NUMBER.findall(text))
     if was - now:
         return f"потеряны номера {', '.join(sorted(was - now))}"
     if now - was:
         return f"лишние номера {', '.join(sorted(now - was))}"
-    if declared_issues(source) != declared_issues(text):
-        return "строки задач не те: каждая — «- ISS-…: название», как в исходном тексте"
     if declared_replacements(source) != declared_replacements(text):
         return ("строка замен не та: отдельным абзацем «Заменяет: ADR-…, ADR-….», как в "
                 "исходном тексте")

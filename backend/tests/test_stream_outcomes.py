@@ -169,13 +169,13 @@ def test_assembled_outcomes_come_as_the_models_wrote_them(store, pool, agents):
     shown = round_of(council_id)
     assert shown["run"] == 1
     assert shown["outcomes"] == [
-        {"id": "O1", "catalogId": None, "title": "Мерило идеи", "change": SHARE,
+        {"id": "O1", "title": "Мерило идеи", "change": SHARE,
          "criteria": ["Доля считается по #help."],
          "decisions": [{"adr": "ADR-1", "catalogId": None,
                         "note": "Искать по заголовкам — дёшево."}],
          "reliesOn": [{"adr": "ADR-3", "catalogId": None}], "constraints": ["F3"],
          "blockedBy": [], "gaps": [GAP], "approved": False},
-        {"id": "O2", "catalogId": None, "title": QUEUE,
+        {"id": "O2", "title": QUEUE,
          "change": "Вопросы без ответа копятся в очереди.", "criteria": [LACKING],
          "decisions": [{"adr": "ADR-3", "catalogId": None, "note": "Считать найденные треды."}],
          "reliesOn": [], "constraints": [], "blockedBy": ["Q2"], "gaps": [], "approved": False}]
@@ -192,7 +192,11 @@ def test_outcomes_of_a_missing_council_or_stream_are_not_found(store):
     assert error_of(client.get(path(council_id, "Z"))) == (404, "not_found")
 
 
-def test_an_outcome_names_its_note_while_the_stream_is_exported(store, pool, projects, repos):
+def test_an_outcome_names_its_decisions_notes_while_the_stream_is_exported(store, pool, projects,
+                                                                          repos):
+    """Решения итога — номерами в каталоге, когда поток выгружен. У самого итога номера в каталоге
+    нет — итогов в каталоге не хранят (решение владельца к задаче «Бекенд · Итоги → родительские
+    задачи…»), и у потока прежней версии, что выгрузил итог, тоже."""
     council_id = assembled(store, pool)
     project = projects.create_project(ProjectDraft(name="Кромка", notes="docs"))
     store.update_council(council_id, {"project": project.id})
@@ -202,11 +206,12 @@ def test_an_outcome_names_its_note_while_the_stream_is_exported(store, pool, pro
         notes=NotesExport(run="n1", outcomes=done.run, language="ru",
                           root=str((repos / "docs").resolve()), refs=refs))
     o1 = outcomes_of(council_id)["O1"]
-    assert (o1["catalogId"], o1["decisions"][0]["catalogId"], o1["reliesOn"]) == (
-        "OUT-0025", "ADR-0041", [{"adr": "ADR-3", "catalogId": "ADR-0043"}])
-    # Итоги собрали заново — выгрузка не к ним: её O1 мог быть другим итогом.
+    assert (o1["decisions"][0]["catalogId"], o1["reliesOn"]) == (
+        "ADR-0041", [{"adr": "ADR-3", "catalogId": "ADR-0043"}])
+    assert "catalogId" not in o1
+    # Итоги собрали заново — выгрузка не к ним: её ADR-1 мог быть другим решением.
     put(store, council_id, outcomes=done.model_copy(update={"run": "o2"}))
-    assert outcomes_of(council_id)["O1"]["catalogId"] is None
+    assert outcomes_of(council_id)["O1"]["decisions"][0]["catalogId"] is None
 
 
 # --- утвердить итог

@@ -1155,17 +1155,15 @@ def test_a_figma_refusal_fails_the_scan_before_any_model_is_asked():
 # --- план задач совета
 
 PLAN_CONTEXT = Context(outcomes={
-    "OUT-0001": Allowed(adrs=frozenset({"ADR-0003"}), constraints=frozenset({5}),
+    "A-O1": Allowed(adrs=frozenset({"ADR-0003"}), constraints=frozenset({5}),
                         risks=frozenset({7})),
-    "OUT-0002": Allowed(adrs=frozenset(), constraints=frozenset(), risks=frozenset())})
+    "A-O2": Allowed(adrs=frozenset(), constraints=frozenset(), risks=frozenset())})
 PLAN_INPUTS = Inputs(values={"ideas": "A. Поиск: " + FIND, "outcomes": "[ИТОГИ]",
                              "decisions": "[РЕШЕНИЯ]", "constraints_and_risks": "[]"},
-                     context=PLAN_CONTEXT, outcomes=["OUT-0001", "OUT-0002"],
-                     skipped=["Поток B: O1 «Ещё» не лёг в заметки — в план не входит"],
-                     basis={"A": "o1:n1"})
+                     context=PLAN_CONTEXT, outcomes=["A-O1", "A-O2"], basis={"A": "o1:n1"})
 
 
-def task(id_, title, outcome="OUT-0001", **extra):
+def task(id_, title, outcome="A-O1", **extra):
     return {"id": id_, "title": title,
             "user_story": f"As a member, I want {title}, so that I find answers.",
             "main_entry_points": ["api/deps.py"], "current_state": "Поиска нет.",
@@ -1186,18 +1184,17 @@ def test_the_plan_of_the_council_is_judged_when_the_plans_differ_reading_the_cod
     judge = {"issues": [task("I7", "Индекс базы"),
                         task("I3", "Выдача ответа", depends_on=["I7"],
                              open_questions=["Сколько хранить историю?"]),
-                        task("I9", "Хранение", outcome="OUT-0002", adr_ids=[])]}
+                        task("I9", "Хранение", outcome="A-O2", adr_ids=[])]}
     result, runner = plans({("task_plan", "sol"): {"issues": [task("I1", "Поиск")]},
                             ("task_plan", "fable"): {"issues": [task("I1", "Индекс")]},
                             ("task_plan_judge", "fable"): judge})
     assert result.state == "done", result.error
     assert [(i.id, i.title, i.outcome_id, i.depends_on, i.open_questions)
             for i in result.issues] == [
-        ("I1", "Индекс базы", "OUT-0001", [], []),
-        ("I2", "Выдача ответа", "OUT-0001", ["I1"], ["Сколько хранить историю?"]),
-        ("I3", "Хранение", "OUT-0002", [], [])]
-    assert result.uncovered == []
-    assert result.skipped == PLAN_INPUTS.skipped
+        ("I1", "Индекс базы", "A-O1", [], []),
+        ("I2", "Выдача ответа", "A-O1", ["I1"], ["Сколько хранить историю?"]),
+        ("I3", "Хранение", "A-O2", [], [])]
+    assert result.uncovered == [] and result.skipped == []
     assert result.basis == {"A": "o1:n1"}
     assert result.code and [(s.name, s.commit_sha) for s in result.sources] == [("", "abc123")]
     prompt = runner.asked["task_plan_judge", "fable"]
@@ -1217,7 +1214,7 @@ def test_the_same_plans_need_no_judge_and_without_a_scan_no_code():
     assert {s.name.value: s.state for s in result.steps}["task_plan_judge"] == "skipped"
     assert (result.code, result.sources) == (False, [])
     assert set(runner.workspaces.values()) == {None}
-    assert result.uncovered == ["OUT-0002"]                          # считает код
+    assert result.uncovered == ["A-O2"]                          # считает код
     assert "abc123" not in section(runner.asked["task_plan", "sol"], "REPOSITORY CONTEXT")
 
 
@@ -1244,7 +1241,7 @@ def test_a_plan_keeps_only_what_the_data_has():
     """Задача чужого итога отброшена; решения, ограничения и зависимости — только из данных,
     номера — заново по порядку."""
     found = plan_of({"issues": [
-        task("X", "Чужая", outcome="OUT-0099"),
+        task("X", "Чужая", outcome="A-O9"),
         task("A1", "Индекс", adr_ids=["ADR-0003", "ADR-0404"], constraint_ids=[5, 6, 7],
              risk_ids=[5, 7], depends_on=["A1", "Z"]),
         task("A2", "Выдача", depends_on=["A1", "A1"],
@@ -1262,7 +1259,7 @@ def test_a_plan_keeps_only_what_the_data_has():
 def test_a_source_term_keeps_its_number_when_tasks_are_renumbered():
     # «I1 cache» — слово исходных текстов итога: план отдал задачи как I2, I1, и номера в тексте
     # меняются местами, а слово «I2 cache» не становится.
-    context = Context(PLAN_CONTEXT.outcomes, {"OUT-0001": frozenset({"I1 cache"})})
+    context = Context(PLAN_CONTEXT.outcomes, {"A-O1": frozenset({"I1 cache"})})
     found = plan_of({"issues": [task("I2", "Индекс"),
                                 task("I1", "Прогрев", scope=["Греть I1 cache после I2."])]},
                     context)
@@ -1303,13 +1300,13 @@ def test_a_judge_naming_a_task_its_plan_has_not_got_is_a_bad_answer():
         assert len(plan_of(answer, PLAN_CONTEXT)) == 2
     # Задача чужого итога отброшена: ссылка на неё — тоже на задачу, которой в плане нет.
     with pytest.raises(BadAnswer, match="в тексте I2 — I1"):
-        plan_of({"issues": [task("I1", "Чужая", outcome="OUT-0099"),
+        plan_of({"issues": [task("I1", "Чужая", outcome="A-O9"),
                             task("I2", "Выдача", scope=["После I1."])]}, PLAN_CONTEXT,
                 judged=True)
 
 
 def test_a_judge_may_name_its_own_tasks_and_a_number_in_code_or_a_source_term_is_no_name():
-    context = Context(PLAN_CONTEXT.outcomes, {"OUT-0001": frozenset({"I9 cache"})})
+    context = Context(PLAN_CONTEXT.outcomes, {"A-O1": frozenset({"I9 cache"})})
     found = plan_of({"issues": [task("I1", "Индекс"),
                                 task("I2", "Выдача", scope=["Греть I9 cache, как `I9`, после I1."],
                                      main_entry_points=["рядом с правкой из I1"])]},
@@ -1333,8 +1330,8 @@ def test_a_judge_naming_a_task_not_in_its_plan_stops_the_plan_and_is_asked_again
 
 
 def test_a_task_refers_only_to_what_its_own_outcome_has():
-    """ADR-0003, F5 и F7 — у OUT-0001; задача OUT-0002 сослаться на них не может."""
-    [other] = plan_of({"issues": [task("A1", "Хранение", outcome="OUT-0002", constraint_ids=[5],
+    """ADR-0003, F5 и F7 — у A-O1; задача A-O2 сослаться на них не может."""
+    [other] = plan_of({"issues": [task("A1", "Хранение", outcome="A-O2", constraint_ids=[5],
                                        risk_ids=[7])]}, PLAN_CONTEXT)
     assert (other.adr_ids, other.constraint_ids, other.risk_ids) == ([], [], [])
 

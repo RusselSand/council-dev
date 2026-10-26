@@ -159,6 +159,11 @@ def test_a_council_goes_from_the_brief_to_the_tasks(base):
     written = ok(client.post(f"{path}/tasks/approve", json={}))["council"]
     assert (written["stage"], written["state"]) == ("tasks", "done")
     assert set(written["stages"].values()) == {"done"}
-    assert sorted(file.name for file in (base / "issues").glob("*.md")) == [
-        task["catalogId"] + ".md" for task in plan["tasks"]]
+    # Задачи плана и родительские — на каждый утверждённый итог.
+    assert plan["parents"] and all(task["parent"] in {p["id"] for p in plan["parents"]}
+                                   for task in plan["tasks"])
+    assert sorted(file.name for file in (base / "issues").glob("*.md")) == sorted(
+        task["catalogId"] + ".md" for task in [*plan["tasks"], *plan["parents"]])
+    # Итогов в каталоге заметок нет.
+    assert not list((base / "notes").rglob("OUT-*.md"))
     assert listed(council_id) == written

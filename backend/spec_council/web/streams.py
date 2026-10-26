@@ -138,7 +138,8 @@ def retry_stream(council_id: str, stream_id: str, store: StoreDep, agents: Agent
         stream = shown_of(council, stream_id)
         folders = folders_of(council, projects, repositories)
         started = retried(council, stream, agents, store, folders.notes, repositories, step=step,
-                          finished=lambda: plan_later(council_id, context))
+                          finished=lambda: plan_later(council_id, context),
+                          issues=folders.issues)
         if started is None and step in (None, "notes"):
             try:
                 started = retranslated(council, stream, folders.notes, agents, store)
