@@ -13,6 +13,7 @@ import { AdrCard } from './parts/AdrCard';
 import { DecisionActions } from './parts/DecisionActions';
 import { JudgeLine } from './parts/JudgeLine';
 import { ProblemNote } from './parts/ProblemNote';
+import { RecheckNote } from './parts/RecheckNote';
 import { useDecisionsStep } from './useDecisionsStep';
 
 interface DecisionsProps {
@@ -27,9 +28,10 @@ interface DecisionsProps {
 }
 
 /**
- * Шаг «Решения» внутри карточки шага: решения по одному — вопрос и «Ваш выбор», проблема, что сказал судья, решение
- * (ADR) и «Решение: P12 · Оставить открытым · Зафиксировать →»; шаг ждёт вас или остановился — внизу «Зафиксировать
- * решения → к итогам». Пока на шаге работают модели — серые строки на месте решений.
+ * Шаг «Решения» внутри карточки шага: решения по одному — вопрос и «Ваш выбор», проблема (без проблемы, когда
+ * пересчитать есть что, — жёлтая плашка с «Пересчитать»), что сказал судья, решение (ADR) и «Решение: P12 · Оставить
+ * открытым · Зафиксировать →»; шаг ждёт вас или остановился — внизу «Зафиксировать решения → к итогам». Пока на шаге
+ * работают модели — серые строки на месте решений.
  */
 export function Decisions({ councilId, streamId, state, retrying, onBusy }: DecisionsProps) {
   const { t } = useI18n();
@@ -69,6 +71,9 @@ export function Decisions({ councilId, streamId, state, retrying, onBusy }: Deci
               recheck={decision.recheck}
               onRecheck={step.recheck}
             />
+          )}
+          {!decision.problem && decision.recheck?.active && (
+            <RecheckNote recheck={decision.recheck} onRecheck={step.recheck} />
           )}
           {decision.note && <JudgeLine note={decision.note} />}
           <AdrCard decision={decision} onRationale={step.editRationale} onMark={step.mark} />

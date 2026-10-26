@@ -59,7 +59,7 @@ from .pipeline import (
 from .project import own_ids, project_catalog
 from .standing import STEP_RUNS, STEPS, Step, stream_standing
 from .store import Store
-from .stream_decisions import confirmed, rechecked, with_recheck
+from .stream_decisions import confirmed, recheck_basis, rechecked, with_recheck
 from .work import carried_analyses, carried_options, kept_outcomes, last_used
 
 # Ход шага потока, где работают модели.
@@ -220,16 +220,21 @@ def launch_of(council: Council, stream: Stream, step: Step, runner: Runner, stor
 
 def rechecking(council: Council, stream: Stream, question_id: str, runner: Runner, store: Store,
                repositories: Path | None = None) -> Launch:
-    """«Пересчитать»: модели проверяют выбор вопроса question_id заново — с заменами решений
-    проекта, которые отметил человек, — как его проверяет шаг, но одного: другие вопросы они
-    видят, как всегда, а их проверки не трогают. Ход — у вопроса (Stream.rechecks); кончился —
-    его проверка встаёт в ход шага (stream_decisions.rechecked)."""
+    """«Пересчитать»: модели проверяют выбор вопроса question_id заново — как его проверяет шаг,
+    но одного: другие вопросы они видят, как всегда, а их проверки не трогают. Выбор вопроса —
+    тот, что на «Вариантах» сейчас, с заменами решений проекта, которые отметил человек; выбор
+    поменяли после проверки — без них (stream_decisions.recheck_basis). Ход — у вопроса
+    (Stream.rechecks) и помнит, какой выбор проверяет; кончился — его проверка встаёт в ход шага
+    (stream_decisions.rechecked)."""
     report = reporter(store, council.id, recheck_slot(stream.group, question_id))
-    pipeline = DecisionRun(council.id, idea_of(stream), stream.scope or [], stream.choices or [],
+    choices, replaced = recheck_basis(stream, question_id)
+    pipeline = DecisionRun(council.id, idea_of(stream), stream.scope or [], choices,
                            stream.proposals, fragments_of(council, stream), council.participants,
                            council.judge, runner, report, repository=repository_map(stream),
                            design=design_map(stream), accepted=stream.project_decisions or (),
-                           replaced=confirmed(stream), only=question_id)
+                           replaced=replaced, only=question_id)
+    pipeline.state.choice = next((choice for choice in choices
+                                  if choice.question_id == question_id), None)
     resumed(pipeline.state, None, datetime.now(UTC), runner.identity)
     return Launch(with_recheck(stream, question_id, pipeline.state.model_copy(deep=True)),
                   pipeline, report)

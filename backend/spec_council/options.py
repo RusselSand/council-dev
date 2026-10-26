@@ -16,7 +16,9 @@
 счёт. «Утвердить выбор» кладёт выбор по каждому вопросу шага в утверждённый (Stream.choices):
 вопрос без выбора — с первым вариантом, без вариантов — unresolved, — а вопросы шага в отбор: по
 ним модели проверяют решения. Правка выбора на готовом шаге утверждённое не меняет: по нему
-решения уже проверяли.
+решения уже проверяли. Выбор вопроса стал не тем, что утверждён, — его решение ждёт
+«Пересчитать» на «Решениях»: пересчёт проверяет новый выбор и утверждает его
+(stream_decisions.rechecked; решение владельца к задаче «…«Пересчитать» после смены выбора…»).
 
 Поток прежней версии своих вариантов и выбора отдельно не помнит — только утверждённый выбор
 (свой вариант жил в нём текстом), а до утверждения — выбор прежней работы по тем же вопросам
@@ -154,18 +156,24 @@ def approved(stream: Stream, sets: list[OptionSet]) -> Stream:
     picks = picks_of(stream)
     choices = []
     for item in sets:
-        option = item.pick.option if item.pick is not None else (
-            item.offered[0].id if item.offered else None)
-        picks[item.question.id] = Pick(question_id=item.question.id, option=option)
-        own = next((one.own for one in item.offered if one.id == option), None)
-        choices.append(Choice(question_id=item.question.id, proposal=option,
-                              text=own.text if own else None,
-                              based_on=own.based_on if own else None))
+        choice = picked(item)
+        picks[item.question.id] = Pick(question_id=item.question.id, option=choice.proposal)
+        choices.append(choice)
     scope = [item.question for item in sets]
     return stream.model_copy(update={
         "own_options": own_of(stream), "picks": list(picks.values()), "choices": choices,
         "rulings": None, "scope": scope,
         "asked": max([stream.asked, *(number(question.id) for question in scope)])})
+
+
+def picked(item: OptionSet) -> Choice:
+    """Выбор вопроса шага, каким его берут дальше: выбор человека, без него — первый вариант,
+    вариантов нет — unresolved. Свой вариант — с текстом, как он сейчас: так его видят модели."""
+    option = item.pick.option if item.pick is not None else (
+        item.offered[0].id if item.offered else None)
+    own = next((one.own for one in item.offered if one.id == option), None)
+    return Choice(question_id=item.question.id, proposal=option,
+                  text=own.text if own else None, based_on=own.based_on if own else None)
 
 
 # Как это хранится.

@@ -28,6 +28,15 @@
 новой проверки. Выбор по вопросу поменяли — решения на экране прежнего выбора уходят
 (options.approved), и отметок к новому выбору нет.
 
+Выбор вопроса поменяли на готовых «Вариантах» — другой вариант или другой текст своего варианта
+(решение владельца к задаче «…«Пересчитать» после смены выбора…»): решение — по проверке
+прежнего выбора, и пока вопрос не пересчитали, его не фиксируют (unchecked_of). «Пересчитать»
+проверяет вопрос с выбором на «Вариантах» — без отметок: они были к прежнему выбору (recheck_basis).
+Пересчёт кончился — этот выбор утверждён (Stream.choices), «почему» и отметки — от новой проверки,
+как у решения, которое модели только что проверили (rechecked). Решения других вопросов, чья
+проверка опиралась на прежний выбор этого (в её контексте он прежний, stale), сами не
+пересчитываются, но «Пересчитать» у них доступна.
+
 Поток прежней версии решений на экране отдельно не помнит — только зафиксированные, а до них —
 решения прежней работы к тому же выбору (work.known_decisions): с них начинал и старый фронт.
 Зафиксированное с вариантом — зафиксировано, без варианта — открыто; с вариантом, которого модели
@@ -38,36 +47,50 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Literal
 
-from .models import Decision, DecisionAnalysis, OpenQuestion, QuestionAnalysis, Ruling, Stream
+from .models import (
+    Choice,
+    Decision,
+    DecisionAnalysis,
+    OpenQuestion,
+    QuestionAnalysis,
+    Ruling,
+    Stream,
+)
+from .options import picked, sets_of
 from .order import Order, ordered
-from .pipeline import adr_id, question_key
+from .pipeline import adr_id, choice_entry, question_key
 from .scope import kept_of
 from .work import known_decisions, remembered
 
-# Что с «Пересчитать» у решения: ready — есть отметки, которых при прошлой проверке не было;
-# running — модели проверяют вопрос заново; failed — пересчёт остановился, отметки всё те же.
+# Что с «Пересчитать» у решения: ready — пересчитать есть что (due); running — модели проверяют
+# вопрос заново; failed — пересчёт остановился, а пересчитать всё так же есть что.
 Recheck = Literal["ready", "running", "failed"]
 
 
 @dataclass(frozen=True)
 class Shown:
-    """Решение вопроса на шаге: вопрос, номер решения (ADR-n), что о нём сказали модели и как
-    его оставил человек."""
+    """Решение вопроса на шаге: вопрос, номер решения (ADR-n), что о нём сказали модели, как
+    его оставил человек и не поменяли ли выбор вопроса на «Вариантах» после проверки
+    (unchecked)."""
 
     question: OpenQuestion
     adr: str
     analysis: QuestionAnalysis
     ruling: Ruling
+    unchecked: bool = False
 
 
 def shown_of(stream: Stream) -> list[Shown]:
     """Решения шага по порядку вопросов: у неубранных вопросов отбора, которые модели проверили.
     «Почему» черновика, которое человек не правил, — то, что написала проверка: пересчитали
-    вопрос — и «почему» пересчёта."""
+    вопрос — и «почему» пересчёта. Выбор вопроса поменяли на «Вариантах» (unchecked_of) —
+    решение не зафиксировано, пока его не пересчитают: зафиксированное — черновик; вернули
+    прежний выбор — снова зафиксировано."""
     analyses = {found.question_id: found
                 for found in (stream.analysis.analyses if stream.analysis else [])}
     position = {question_key(question): n for n, question in enumerate(stream.scope or [], 1)}
     rulings = rulings_of(stream)
+    changed = unchecked_of(stream)
     shown = []
     for question in kept_of(stream):
         found = analyses.get(question.id)
@@ -77,8 +100,36 @@ def shown_of(stream: Stream) -> list[Shown]:
         ruling = rulings.get(question.id) or first_ruling(found)
         if ruling.rationale_by == "ai" and ruling.status == "draft":
             ruling = ruling.model_copy(update={"rationale": found.rationale or ""})
-        shown.append(Shown(question, adr_id(n), found, ruling))
+        unchecked = question.id in changed
+        if unchecked and ruling.status == "fixed":
+            ruling = ruling.model_copy(update={"status": "draft"})
+        shown.append(Shown(question, adr_id(n), found, ruling, unchecked))
     return shown
+
+
+def unchecked_of(stream: Stream) -> dict[str, Choice]:
+    """Вопросы, чей выбор на «Вариантах» не тот, что проверили модели, — с этим выбором: на
+    готовых «Вариантах» выбрали другой вариант или поправили текст своего (решение владельца к
+    задаче «…«Пересчитать» после смены выбора…»). Проверили утверждённый выбор (Stream.choices):
+    по нему проверяет шаг, а пересчёт с другим выбором утверждает его (rechecked). Сравнивают,
+    пока решения правят и пересчитывают: проверка кончилась или остановилась, а решения не
+    зафиксированы; у вопроса без выбора на экране (options.sets_of) или без утверждённого —
+    сравнивать не с чем."""
+    analysis = stream.analysis
+    if (stream.choices is None or stream.decisions is not None or analysis is None
+            or analysis.state == "running"):
+        return {}
+    checked = {choice.question_id: choice_entry(choice) for choice in stream.choices}
+    now = {item.question.id: picked(item) for item in sets_of(stream, None)
+           if item.pick is not None}
+    return {question: choice for question, choice in now.items()
+            if question in checked and choice_entry(choice) != checked[question]}
+
+
+def unchecked_questions(stream: Stream) -> set[str]:
+    """Вопросы с решением на шаге, чей выбор на «Вариантах» не тот, что проверили: «Вариантам»
+    — подсказка под вопросом, «Решениям» — не фиксировать, пока не пересчитали."""
+    return {item.question.id for item in shown_of(stream) if item.unchecked}
 
 
 def counted(stream: Stream) -> tuple[int, int]:
@@ -124,15 +175,47 @@ def fresh(item: Shown) -> list[str]:
     return [adr for adr in item.ruling.replaces if adr not in item.analysis.replaced]
 
 
+def stale(stream: Stream, item: Shown) -> bool:
+    """Проверка решения опиралась на выбор другого вопроса, а утверждённый выбор того с тех пор
+    другой — его пересчитали с новым выбором: в контексте проверки («Q5: P7») прежний. Само
+    решение не пересчитывается, его можно и фиксировать, а «Пересчитать» у него доступна."""
+    checked = {choice.question_id: choice_entry(choice) for choice in stream.choices or []}
+    return any(other != item.question.id and other in checked and checked[other] != entry
+               for entry in item.analysis.context
+               for other in [entry.split(": ", 1)[0]])
+
+
+def due(stream: Stream, item: Shown) -> bool:
+    """Решение есть что пересчитать: выбор вопроса на «Вариантах» не тот, что проверили;
+    отмечены замены, которых проверка не учла; проверка опиралась на прежний выбор другого
+    вопроса."""
+    return item.unchecked or bool(fresh(item)) or stale(stream, item)
+
+
 def recheck_of(stream: Stream, item: Shown) -> Recheck | None:
     """Что с «Пересчитать» у решения: идёт ли пересчёт, остановился ли и есть ли что
-    пересчитывать. Нет новых отметок и пересчёт не идёт — None."""
+    пересчитывать. Пересчитывать нечего и пересчёт не идёт — None."""
     work = stream.rechecks.get(item.question.id)
     if work is not None and work.state == "running":
         return "running"
-    if not fresh(item):
+    if not due(stream, item):
         return None
     return "failed" if work is not None and work.state == "failed" else "ready"
+
+
+def recheck_basis(stream: Stream, question_id: str) -> tuple[list[Choice], dict[str, list[str]]]:
+    """С каким выбором и какими заменами пересчитывают вопрос: его выбор — тот, что на
+    «Вариантах» сейчас, у других вопросов — утверждённый, как его видела проверка шага; замены —
+    отмеченные, а выбор вопроса поменяли — у него их нет: отметки были к прежнему выбору, и новый
+    проверяют без них (как после смены выбора, решение владельца к задаче «…подтверждение замены
+    ADR…»)."""
+    choices = list(stream.choices or [])
+    replaced = confirmed(stream)
+    now = unchecked_of(stream).get(question_id)
+    if now is not None:
+        choices = [now if choice.question_id == question_id else choice for choice in choices]
+        replaced = {**replaced, question_id: []}
+    return choices, replaced
 
 
 def rechecking_questions(stream: Stream) -> list[str]:
@@ -154,8 +237,11 @@ def with_recheck(stream: Stream, question_id: str, work: DecisionAnalysis) -> St
 
 def rechecked(stream: Stream, question_id: str, work: DecisionAnalysis) -> Stream:
     """Поток, где ход пересчёта вопроса — на своём месте. Пересчёт кончился — его проверка
-    встаёт в ход шага на место прежней проверки вопроса, и хода пересчёта больше нет. Порядок
-    решений остаётся прежним: у новой проверки зависимости могли стать другими, а порядок
+    встаёт в ход шага на место прежней проверки вопроса, и хода пересчёта больше нет; вариант
+    решения — тот, что она проверила. Пересчитали с выбором, который не тот, что утверждён
+    (поменяли на «Вариантах»), — утверждённым становится он, и ход шага помнит, что проверил его;
+    решение — как его оставили модели: «почему» и отметки прежнего выбора к новому не идут.
+    Порядок решений остаётся прежним: у новой проверки зависимости могли стать другими, а порядок
     меняется только с новым запуском шага (order_of)."""
     rechecks = {**stream.rechecks, question_id: work}
     if work.state != "done":
@@ -163,10 +249,26 @@ def rechecked(stream: Stream, question_id: str, work: DecisionAnalysis) -> Strea
     del rechecks[question_id]
     found = next((one for one in work.analyses if one.question_id == question_id), None)
     analysis = stream.analysis
-    if found is not None and analysis is not None:
-        analysis = analysis.model_copy(update={"order": order_of(analysis), "analyses": [
+    if found is None or analysis is None:
+        return stream.model_copy(update={"rechecks": rechecks})
+    changes: dict = {"rechecks": rechecks}
+    rulings = rulings_of(stream)
+    ruling = (rulings.get(question_id) or first_ruling(found)).model_copy(
+        update={"option": found.proposal})
+    entries = analysis.choices
+    choice = work.choice
+    before = next((one for one in stream.choices or [] if one.question_id == question_id), None)
+    if choice is not None and before is not None and choice_entry(choice) != choice_entry(before):
+        changes["choices"] = [choice if one.question_id == question_id else one
+                              for one in stream.choices or []]
+        entries = [choice_entry(choice) if entry.split(": ", 1)[0] == question_id else entry
+                   for entry in entries]
+        ruling = first_ruling(found)
+    changes["analysis"] = analysis.model_copy(update={
+        "order": order_of(analysis), "choices": entries, "analyses": [
             found if one.question_id == question_id else one for one in analysis.analyses]})
-    return stream.model_copy(update={"rechecks": rechecks, "analysis": analysis})
+    changes["rulings"] = list({**rulings, question_id: ruling}.values())
+    return stream.model_copy(update=changes)
 
 
 def order_of(analysis: DecisionAnalysis | None) -> Order:

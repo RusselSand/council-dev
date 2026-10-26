@@ -15,8 +15,10 @@ export type DecisionState = (typeof DECISION_STATES)[number];
 export type RationaleAuthor = 'ai' | 'user';
 
 /**
- * Что с «Пересчитать» у решения: ready — отмечены замены, которых при прошлой проверке не было; running — модели проверяют
- * выбор вопроса заново, решение занято; failed — пересчёт остановился, отметки те же.
+ * Что с «Пересчитать» у решения: ready — пересчитать есть что: выбор вопроса на «Вариантах» не тот, что проверили
+ * (unchecked), отмечены замены, которых при прошлой проверке не было, или проверка опиралась на прежний выбор другого
+ * вопроса; running — модели проверяют выбор вопроса заново, решение занято; failed — пересчёт остановился, а пересчитать
+ * всё так же есть что.
  */
 export const DECISION_RECHECKS = ['ready', 'running', 'failed'] as const;
 export type DecisionRecheck = (typeof DECISION_RECHECKS)[number];
@@ -87,9 +89,15 @@ export interface StreamDecision {
   /** «почему»; пусто — ещё не написали. */
   rationale: string;
   rationaleBy: RationaleAuthor;
+  /** Выбор поменяли на «Вариантах» (unchecked) — не fixed, пока решение не пересчитали. */
   status: DecisionState;
   /** Что с «Пересчитать»; пересчитывать нечего или шаг готов — null. */
   recheck: DecisionRecheck | null;
+  /**
+   * Выбор вопроса на «Вариантах» не тот, что проверили модели: решение — по прежней проверке, и пока его не пересчитали,
+   * его не фиксируют — ни «Зафиксировать →», ни «Зафиксировать решения»; точка на чипе — жёлтая. Считает сервер.
+   */
+  unchecked: boolean;
   /**
    * Решение в круге зависимостей проверки — id вопросов круга, чьи решения есть на шаге, и этого тоже, по номерам: «Круг
    * зависимостей: Q1 и Q3 зависят друг от друга.»; не в круге — пусто. Порядок решений и круги считает сервер.
@@ -121,8 +129,20 @@ export const decisionsEditable = (state: State): boolean => stepEditable(state);
 /** «Зафиксировать решения → к итогам» — когда шаг ждёт вас или остановился, как в макете. */
 export const decisionsApprovable = (state: State): boolean => stepApprovable(state);
 
-/** «Пересчитать» доступна: есть новые отметки или пересчёт остановился. */
+/** «Пересчитать» доступна: пересчитать есть что или пересчёт остановился. */
 export const recheckable = (recheck: DecisionRecheck | null): boolean => recheck === 'ready' || recheck === 'failed';
+
+/**
+ * Почему решение есть что пересчитать: выбор вопроса поменяли на «Вариантах»; отмечены замены, которых проверка не учла
+ * (противоречие с ними ещё видно); иначе — проверка опиралась на прежний выбор другого вопроса. marks — отметки на экране.
+ */
+export type RecheckReason = 'unchecked' | 'marks' | 'context';
+
+export function recheckReason(decision: StreamDecision, marks: readonly string[]): RecheckReason {
+  if (decision.unchecked) return 'unchecked';
+  const clashes = decision.conflicts.filter((c) => c.kind === 'decision').map((c) => c.id);
+  return marks.some((id) => clashes.includes(id)) ? 'marks' : 'context';
+}
 
 /** Есть «почему»: из одних пробелов — нет. Без него решение не фиксируется, как в макете. */
 export const hasRationale = (text: string): boolean => text.trim() !== '';
@@ -130,8 +150,16 @@ export const hasRationale = (text: string): boolean => text.trim() !== '';
 /** Противоречие и «заблокировано» — красным: у решения есть с чем разобраться. */
 export const isAlarming = (verdict: DecisionVerdict): boolean => verdict === 'conflict' || verdict === 'blocked';
 
-/** Точка решения на чипе, как в макете: зафиксировано — зелёная; противоречие — красная; иначе — жёлтая. */
-export function decisionDot(status: DecisionState, verdict: DecisionVerdict): 'green' | 'red' | 'yellow' {
+/**
+ * Точка решения на чипе, как в макете: зафиксировано — зелёная; противоречие — красная; иначе — жёлтая. Выбор поменяли на
+ * «Вариантах» (unchecked) — жёлтая, и при противоречии: решение ждёт пересчёта.
+ */
+export function decisionDot(
+  status: DecisionState,
+  verdict: DecisionVerdict,
+  unchecked = false,
+): 'green' | 'red' | 'yellow' {
+  if (unchecked) return 'yellow';
   if (status === 'fixed') return 'green';
   return isAlarming(verdict) ? 'red' : 'yellow';
 }

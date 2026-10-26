@@ -14,13 +14,19 @@
 «…подтверждение замены ADR…» и «…отметить замены ADR, потом пересчитать вопрос»: отметка — часть
 правки решения (replaces), моделей она не зовёт. «Пересчитать» проверяет выбор этого вопроса
 заново с отмеченными заменами — в фоне, своим ходом (chain.rechecking): шаг не занят, другие
-решения правят дальше, а run не меняется. Нечего пересчитывать (отметок, которых не было при
-прошлой проверке, нет), пересчёт уже идёт или шаг уже готов — ничего не меняется.
+решения правят дальше, а run не меняется. Нечего пересчитывать (stream_decisions.due), пересчёт
+уже идёт или шаг уже готов — ничего не меняется.
+
+Выбор вопроса поменяли на готовых «Вариантах» (решение владельца к задаче «…«Пересчитать» после
+смены выбора…»): у решения unchecked, «Пересчитать» проверяет новый выбор, а пока его не
+пересчитали, решение не фиксируют — ни «Зафиксировать →», ни «Зафиксировать решения»
+(decisions_not_ready).
 
 «Зафиксировать решения» у шага, который ждал вас или остановился, кладёт решения шага в
 зафиксированные — шаг готов, — и модели сразу собирают итоги (chain.begun): раньше сборку
 запускал старый фронт тем же запросом, что фиксировал решения. Шаг уже готов — ничего не
-меняется; пока хоть один вопрос пересчитывают — decisions_not_ready.
+меняется; пока хоть один вопрос пересчитывают или у него выбор не тот, что проверили, —
+decisions_not_ready.
 """
 
 from typing import Literal
@@ -43,12 +49,13 @@ from ..stream_decisions import (
     Recheck,
     Shown,
     approved,
-    fresh,
+    due,
     marked,
     order_of,
     recheck_of,
     rechecking_questions,
     shown_of,
+    unchecked_questions,
     with_ruling,
 )
 from .councils import folders_of
@@ -111,6 +118,7 @@ class StreamDecision(Schema):
     rationale_by: Literal["ai", "user"]
     status: Status
     recheck: Recheck | None
+    unchecked: bool
     cycle: list[str]
 
 
@@ -173,6 +181,10 @@ def approve(council_id: str, stream_id: str, body: Run, store: StoreDep, agents:
             if busy := rechecking_questions(stream):
                 raise ApiError(409, "decisions_not_ready",
                                f"Решения по {', '.join(busy)} потока {stream.group} пересчитывают")
+            if changed := sorted(unchecked_questions(stream)):
+                raise ApiError(409, "decisions_not_ready",
+                               f"Выбор по {', '.join(changed)} потока {stream.group} поменяли на "
+                               "«Вариантах», а решения не пересчитали")
             start = begun(council, approved(stream), "outcomes", agents, store, folders.notes,
                           repositories)
             council = store.update_council(council_id, {
@@ -187,7 +199,8 @@ def update_decision(council_id: str, stream_id: str, question_id: str, body: Edi
                     store: StoreDep, projects: ProjectsDep,
                     repositories: RepositoriesDep) -> DecisionAnswer:
     """«Почему», то, где решение, и отмеченные замены решений проекта — каким решение должно быть
-    целиком. Без «почему» решение не фиксируется. Отмечают и снимают замену только у противоречия
+    целиком. Без «почему» решение не фиксируется, и с выбором, который поменяли на «Вариантах»
+    после проверки, — тоже. Отмечают и снимают замену только у противоречия
     с решением проекта; замену, которую проверка уже учла, не снимают; у готового шага отметки не
     ставят и не снимают — решения ушли в итоги с прежними заменами. Шаги потока не меняются;
     у шага — строка «решено 3 из 4», у совета — время изменения."""
@@ -200,6 +213,10 @@ def update_decision(council_id: str, stream_id: str, question_id: str, body: Edi
         if question_id in rechecking_questions(stream):
             raise ApiError(409, "decisions_not_ready",
                            f"Решение по {question_id} потока {stream.group} пересчитывают")
+        if body.status == "fixed" and item.unchecked:
+            raise ApiError(409, "decisions_not_ready",
+                           f"Выбор по {question_id} потока {stream.group} поменяли на «Вариантах»: "
+                           "решение не зафиксировать, пока его не пересчитали")
         allowed, kept = marked(item, state == "done")
         if not set(body.replaces) <= allowed or not kept <= set(body.replaces):
             raise ApiError(422, "unknown_conflict",
@@ -218,9 +235,10 @@ def update_decision(council_id: str, stream_id: str, question_id: str, body: Edi
 def recheck(council_id: str, stream_id: str, question_id: str, body: Run, store: StoreDep,
             agents: AgentsDep, launch: LauncherDep, projects: ProjectsDep,
             repositories: RepositoriesDep) -> DecisionAnswer:
-    """«Пересчитать». Модели проверяют выбор этого вопроса заново, в фоне, считая отмеченные
-    решения проекта не действующими; решение — черновик и занято, пока они не кончат, а шаг и
-    другие решения не меняются. Пересчитывать нечего, пересчёт уже идёт или шаг уже готов —
+    """«Пересчитать». Модели проверяют выбор этого вопроса заново, в фоне: тот, что на
+    «Вариантах», считая отмеченные решения проекта не действующими (выбор поменяли — без
+    отметок); решение — черновик и занято, пока они не кончат, а шаг и другие решения не
+    меняются. Пересчитывать нечего, пересчёт уже идёт или шаг уже готов —
     решение как есть. Проверка и запуск — под замком советов: два нажатия не запустят два
     хода."""
     with council_lock:
@@ -230,7 +248,8 @@ def recheck(council_id: str, stream_id: str, question_id: str, body: Run, store:
         state = editable(stream, folders.notes, body.run)
         item = decision_at(stream, question_id)
         start = None
-        if state != "done" and question_id not in rechecking_questions(stream) and fresh(item):
+        if (state != "done" and question_id not in rechecking_questions(stream)
+                and due(stream, item)):
             start = rechecking(council, stream, question_id, agents, store, repositories)
             council = store.update_council(council_id, {
                 "streams": replaced(council, start.stream)}) or council
@@ -311,7 +330,8 @@ def decision_of(item: Shown, question: Question, options: dict[str, Option | Non
     «последствия»: сначала ограничения, потом решения проекта, с тем, чем противоречит. Решения
     проекта, замену которых отметили, — с тем, что в них решено (past — прошлые решения,
     отобранные для потока). recheck — что с «Пересчитать»; у готового шага — ничего: решения
-    ушли в итоги. cycle — вопросы круга зависимостей, в который входит этот, и он сам."""
+    ушли в итоги. unchecked — выбор вопроса на «Вариантах» поменяли после проверки. cycle —
+    вопросы круга зависимостей, в который входит этот, и он сам."""
     found, ruling = item.analysis, item.ruling
     conflict = found.verdict == "conflict"
     problem = DecisionProblem(text=found.reason or "", fixes=[
@@ -331,7 +351,7 @@ def decision_of(item: Shown, question: Question, options: dict[str, Option | Non
         replaces=[DecisionRef(id=adr, decision=past.get(adr, "")) for adr in ruling.replaces],
         risks=[f"F{n}" for n in found.risk_ids], fixes=[], rationale=ruling.rationale,
         rationale_by=AUTHORS[ruling.rationale_by], status=ruling.status, recheck=recheck,
-        cycle=cycle)
+        unchecked=item.unchecked, cycle=cycle)
 
 
 def context_of(question_id: str, options: dict[str, Option | None]) -> DecisionContext:

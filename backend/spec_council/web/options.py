@@ -40,6 +40,7 @@ from ..order import looped, placed
 from ..scope import Listed, kept_of
 from ..standing import State, stream_standing
 from ..store import council_lock
+from ..stream_decisions import unchecked_questions
 from .councils import folders_of
 from .errors import ApiError, ContractRoute, not_found
 from .questions import Question, questions_of
@@ -91,6 +92,7 @@ class OptionSet(Schema):
     dropped: list[DroppedOption]
     options: list[Option]
     choice: Choice | None
+    unchecked: bool
     cycle: list[str]
 
 
@@ -290,14 +292,18 @@ def texts_of(council: Council, stream: Stored) -> dict[int, str]:
 
 def option_sets_of(council: Council, stream: Stored, items: list[Offering]) -> list[OptionSet]:
     """Вопрос — тот же, что на «Вопросах»; что судья думает о вариантах — как написали модели.
-    Что судья отбросил, совет не хранит: отброшенных нет. Зависимости вариантов замкнулись в
-    круг — у вопроса вопросы круга, что есть на шаге, и он сам."""
+    Что судья отбросил, совет не хранит: отброшенных нет. Выбор вопроса не тот, что проверили на
+    «Решениях», — unchecked: подсказка пересчитать его там (решение владельца к задаче
+    «…«Пересчитать» после смены выбора…»). Зависимости вариантов замкнулись в круг — у вопроса
+    вопросы круга, что есть на шаге, и он сам."""
     questions = questions_of(council, stream, [Listed(item.question) for item in items])
     order = order_of(stream)
     kept = [question.id for question in kept_of(stream)]
+    changed = unchecked_questions(stream)
     return [OptionSet(question=question, summary=summary_of(item), dropped=[],
                       options=[option_of(offered) for offered in item.offered],
-                      choice=choice_of(item), cycle=looped(order, question.id, kept))
+                      choice=choice_of(item), unchecked=question.id in changed,
+                      cycle=looped(order, question.id, kept))
             for question, item in zip(questions, items, strict=True)]
 
 

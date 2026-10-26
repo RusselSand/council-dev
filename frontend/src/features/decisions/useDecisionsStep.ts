@@ -18,6 +18,7 @@ import {
   isAlarming,
   nextDecision,
   recheckable,
+  recheckReason,
   type DecisionEdit,
   type DecisionState,
   type StreamDecision,
@@ -50,10 +51,20 @@ export interface ProblemView {
   fixes: { num: string; question: string; text: string }[];
 }
 
-/** «Пересчитать» на красной плашке: есть, пока шаг ждёт вас или остановился. */
+/**
+ * «Пересчитать»: есть, пока шаг ждёт вас или остановился, — на красной плашке проблемы, а без проблемы — на своей жёлтой,
+ * когда пересчитать есть что, пересчёт идёт или остановился (active).
+ */
 export interface RecheckView {
   /** Не действует: пересчитывать нечего, пересчёт идёт или решение сейчас не правят. */
   disabled: boolean;
+  /** Пересчитать есть что, пересчёт идёт или остановился: без проблемы — своя плашка. */
+  active: boolean;
+  /**
+   * Почему пересчитать есть что: выбор поменяли на «Вариантах», проверка опиралась на прежний выбор другого вопроса, а без
+   * проблемы — и отметки, которых проверка не учла; пересчёт идёт, остановился или пересчитывать нечего — null.
+   */
+  reason: string | null;
   /** Под кнопкой: пересчёт идёт — «ИИ пересчитывает…», остановился — «Пересчёт остановился…»; иначе — null. */
   note: { text: string; tone: 'running' | 'failed' } | null;
 }
@@ -73,7 +84,7 @@ export interface DecisionView {
    */
   cycle: string[];
   problem: ProblemView | null;
-  /** «Пересчитать» на плашке проблемы; у готового шага — нет. */
+  /** «Пересчитать» — на плашке проблемы или своей; у готового шага — нет. */
   recheck: RecheckView | null;
   /** Что сказал судья; при проблеме не показывается, как в макете. */
   note: string | null;
@@ -97,6 +108,7 @@ export interface DecisionView {
   open: boolean;
   /** «Зафиксировать →», «Зафиксировано · дальше →», «Дальше →». */
   acceptLabel: string;
+  /** Не действует: правки заперты, нет «почему» или выбор поменяли на «Вариантах», а решение не пересчитали. */
   acceptDisabled: boolean;
   /**
    * «Решение:», «Оставить открытым», «почему» и отметки замен не действуют: правки заперты, решение фиксируется или его
@@ -146,9 +158,15 @@ export interface DecisionsStep {
 
   /** «Зафиксировать решения → к итогам» есть: шаг ждёт вас или остановился. */
   approvable: boolean;
-  /** Не действует: решения уже фиксируются, шаг запускают снова или решение пересчитывают. */
+  /**
+   * Не действует: решения уже фиксируются, шаг запускают снова, решение пересчитывают или у него выбор поменяли на
+   * «Вариантах», а его не пересчитали.
+   */
   approveDisabled: boolean;
-  /** Под «Зафиксировать решения»: решение пересчитывают — «Идёт пересчёт решения…»; иначе — null. */
+  /**
+   * Слева от «Зафиксировать решения»: решение пересчитывают — «Идёт пересчёт решения…»; выбор поменяли — «Выбор
+   * поменяли на «Вариантах» — пересчитайте Q5…»; иначе — null.
+   */
   approveHint: string | null;
   approve: () => void;
   /** Не вышло или что-то из правок не сохранилось — в этом наборе решений. */
@@ -167,9 +185,12 @@ const NOT_SAVED_RECHECK = new ApiError('not_saved', 'Не всё сохрани�
  * после паузы в наборе и когда уходят от решения, «Оставить открытым», вариант, «Зафиксировать →» и отметка «Это решение
  * заменяет ADR-0003» — сразу, вместе с набранным «почему» (useDecisionEdits()); «Зафиксировать →» дожидается ответа и
  * открывает следующее незафиксированное решение. Зафиксированное без «почему» не сохраняется: без него решение не
- * фиксируется, и набранное ждёт. «Пересчитать» (шаг ждёт вас или остановился, есть отметки, которых проверка не учла)
- * сначала отправляет набранное и дожидается правок, потом пересчитывает решение (useRecheckDecision()): пока модели
- * проверяют, это решение занято, остальные правят, а «Зафиксировать решения» не действует. Шаг ждёт вас или остановился —
+ * фиксируется, и набранное ждёт. «Пересчитать» (шаг ждёт вас или остановился, пересчитать есть что: выбор поменяли на
+ * «Вариантах», отметки, которых проверка не учла, или проверка опиралась на прежний выбор другого вопроса) сначала
+ * отправляет набранное и дожидается правок, потом пересчитывает решение (useRecheckDecision()): пока модели проверяют,
+ * это решение занято, остальные правят, а «Зафиксировать решения» не действует. Решение, у которого выбор поменяли на
+ * «Вариантах» (unchecked), пока его не пересчитали, не фиксируют: ни «Зафиксировать →», ни «Зафиксировать решения»;
+ * точка у него жёлтая. Шаг ждёт вас или остановился —
  * внизу «Зафиксировать решения → к итогам»: сначала отправляет набранное и дожидается правок — и тех, что уходят с
  * экрана, который закрыли, — потом фиксирует решения и открывает «Итоги»; что-то не сохранилось — не фиксирует, под
  * кнопкой — «Не всё сохранилось», и открывается решение, где не сохранилось. Правки, «Пересчитать» и «Зафиксировать
@@ -184,7 +205,7 @@ export function useDecisionsStep(
   retrying: boolean,
   onBusy: (busy: boolean) => void,
 ): DecisionsStep {
-  const { t, formatNumber } = useI18n();
+  const { t, formatNumber, formatList } = useI18n();
   const query = useStreamDecisions(councilId, streamId, state);
   // Набор решений: шаг сменил состояние или пришли решения другого его запуска — решения другие, хоть id те же.
   const round = query.data && `${query.data.state}/${query.data.run}`;
@@ -362,7 +383,8 @@ export function useDecisionsStep(
       return;
     }
     const rationale = rationaleOf(decision);
-    if (!hasRationale(rationale)) return;
+    // Без «почему» не фиксируется; выбор поменяли на «Вариантах» — тоже, пока решение не пересчитали.
+    if (!hasRationale(rationale) || decision.unchecked) return;
     stopTyping();
     setFixing(id);
     const startedIn = generation.current;
@@ -389,7 +411,9 @@ export function useDecisionsStep(
 
   /** Решения пересчитывают: «Зафиксировать решения» ждёт, пока модели не кончат. */
   const anyRechecking = rechecking.length > 0 || decisions.some((d) => d.recheck === 'running');
-  const approveDisabled = approving || retrying || anyRechecking;
+  /** Выбор поменяли на «Вариантах» — у каких вопросов, по порядку решений: пока их не пересчитали, решения не фиксируют. */
+  const unchecked = decisions.filter((d) => d.unchecked).map((d) => d.question.id);
+  const approveDisabled = approving || retrying || anyRechecking || unchecked.length > 0;
 
   /**
    * Набранное «почему» — на сервер, и дождаться правок, которые ещё уходят в этом запуске шага, и с экранов, которые
@@ -489,6 +513,8 @@ export function useDecisionsStep(
         : d.recheck === 'failed'
           ? { text: t('decisions.recheck.failed'), tone: 'failed' as const }
           : null;
+    // Почему пересчитать есть что; отметки, которых проверка не учла, на красной плашке видны и так — в последствиях.
+    const reason = d.recheck === 'ready' && !recheckNote ? recheckReason(d, marks) : null;
     return {
       id,
       question: d.question.text,
@@ -507,7 +533,12 @@ export function useDecisionsStep(
         fixes: d.problem.fixes.map((fix, i) => ({ num: formatNumber(i + 1), question: fix.question, text: fix.text })),
       },
       recheck: decisionsApprovable(state)
-        ? { disabled: lockedHere || fixing !== null || !recheckable(d.recheck), note: recheckNote }
+        ? {
+            disabled: lockedHere || fixing !== null || !recheckable(d.recheck),
+            active: d.recheck !== null || recheckNote !== null,
+            reason: reason && (reason !== 'marks' || !d.problem) ? t(`decisions.recheck.${reason}`) : null,
+            note: recheckNote,
+          }
         : null,
       note: d.problem ? null : d.note,
       adr: d.catalogId ? t('decisions.adr.catalog', { id: d.adr, catalog: d.catalogId }) : d.adr,
@@ -527,7 +558,8 @@ export function useDecisionsStep(
       option: d.option?.id ?? null,
       open: status === 'open',
       acceptLabel: t(`decisions.accept.${status}`),
-      acceptDisabled: lockedHere || fixing !== null || (status !== 'open' && !hasRationale(rationale)),
+      acceptDisabled:
+        lockedHere || fixing !== null || (status !== 'open' && (!hasRationale(rationale) || d.unchecked)),
       locked: lockedHere,
       error: edits.errors[id],
       recheckError: recheckErrors[id],
@@ -545,7 +577,7 @@ export function useDecisionsStep(
 
     chips: decisions.map((d) => ({
       id: d.question.id,
-      dot: decisionDot(statusOf(d), d.verdict),
+      dot: decisionDot(statusOf(d), d.verdict, d.unchecked),
       current: d.question.id === currentId,
     })),
     done: t('decisions.done', { done, total: decisions.length }),
@@ -588,7 +620,11 @@ export function useDecisionsStep(
 
     approvable: decisionsApprovable(state),
     approveDisabled,
-    approveHint: anyRechecking ? t('decisions.approve.rechecking') : null,
+    approveHint: anyRechecking
+      ? t('decisions.approve.rechecking')
+      : unchecked.length > 0
+        ? t('decisions.approve.unchecked', { ids: formatList(unchecked) })
+        : null,
     approve,
     approveError,
   };

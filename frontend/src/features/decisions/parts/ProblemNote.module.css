@@ -83,12 +83,17 @@
   gap: var(--space-8);
 }
 
-/* Под кнопками: пересчёт идёт — тише, остановился — красным. */
+/* Под кнопками: почему пересчитать есть что — жирнее, пересчёт идёт — тише, остановился — красным. */
 .recheck {
   margin: 0;
   font-size: var(--text-sm);
   line-height: var(--leading-loose);
   text-wrap: pretty;
+}
+
+.ready {
+  font-weight: var(--weight-semibold);
+  color: var(--color-danger-text);
 }
 
 .running {

@@ -1,0 +1,33 @@
+/* Почему пересчитать слева, «Пересчитать» справа; не помещаются — кнопка под текстом. */
+.recheck {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-10);
+  padding: var(--space-12) var(--space-16);
+  border-radius: var(--radius-14);
+  background: var(--state-waiting-bg);
+}
+
+.text {
+  flex: 1 1 0;
+  min-width: 0;
+  margin: 0;
+  font-size: var(--text-sm);
+  font-weight: var(--weight-semibold);
+  line-height: var(--leading-loose);
+  color: var(--state-waiting-ink);
+  text-wrap: pretty;
+  overflow-wrap: anywhere;
+}
+
+/* Пересчёт идёт — тише. */
+.running {
+  font-weight: var(--weight-regular);
+}
+
+/* Пересчёт остановился — красным. */
+.failed {
+  color: var(--state-failed-ink);
+}

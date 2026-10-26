@@ -227,7 +227,7 @@ def test_options_come_by_question_the_group_ones_first_with_what_the_judge_says(
              "reason": None, "cost": None, "dependsOn": [], "basedOn": None},
             {"id": "P1", "text": ONE, "source": "ai", "recommended": True, "reason": "так проще",
              "cost": None, "dependsOn": [], "basedOn": None}],
-        "choice": None, "cycle": []}
+        "choice": None, "unchecked": False, "cycle": []}
     assert (q2["summary"], q2["dropped"], q2["choice"]) == (BOTH, [], None)
     assert [(o["id"], o["text"], o["recommended"], o["dependsOn"]) for o in q2["options"]] == [
         ("P2", SHARE, False, []), ("P3", POLL, False, ["Q1"])]

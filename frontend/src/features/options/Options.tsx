@@ -6,6 +6,7 @@ import type { State } from '../../domain/council';
 import { useI18n } from '../../i18n';
 import { Button } from '../../ui/Button';
 import { CardFooter } from '../../ui/CardFooter';
+import { NoteLine } from '../../ui/NoteLine';
 import { RadioCard } from '../../ui/RadioCard';
 import { Skeleton } from '../../ui/Skeleton';
 import { Tag } from '../../ui/Tag';
@@ -61,6 +62,7 @@ export function Options({ councilId, streamId, state, judge, retrying, onBusy }:
             }
           />
           <DependencyLoop ids={step.question.cycle} />
+          {step.question.unchecked && <NoteLine text={t('options.unchecked')} />}
           <JudgeNote judge={step.judge} onToggle={step.toggleDropped} />
           <div className={styles.options} role="radiogroup" aria-label={step.question.text}>
             {step.options.map((option) => (

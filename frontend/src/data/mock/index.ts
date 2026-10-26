@@ -273,10 +273,59 @@ function optionSetsOf(id: string, streamId: string): OptionSet[] {
   );
   const kept = all.filter((q) => !q.removed);
   const shown = kept.map((q) => q.id);
+  const changed = uncheckedOf(id, streamId);
   return inOrder(order, kept, (q) => q.id).map((question) => {
     sets[question.id] ??= noOptions();
-    return { question, ...sets[question.id], cycle: cycleOf(order, question.id, shown) };
+    return {
+      question,
+      ...sets[question.id],
+      unchecked: changed.has(question.id),
+      cycle: cycleOf(order, question.id, shown),
+    };
   });
+}
+
+/**
+ * Выбор вопроса на «Вариантах», как его помнит проверка решений: вариант (свой — и с текстом) или unresolved; выбора
+ * нет — null.
+ */
+function choiceKey(set: MockOptionSet | undefined): string | null {
+  const choice = set?.choice;
+  if (!choice) return null;
+  if (choice.kind === 'unresolved') return '-';
+  const own = set.options.find((o) => o.id === choice.option && o.source === 'user');
+  return own ? `${choice.option}: ${own.text}` : choice.option;
+}
+
+/** Решения правят и пересчитывают: «Решения» ждут вас или остановились. */
+function decisionsOpen(id: string, streamId: string): boolean {
+  const { state } = stepOf((streams.get(id) ?? [])[streamAt(id, streamId)], 'decisions');
+  return state === 'waiting' || state === 'failed';
+}
+
+/**
+ * Выбор вопроса на готовых «Вариантах» сейчас поменяют (другой вариант или текст своего): его решение запоминает, какой
+ * выбор проверили модели, — тот, что стоит до первой смены.
+ */
+function rememberChecked(id: string, streamId: string, questionId: string) {
+  const stored = storedDecisions(id, streamId)[questionId];
+  if (stored && stored.checked === undefined && decisionsOpen(id, streamId)) {
+    stored.checked = choiceKey(optionsOf(id, streamId)[questionId]);
+  }
+}
+
+/**
+ * Вопросы, у решений которых выбор на «Вариантах» не тот, что проверили модели (unchecked), — пока решения правят и
+ * пересчитывают. Пересчёт в моках не кончается, поэтому выбор, который проверили, до нового запуска шага тот же.
+ */
+function uncheckedOf(id: string, streamId: string): Set<string> {
+  if (!decisionsOpen(id, streamId)) return new Set();
+  const sets = optionsOf(id, streamId);
+  return new Set(
+    Object.entries(storedDecisions(id, streamId))
+      .filter(([question, { checked }]) => checked !== undefined && checked !== choiceKey(sets[question]))
+      .map(([question]) => question),
+  );
 }
 
 /** Номер запуска шага «Варианты»: шаг не начат — 0; начат в данных моков и с тех пор не запускался — 1. */
@@ -334,11 +383,13 @@ function storedDecisions(id: string, streamId: string): Record<string, MockDecis
  * Решения на «Решениях» — по неубранным вопросам потока, у которых решение есть. Вопрос, вариант и «в контексте» — из
  * вопросов, вариантов и решений других вопросов потока: решения нет или вопрос убран — варианта нет. Порядок и круги —
  * по зависимостям проверки (dependsOn), как у сервера: по всем решениям запуска шага, и убранных вопросов тоже. В моках
- * пересчёт не кончается, поэтому зависимости до следующего запуска те же — и порядок тоже.
+ * пересчёт не кончается, поэтому зависимости до следующего запуска те же — и порядок тоже. Выбор поменяли на
+ * «Вариантах» (unchecked) — решение не зафиксировано, пока его не пересчитали, и «Пересчитать» доступна.
  */
 function decisionListOf(id: string, streamId: string): StreamDecision[] {
   const stored = storedDecisions(id, streamId);
   const sets = optionsOf(id, streamId);
+  const changed = uncheckedOf(id, streamId);
   const order = dependencyOrder(
     Object.keys(stored),
     Object.fromEntries(Object.entries(stored).map(([question, decision]) => [question, decision.dependsOn])),
@@ -352,9 +403,15 @@ function decisionListOf(id: string, streamId: string): StreamDecision[] {
   const optionOf = (question: string, option: string | null) =>
     option === null ? null : (sets[question]?.options.find((o) => o.id === option) ?? null);
   return kept.map((question) => {
-    const { option, dependsOn, ...rest } = stored[question.id];
+    const { option, dependsOn, checked: _checked, ...rest } = stored[question.id];
+    const unchecked = changed.has(question.id);
+    // Пересчёт идёт или остановился — так и есть; нет — пересчитать есть что: новые отметки или другой выбор.
+    const started = rest.recheck === 'running' || rest.recheck === 'failed';
     return {
       ...rest,
+      status: unchecked && rest.status === 'fixed' ? 'draft' : rest.status,
+      recheck: started ? rest.recheck : rest.recheck === 'ready' || unchecked ? 'ready' : null,
+      unchecked,
       question,
       option: optionOf(question.id, option),
       context: dependsOn.map((other) => {
@@ -922,9 +979,12 @@ export const mockSource: DataSource = {
       throw new ApiError('unknown_option', `Варианта ${choice.option} у вопроса ${questionId} нет`, 422);
     }
     const next: Choice = choice.kind === 'option' ? { kind: 'option', option: choice.option } : { kind: 'unresolved' };
+    rememberChecked(id, streamId, questionId);
     optionsOf(id, streamId)[questionId].choice = next;
-    // Шаги потока выбор не меняет, как в макете; меняются строка «Вариантов» в цепочке и совет.
+    // Шаги потока выбор не меняет, как в макете; меняются строка «Вариантов» в цепочке и совет. Выбор, который проверили на
+    // «Решениях», он тоже не меняет: решение вопроса ждёт «Пересчитать», и зафиксированное — снова черновик.
     choicesChanged(index, id, streamId);
+    if (decisionsOpen(id, streamId)) decisionsChanged(index, id, streamId);
     return copy(optionSetAt(id, streamId, questionId));
   },
   async addOption(id, streamId, run, questionId, text, basedOn, key) {
@@ -961,9 +1021,11 @@ export const mockSource: DataSource = {
     if (found < 0) throw new ApiError('not_found', `Варианта ${optionId} у вопроса ${questionId} нет`, 404);
     if (list[found].source !== 'user') throw new ApiError('not_own_option', `Вариант ${optionId} — совета`, 422);
     if (!canSaveOption(text)) throw new ApiError('text_required', 'Пустой вариант не сохранить', 422);
-    // «Почему», цену и зависимости совет пересмотрит под новый текст — пока их нет.
+    // «Почему», цену и зависимости совет пересмотрит под новый текст — пока их нет. Вариант выбран — это и смена выбора.
+    rememberChecked(id, streamId, questionId);
     list[found] = { ...list[found], text: text.trim(), reason: null, cost: null, dependsOn: [] };
     touch(index);
+    if (decisionsOpen(id, streamId)) decisionsChanged(index, id, streamId);
     return copy(list[found]);
   },
   async approveOptions(id, streamId, run) {
@@ -1012,6 +1074,10 @@ export const mockSource: DataSource = {
     if (stored.recheck === 'running') {
       throw new ApiError('decisions_not_ready', `Решение по ${questionId} пересчитывают`, 409);
     }
+    // Выбор поменяли на «Вариантах» — решение не зафиксировать, пока его не пересчитали.
+    if (edit.status === 'fixed' && uncheckedOf(id, streamId).has(questionId)) {
+      throw new ApiError('decisions_not_ready', `Выбор по ${questionId} поменяли на «Вариантах»`, 409);
+    }
     // Отмечают и снимают замену только у противоречия с решением проекта; замену, которую проверка уже учла (противоречия
     // с ней нет), не снимают. У готового шага отметки не ставят и не снимают: решения ушли в итоги с прежними заменами.
     const done = stepOf((streams.get(id) ?? [])[at], 'decisions').state === 'done';
@@ -1056,9 +1122,10 @@ export const mockSource: DataSource = {
       throw new ApiError('not_found', `Решения по вопросу ${questionId} у потока ${streamId} нет`, 404);
     }
     const stored = storedDecisions(id, streamId)[questionId];
+    const shown = decisionListOf(id, streamId).find((d) => d.question.id === questionId) as StreamDecision;
     // Пересчитывать нечего, пересчёт уже идёт или шаг уже готов — ничего не меняем, отвечаем решением как есть.
     const done = stepOf((streams.get(id) ?? [])[at], 'decisions').state === 'done';
-    if (!done && recheckable(stored.recheck)) {
+    if (!done && recheckable(shown.recheck)) {
       // Модели проверяют выбор вопроса заново; решение — черновик и занято, «почему» ИИ напишет пересчёт, своё «почему»
       // человека остаётся. Шаг и другие решения не меняются. В моках пересчёт не кончается, как работа моделей на шагах.
       stored.recheck = 'running';
@@ -1082,6 +1149,11 @@ export const mockSource: DataSource = {
       }
       // Где решения, переход не меняет, как в макете: черновики и открытые остаются такими.
       const all = decisionListOf(id, streamId);
+      // Выбор поменяли на «Вариантах», а решение не пересчитали — решения не фиксируют.
+      const changed = all.filter((d) => d.unchecked).map((d) => d.question.id);
+      if (changed.length) {
+        throw new ApiError('decisions_not_ready', `Выбор по ${changed.join(', ')} поменяли на «Вариантах»`, 409);
+      }
       const fixed = all.filter((d) => d.status === 'fixed').length;
       const now = new Date().toISOString();
       const { participants, judge } = councils[index];
