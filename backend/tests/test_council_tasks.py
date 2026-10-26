@@ -507,14 +507,8 @@ def test_a_vanished_task_another_file_waits_for_stays(agents, base):
     assert files_in(issues) == ["ISS-0001.md", "ISS-0002.md", "ISS-0005.md", "ISS-0006.md"]
 
 
-def test_a_vanished_parent_a_staying_file_names_stays(agents, base):
-    """Свою задачу человек положил руками подзадачей родительской ISS-0002, а итог потом сняли с
-    утверждения: родительская задача исчезла из плана, но её ещё называет файл, что остаётся."""
-    council_id = ready()
-    writes(council_id)
-    issues = base / "issues"
-    own = Note("ISS-0005", "issue", "# Своя", ("parent:ISS-0002",))
-    (issues / "ISS-0005.md").write_text(issue_rendered(own), encoding="utf-8")
+def unapproved(council_id):
+    """Итог сняли с утверждения: его родительская задача и подзадачи исчезают из плана."""
     store = get_store()
     [stream] = council(council_id).streams
     plan = council(council_id).tasks
@@ -523,11 +517,49 @@ def test_a_vanished_parent_a_staying_file_names_stays(agents, base):
             "outcomes": stream.outcomes.model_copy(update={"approved_ids": []})})],
         "tasks": plan.model_copy(update={"basis": {}})})
     retries(council_id)
+
+
+def test_a_vanished_parent_a_staying_file_names_stays(agents, base):
+    """Свою задачу человек положил руками подзадачей родительской ISS-0002, а итог потом сняли с
+    утверждения: родительская задача исчезла из плана, но её ещё называет файл, что остаётся."""
+    council_id = ready()
+    writes(council_id)
+    issues = base / "issues"
+    own = Note("ISS-0005", "issue", "# Своя", ("parent:ISS-0002",))
+    (issues / "ISS-0005.md").write_text(issue_rendered(own), encoding="utf-8")
+    unapproved(council_id)
     shown = plan_of(council_id)
     assert (shown["parents"], shown["tasks"]) == ([], [])
     assert shown["vanished"] == [{"id": "ISS-0001", "title": f"{TASK} ISS-0002"}]
     assert writes(council_id).status_code == 200
     assert files_in(issues) == ["ISS-0002.md", "ISS-0005.md"]
+
+
+def test_a_vanished_parent_goes_with_its_vanished_subtasks(agents, base):
+    """Родительскую задачу называет только её подзадача, а та уходит в той же записи: уходят
+    обе."""
+    council_id = ready()
+    writes(council_id)
+    issues = base / "issues"
+    unapproved(council_id)
+    shown = plan_of(council_id)
+    assert {task["id"] for task in shown["vanished"]} == {"ISS-0001", "ISS-0002"}
+    assert writes(council_id).status_code == 200
+    assert files_in(issues) == []
+
+
+def test_a_vanished_parent_of_a_subtask_a_staying_file_waits_for_stays(agents, base):
+    """Свою задачу человек положил руками после подзадачи ISS-0001: подзадача остаётся — и её
+    родительская задача тоже."""
+    council_id = ready()
+    writes(council_id)
+    issues = base / "issues"
+    own = Note("ISS-0005", "issue", "# Своя", ("ISS-0001",))
+    (issues / "ISS-0005.md").write_text(issue_rendered(own), encoding="utf-8")
+    unapproved(council_id)
+    assert plan_of(council_id)["vanished"] == []
+    assert writes(council_id).status_code == 200
+    assert files_in(issues) == ["ISS-0001.md", "ISS-0002.md", "ISS-0005.md"]
 
 
 def test_research_approved_again_builds_a_stale_plan_again(agents, base):

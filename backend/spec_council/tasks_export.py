@@ -283,18 +283,26 @@ def drafted_tasks(plan: TaskPlan, fragments: Mapping[int, LabeledFragment], shel
                          "плана их называют: верните заметки или выгрузите потоки заново и "
                          "спланируйте снова")
     current = {number.id for number in numbers}
+    gone = [old.id for old in filed.values()
+            if old.id not in current and old.id in shelf.files and old.id not in reserved]
+    edited = {plan_note.id for plan_note in notes if plan_note.action == "edited"}
     # Файлы, что останутся в папке как есть: не из плана или правленные руками. Исчезнувшую
-    # задачу, на которую они ссылаются (и как на родителя), удалить нельзя.
-    staying = [note for note in shelf.files.values()
-               if note.id not in current
-               or any(plan_note.id == note.id and plan_note.action == "edited"
-                      for plan_note in notes)]
-    vanished = [VanishedNote(id=old.id, type="issue", text=shelf.files[old.id].body,
-                             linked_from=sorted(note.id for note in staying
-                                                if old.id in issue_files.targets(note.links)
-                                                and note.id != old.id))
-                for old in filed.values()
-                if old.id not in current and old.id in shelf.files and old.id not in reserved]
+    # задачу, на которую они ссылаются (и как на родителя), удалить нельзя — и она тоже
+    # остаётся. Исчезнувшая подзадача, которую удалят, своего родителя не держит.
+    staying = {note.id for note in shelf.files.values()
+               if (note.id not in current and note.id not in gone) or note.id in edited}
+
+    def linked_from(note_id: str) -> list[str]:
+        return sorted(other for other in staying if other != note_id
+                      and note_id in issue_files.targets(shelf.files[other].links))
+
+    held = [note_id for note_id in gone if note_id not in staying and linked_from(note_id)]
+    while held:
+        staying |= set(held)
+        held = [note_id for note_id in gone if note_id not in staying and linked_from(note_id)]
+    vanished = [VanishedNote(id=note_id, type="issue", text=shelf.files[note_id].body,
+                             linked_from=linked_from(note_id))
+                for note_id in gone]
     return notes, vanished, numbers
 
 
