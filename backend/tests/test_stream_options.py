@@ -1,8 +1,8 @@
 """«Варианты» потока по контракту: GET /api/councils/{id}/streams/{streamId}/options, выбор по
 вопросу (PUT …/options/{questionId}/choice), свой вариант (POST …/options/{questionId}), правка
-своего варианта (PATCH …/options/{questionId}/{optionId}) и «Утвердить выбор» (POST
-…/options/approve) — оно переводит поток к «Решениям»: модели начинают проверять решения на
-сервере."""
+своего варианта (PATCH …/options/{questionId}/{optionId}), удаление варианта (DELETE
+…/options/{questionId}/{optionId}) и «Утвердить выбор» (POST …/options/approve) — оно переводит
+поток к «Решениям»: модели начинают проверять решения на сервере."""
 
 import json
 
@@ -19,6 +19,7 @@ from spec_council.models import (
     QuestionDiscovery,
     QuestionOptions,
     QuestionWork,
+    Stream,
 )
 from spec_council.pipeline import ModelFailed
 from spec_council.store import InMemoryStore
@@ -198,6 +199,11 @@ def edits(council_id, question_id, option_id, text, run=1):
 
 def approves(council_id, run=1, stream_id="A"):
     return client.post(f"{path(council_id, stream_id)}/approve", json={"run": run})
+
+
+def deletes(council_id, question_id, option_id, run=1, stream_id="A"):
+    return client.request("DELETE", f"{path(council_id, stream_id)}/{question_id}/{option_id}",
+                          json={"run": run})
 
 
 def ids(item: dict) -> list[str]:
@@ -448,6 +454,110 @@ def test_only_an_own_option_is_edited_and_not_empty(store, pool):
     assert sets_of(council_id)["Q2"]["options"][-1]["text"] == OWN
 
 
+# --- удалить вариант
+
+def test_any_option_but_the_chosen_one_is_deleted(store, pool):
+    """Решение владельца: удалить можно любой вариант вопроса — свой, найденный советом и из
+    текста группы; выбранный сейчас — нельзя, сначала выбирают другой."""
+    council_id = offered(store, pool)
+    own = adds(council_id, "Q1", OWN).json()["option"]["id"]
+    assert own == "P5"
+    assert chooses(council_id, "Q1", "P1").status_code == 200
+    before = stream_of(council_id)
+    moment = store.get_council(council_id).updated_at
+    for option in ("F2", own):
+        res = deletes(council_id, "Q1", option)
+        assert (res.status_code, res.content) == (204, b"")
+    q1 = sets_of(council_id)["Q1"]
+    assert (ids(q1), q1["choice"]) == (["P1"], {"kind": "option", "option": "P1"})
+    assert error_of(deletes(council_id, "Q1", "P1")) == (409, "option_chosen")
+    assert ids(sets_of(council_id)["Q1"]) == ["P1"]
+    # Выбрали другое — удаляется и он.
+    assert chooses(council_id, "Q1").status_code == 200
+    assert deletes(council_id, "Q1", "P1").status_code == 204
+    q1 = sets_of(council_id)["Q1"]
+    assert (q1["options"], q1["choice"], q1["summary"]) == ([], {"kind": "unresolved"}, ONE_LEFT)
+    # Шаги потока не меняются; у совета — время изменения.
+    assert stream_of(council_id) == before
+    assert store.get_council(council_id).updated_at > moment
+    # Удалённый не выбрать, не поправить и не взять в основу своего; удалённого уже нет.
+    assert error_of(chooses(council_id, "Q1", "P1")) == (422, "unknown_option")
+    assert error_of(adds(council_id, "Q1", OWN, based_on="F2")) == (422, "unknown_option")
+    assert error_of(edits(council_id, "Q1", own, OWN)) == (404, "not_found")
+    assert error_of(deletes(council_id, "Q1", "F2")) == (404, "not_found")
+    # Номера других вариантов не меняются, а номер удалённого другому не достаётся.
+    assert ids(sets_of(council_id)["Q2"]) == ["P2", "P3"]
+    assert adds(council_id, "Q1", OWN).json()["option"]["id"] == "P6"
+    assert [(one.question_id, one.id) for one in stored(store, council_id).removed_options] == [
+        ("Q1", "F2"), ("Q1", own), ("Q1", "P1")]
+
+
+def test_a_group_option_is_deleted_only_from_its_question(store, pool, monkeypatch):
+    """F2 отвечает и на Q1, и на Q2: удалили его у Q1 — у Q2 он остаётся, и сам фрагмент тот же:
+    «В тексте уже есть ответ» на «Вопросах» по-прежнему его называет."""
+    monkeypatch.setitem(FOUND[1], "proposal_ids", ["F2"])
+    council_id = offered(store, pool)
+    assert ids(sets_of(council_id)["Q2"])[0] == "F2"
+    assert deletes(council_id, "Q1", "F2").status_code == 204
+    sets = sets_of(council_id)
+    assert (ids(sets["Q1"]), ids(sets["Q2"])) == (["P1"], ["F2", "P2", "P3"])
+    assert [fragment["id"] for fragment in sets["Q1"]["question"]["proposals"]] == ["F2"]
+    assert chooses(council_id, "Q2", "F2").status_code == 200
+    assert error_of(chooses(council_id, "Q1", "F2")) == (422, "unknown_option")
+
+
+def test_a_deleted_option_does_not_come_back_with_a_retry(store, pool, agents):
+    council_id = judge_stopped(store, pool, agents)
+    assert deletes(council_id, "Q1", "P1").status_code == 204
+    agents.failing = set()
+    assert client.post(f"/api/councils/{council_id}/streams/A/retry", json={}).status_code == 200
+    assert error_of(deletes(council_id, "Q1", "F2")) == (409, "options_not_ready")
+    pool.run()
+    assert {q: ids(item) for q, item in sets_of(council_id).items()} == {
+        "Q1": ["F2"], "Q2": ["P2", "P3"], "Q3": ["P4"]}
+    assert error_of(deletes(council_id, "Q1", "F2", run=1)) == (409, "options_not_ready")
+    assert deletes(council_id, "Q2", "P3", run=2).status_code == 204
+
+
+def test_options_are_deleted_on_a_done_step_too(store, pool):
+    council_id = offered(store, pool)
+    assert approves(council_id).status_code == 200
+    pool.run()
+    before, approved = stream_of(council_id), stored(store, council_id).choices
+    assert deletes(council_id, "Q2", "P3").status_code == 204
+    assert ids(sets_of(council_id)["Q2"]) == ["P2"]
+    assert stream_of(council_id) == before
+    assert stored(store, council_id).choices == approved
+
+
+def test_nothing_is_deleted_before_the_step_while_the_models_work_or_for_another_run(store,
+                                                                                      pool):
+    council_id = asked(store, pool)
+    assert error_of(deletes(council_id, "Q1", "F2", run=0)) == (409, "options_not_ready")
+    assert client.post(f"{questions_path(council_id)}/approve", json={}).status_code == 200
+    assert error_of(deletes(council_id, "Q1", "F2")) == (409, "options_not_ready")
+    pool.run()
+    assert error_of(deletes(council_id, "Q1", "F2", run=2)) == (409, "options_not_ready")
+    assert ids(sets_of(council_id)["Q1"]) == ["F2", "P1"]
+
+
+def test_a_missing_or_strange_deletion_is_refused(store, pool):
+    council_id = offered(store, pool)
+    assert error_of(deletes(council_id, "Q1", "P9")) == (404, "not_found")
+    assert error_of(deletes(council_id, "Q1", "P2")) == (404, "not_found")      # не того вопроса
+    assert error_of(deletes(council_id, "Q9", "P1")) == (404, "not_found")
+    assert error_of(deletes(council_id, "Q1", "P1", stream_id="Z")) == (404, "not_found")
+    assert error_of(deletes("нет", "Q1", "P1")) == (404, "not_found")
+    assert client.patch(f"{questions_path(council_id)}/Q2",
+                        json={"removed": True}).status_code == 200
+    assert error_of(deletes(council_id, "Q2", "P2")) == (404, "not_found")      # вопрос убран
+    target = f"{path(council_id)}/Q1/P1"
+    assert error_of(client.request("DELETE", target)) == (400, "bad_request")
+    assert error_of(client.request("DELETE", target, json={"run": 1, "id": "P1"})) == (
+        400, "bad_request")
+    assert ids(sets_of(council_id)["Q1"]) == ["F2", "P1"]
+
+
 # --- утвердить выбор
 
 def test_the_approved_choice_goes_on_and_the_decisions_start(store, pool, agents):
@@ -605,6 +715,20 @@ def test_a_retry_takes_a_new_run_and_keeps_the_choice_and_own_options(store, poo
     assert approves(council_id, run=2).status_code == 200
 
 
+def test_the_approved_choice_takes_no_deleted_option(store, pool, agents):
+    """Удалённого варианта нет и в том, что «Утвердить выбор» берёт дальше: вопрос без выбора идёт
+    с первым из оставшихся."""
+    council_id = offered(store, pool)
+    assert deletes(council_id, "Q1", "F2").status_code == 204
+    assert approves(council_id).status_code == 200
+    assert [(c.question_id, c.proposal) for c in stored(store, council_id).choices] == [
+        ("Q1", "P1"), ("Q2", "P2"), ("Q3", "P4")]
+    pool.run()
+    q1 = next(prompt for prompt in agents.prompts["decision_analysis"]
+              if json.loads(section(prompt, "OPEN QUESTION"))["id"] == "Q1")
+    assert [option["id"] for option in json.loads(section(q1, "PROPOSALS"))] == ["P1"]
+
+
 # --- поток прежней версии
 
 def test_a_stream_of_the_prior_version_shows_its_approved_choice_and_own_options(store):
@@ -622,6 +746,9 @@ def test_a_stream_of_the_prior_version_shows_its_approved_choice_and_own_options
                                                      options=found),
         choices=[Choice(question_id="Q1", proposal="F2"),
                  Choice(question_id="Q2", proposal="P4", text=OWN, based_on="P2")])
+    # Поток, сохранённый до удаления вариантов, удалённых не помнит — их нет.
+    saved = stored(store, council_id).model_dump(mode="json", exclude={"removed_options"})
+    assert Stream.model_validate(saved).removed_options == []
     shown = round_of(council_id)
     assert shown["run"] == 1
     q1, q2 = shown["optionSets"]
@@ -634,6 +761,11 @@ def test_a_stream_of_the_prior_version_shows_its_approved_choice_and_own_options
     assert (options["state"], options["note"]) == ("done", "выбрано 2 из 2")
     # Свой вариант — дальше всех, какие поток давал.
     assert adds(council_id, "Q1", "Ещё").json()["option"]["id"] == "P5"
+    # Удаляют, как у нового потока: свой вариант из утверждённого выбора остаётся своим.
+    assert deletes(council_id, "Q2", "P3").status_code == 204
+    q2 = sets_of(council_id)["Q2"]
+    assert (ids(q2), q2["options"][-1]["text"], q2["choice"]) == (
+        ["P2", "P4"], OWN, {"kind": "option", "option": "P4"})
 
 
 def test_a_question_the_prior_version_took_out_of_the_scope_comes_back_with_its_choice(store):

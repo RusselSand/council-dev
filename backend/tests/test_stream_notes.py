@@ -18,6 +18,7 @@ from spec_council.pipeline import ModelFailed
 from spec_council.projects import Projects
 from spec_council.store import InMemoryStore
 from spec_council.web import notes as web_notes
+from tests.test_stream_options import POLL
 from tests.test_stream_outcomes import Agents, approves, approves_one, assembled
 from tests.test_stream_questions import (
     Closed,
@@ -181,6 +182,22 @@ def test_a_waiting_step_shows_the_draft_of_the_whole_stream(store, pool, project
     notes = steps_of(stream_of(council_id))["notes"]
     assert (notes["state"], notes["note"], notes["text"], notes["progress"]) == (
         "waiting", "черновик ждёт вас", None, [])
+
+
+def test_a_deleted_option_is_not_exported(store, pool, projects, docs):
+    """Решение владельца: варианта, удалённого на «Вариантах», нет в выгрузке — среди вариантов
+    вопроса его нет."""
+    council_id = outcomes_approved(store, pool, projects)
+    titles = [note["title"] for note in export_of(council_id)["notes"] if note["type"] == "option"]
+    assert len(titles) == 6 and POLL in titles
+    res = client.request("DELETE", f"/api/councils/{council_id}/streams/A/options/Q2/P3",
+                         json={"run": 1})
+    assert res.status_code == 204
+    export = export_of(council_id)
+    assert [note["title"] for note in export["notes"] if note["type"] == "option"] == [
+        title for title in titles if title != POLL]
+    assert writes(council_id).status_code == 200
+    assert not [note for note in Catalog.load(docs).notes.values() if POLL in note.body]
 
 
 def test_the_stream_is_written_into_the_catalog_and_the_export_stays_the_same(

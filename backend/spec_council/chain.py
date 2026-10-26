@@ -49,6 +49,7 @@ from .models import (
     Stream,
 )
 from .notes import Catalog
+from .options import hidden_of, seen
 from .pipeline import (
     CouncilRun,
     DecisionRun,
@@ -116,23 +117,30 @@ def checking(council: Council, stream: Stream, runner: Runner, report: Report,
              notes: str | None, repositories: Path | None) -> DecisionRun:
     """Проверка выбора. Что уже проверено к тому же выбору и тем же подтверждённым заменам
     решений проекта, переносится: проверяют остальное — и вопрос, где замену подтвердили только
-    что, — считая подтверждённые решения проекта не действующими."""
+    что, — считая подтверждённые решения проекта не действующими. Удалённых на «Вариантах»
+    вариантов модели не видят (options.seen), и проверку, что взяла удалённый вариант, не
+    переносят."""
     choices = stream.choices or []
     replaced = confirmed(stream)
-    return DecisionRun(council.id, idea_of(stream), stream.scope or [], choices, stream.proposals,
+    view = seen(stream)
+    hidden = hidden_of(stream)
+    carried = {question: found
+               for question, found in carried_analyses(stream, choices, replaced=replaced).items()
+               if found.proposal not in hidden.get(question, ())}
+    return DecisionRun(council.id, idea_of(stream), view.scope or [], choices, view.proposals,
                        fragments_of(council, stream), council.participants, council.judge,
                        runner, report, repository=repository_map(stream),
                        design=design_map(stream), accepted=stream.project_decisions or (),
-                       carried=carried_analyses(stream, choices, replaced=replaced),
-                       replaced=replaced)
+                       carried=carried, replaced=replaced)
 
 
 def assembling(council: Council, stream: Stream, runner: Runner, report: Report,
                notes: str | None, repositories: Path | None) -> OutcomeRun:
     """Сборка итогов из зафиксированных решений: готовые итоги, чьи решения те же,
-    закрепляются."""
+    закрепляются. Удалённых на «Вариантах» вариантов модели не видят (options.seen)."""
     scope, decisions = stream.scope or [], stream.decisions or []
-    return OutcomeRun(council.id, idea_of(stream), scope, decisions, stream.proposals,
+    view = seen(stream)
+    return OutcomeRun(council.id, idea_of(stream), view.scope or [], decisions, view.proposals,
                       fragments_of(council, stream), council.participants, council.judge, runner,
                       report, choices=stream.choices or (), repository=repository_map(stream),
                       design=design_map(stream), accepted=stream.project_decisions or (),
@@ -300,13 +308,15 @@ def rechecking(council: Council, stream: Stream, question_id: str, runner: Runne
     """«Пересчитать»: модели проверяют выбор вопроса question_id заново — как его проверяет шаг,
     но одного: другие вопросы они видят, как всегда, а их проверки не трогают. Выбор вопроса —
     тот, что на «Вариантах» сейчас, с заменами решений проекта, которые отметил человек; выбор
-    поменяли после проверки — без них (stream_decisions.recheck_basis). Ход — у вопроса
-    (Stream.rechecks) и помнит, какой выбор проверяет; кончился — его проверка встаёт в ход шага
-    (stream_decisions.rechecked)."""
+    поменяли после проверки — без них (stream_decisions.recheck_basis). Удалённых на «Вариантах»
+    вариантов модели не видят (options.seen). Ход — у вопроса (Stream.rechecks) и помнит, какой
+    выбор проверяет; кончился — его проверка встаёт в ход шага (stream_decisions.rechecked)."""
     report = reporter(store, council.id, recheck_slot(stream.group, question_id))
     choices, replaced = recheck_basis(stream, question_id)
-    pipeline = DecisionRun(council.id, idea_of(stream), stream.scope or [], choices,
-                           stream.proposals, fragments_of(council, stream), council.participants,
+    # Удалённый вариант, который был утверждён, пересчёт этого вопроса уже не видит.
+    view = seen(stream.model_copy(update={"choices": choices}))
+    pipeline = DecisionRun(council.id, idea_of(stream), view.scope or [], choices,
+                           view.proposals, fragments_of(council, stream), council.participants,
                            council.judge, runner, report, repository=repository_map(stream),
                            design=design_map(stream), accepted=stream.project_decisions or (),
                            replaced=replaced, only=question_id)

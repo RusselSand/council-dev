@@ -323,7 +323,10 @@ def decisions_of(council: Council, stream: Stored, notes: str | None) -> list[St
     order = order_of(stream.analysis)
     shown = placed(order, shown_of(stream), lambda item: item.question.id)
     on_step = [item.question.id for item in shown]
-    offered = {item.question.id: item for item in sets_of(stream, texts_of(council, stream))}
+    # Вариант решения, который удалили на «Вариантах», — тот, что проверили, пока решение не
+    # пересчитали.
+    offered = {item.question.id: item
+               for item in sets_of(stream, texts_of(council, stream), removed=True)}
     choices = {choice.question_id: choice for choice in stream.choices or []}
     options = {item.question.id: option_for(item.ruling.option, offered.get(item.question.id),
                                             choices.get(item.question.id))
