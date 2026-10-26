@@ -30,6 +30,7 @@ from spec_council.store import InMemoryStore, interrupted
 from tests.test_stream_options import ONE, OWN, SHARE, WHY, adds, chooses, offered, sets_of
 from tests.test_stream_options import Agents as OptionAgents
 from tests.test_stream_options import approves as approves_choice
+from tests.test_stream_options import edits as rewrites
 from tests.test_stream_questions import (
     MEASURE,
     SEARCH,
@@ -47,6 +48,7 @@ from tests.test_stream_questions import (
 client = TestClient(app)
 
 MINE = "Поиск по заголовкам дешевле всего."
+HEADERS = "Искать по заголовкам и первым сообщениям тредов"
 PROBLEM = "P1 ищет по всем тредам, а бюджет F3 этого не выдержит."
 LACKING = "Не хватает данных о нагрузке."
 RESULT = "Мерило идеи"
@@ -214,7 +216,7 @@ def test_checked_decisions_are_drafts_with_the_councils_rationale(store, pool):
         "option": option_at(council_id, "Q1", "P1"), "verdict": "validated", "note": None,
         "problem": None, "context": [], "conflicts": [], "replaces": [], "risks": [],
         "fixes": [], "rationale": WHY, "rationaleBy": "ai", "status": "draft", "recheck": None,
-        "cycle": []}
+        "unchecked": False, "cycle": []}
     # Передан как unresolved — судья взял вариант сам и объяснил почему.
     assert (q2["question"], q2["adr"], q2["option"], q2["verdict"], q2["note"]) == (
         questions["Q2"], "ADR-2", option_at(council_id, "Q2", "P2"), "recommended", "проще")
@@ -729,6 +731,204 @@ def test_a_retry_of_the_step_checks_the_marks_itself(store, pool, agents):
     q1 = next(d for d in shown["decisions"] if d["question"]["id"] == "Q1")
     assert (shown["run"], q1["verdict"], q1["replaces"], q1["recheck"]) == (
         2, "validated", [{"id": "ADR-0005", "decision": SERVER}], None)
+
+
+# --- выбор поменяли на готовых «Вариантах»: пересчитать вопрос с новым выбором
+
+def test_a_choice_changed_on_the_done_options_waits_for_a_recheck(store, pool):
+    """Решение владельца: выбор по вопросу поменяли на готовых «Вариантах» — пока вопрос не
+    пересчитан, его решение не зафиксировать, и «Зафиксировать решения» недоступно. Моделей
+    смена выбора не зовёт; вернули прежний выбор — пересчитывать нечего."""
+    council_id, _ = checked(store, pool)
+    assert edits(council_id, "Q1", MINE, "fixed").status_code == 200
+    assert edits(council_id, "Q2", MINE, "fixed").status_code == 200
+    before = stored(store, council_id)
+    res = chooses(council_id, "Q1", "F2")
+    assert res.status_code == 200 and res.json()["optionSet"]["unchecked"] is True
+    assert {q: item["unchecked"] for q, item in sets_of(council_id).items()} == {
+        "Q1": True, "Q2": False, "Q3": False}
+    shown = decisions_of(council_id)
+    q1 = shown["Q1"]
+    # Решение — по проверке прежнего выбора, и оно не зафиксировано.
+    assert (q1["option"]["id"], q1["rationale"], q1["rationaleBy"], q1["status"], q1["recheck"],
+            q1["unchecked"]) == ("P1", MINE, "user", "draft", "ready", True)
+    assert [(shown[q]["status"], shown[q]["recheck"], shown[q]["unchecked"])
+            for q in ("Q2", "Q3")] == [("fixed", None, False), ("draft", None, False)]
+    decisions = steps_of(stream_of(council_id))["decisions"]
+    assert (decisions["state"], decisions["note"]) == ("waiting", "решено 1 из 3")
+    after = stored(store, council_id)
+    assert (after.choices, after.analysis, pool.jobs) == (before.choices, before.analysis, [])
+    assert error_of(edits(council_id, "Q1", MINE, "fixed")) == (409, "decisions_not_ready")
+    assert error_of(approves(council_id)) == (409, "decisions_not_ready")
+    # Вернули прежний выбор — он тот, что проверили: решение снова зафиксировано.
+    assert chooses(council_id, "Q1", "P1").json()["optionSet"]["unchecked"] is False
+    q1 = decisions_of(council_id)["Q1"]
+    assert (q1["status"], q1["recheck"], q1["unchecked"]) == ("fixed", None, False)
+    # Снова другой выбор: не фиксируют, а править решение — можно.
+    assert chooses(council_id, "Q1", "F2").status_code == 200
+    q1 = edits(council_id, "Q1", WHY, "open").json()["decision"]
+    assert (q1["rationale"], q1["status"], q1["unchecked"]) == (WHY, "open", True)
+
+
+def test_a_recheck_checks_the_new_choice_and_takes_it(store, pool, agents):
+    """Как в совете из задачи: на готовых «Вариантах» выбрали свой вариант на основе проверенного,
+    а «Решения» показывают проверку прежнего с противоречием. «Пересчитать» проверяет новый выбор
+    — без отметок прежнего — и утверждает его; «почему» пишет ИИ по новой проверке."""
+    council_id, _ = clashing(store, pool, agents)
+    assert marks(council_id, "Q1", "ADR-0005", rationale=MINE, status="fixed").status_code == 200
+    mine = adds(council_id, "Q1", HEADERS, based_on="P1").json()["option"]["id"]
+    assert chooses(council_id, "Q1", mine).json()["optionSet"]["unchecked"] is True
+    q1 = decisions_of(council_id)["Q1"]
+    assert (q1["option"]["id"], q1["verdict"], q1["status"], q1["recheck"], q1["unchecked"]) == (
+        "P1", "conflict", "draft", "ready", True)
+    assert q1["replaces"] == [{"id": "ADR-0005", "decision": SERVER}]
+    assert error_of(marks(council_id, "Q1", "ADR-0005", status="fixed")) == (
+        409, "decisions_not_ready")
+    asked = len(agents.prompts["decision_analysis"])
+    q1 = rechecks(council_id, "Q1").json()["decision"]
+    assert (q1["recheck"], q1["status"], q1["unchecked"]) == ("running", "draft", True)
+    assert round_of(council_id)["run"] == 1
+    del agents.judged["Q1"]                             # новый выбор ничему не противоречит
+    pool.run()
+    prompts = agents.prompts["decision_analysis"][asked:]
+    assert {json.loads(section(prompt, "OPEN QUESTION"))["id"] for prompt in prompts} == {"Q1"}
+    assert json.loads(section(prompts[0], "USER SELECTION"))["proposal_id"] == mine
+    assert {"id": mine, "source": "user", "text": HEADERS} in json.loads(
+        section(prompts[0], "PROPOSALS"))
+    accepted = json.loads(section(prompts[0], "ACCEPTED DECISIONS"))
+    assert [d.get("replaced_by_this_decision") for d in accepted] == [None, None]
+    q1 = decisions_of(council_id)["Q1"]
+    assert q1["option"] == option_at(council_id, "Q1", mine)
+    assert (q1["verdict"], q1["conflicts"], q1["rationale"], q1["rationaleBy"], q1["status"],
+            q1["replaces"], q1["recheck"], q1["unchecked"]) == (
+        "validated", [], WHY, "ai", "draft", [], None, False)
+    assert sets_of(council_id)["Q1"]["unchecked"] is False
+    after = stored(store, council_id)
+    assert [(c.proposal, c.text, c.based_on) for c in after.choices if c.question_id == "Q1"] == [
+        (mine, HEADERS, "P1")]
+    assert f"Q1: {mine}: {HEADERS}" in after.analysis.choices
+    assert (after.analysis.launch, after.rechecks) == (1, {})
+    assert edits(council_id, "Q1", WHY, "fixed").status_code == 200
+    assert approves(council_id).status_code == 200
+    assert [(d.question_id, d.proposal) for d in stored(store, council_id).decisions][0] == (
+        "Q1", mine)
+
+
+def test_a_new_text_of_ones_own_option_is_a_new_choice_too(store, pool, agents):
+    council_id, own = checked(store, pool)
+    assert rewrites(council_id, "Q3", own, HEADERS).status_code == 200
+    q3 = decisions_of(council_id)["Q3"]
+    # Решение — по проверке прежнего текста, как его видели модели.
+    assert (q3["option"]["text"], q3["recheck"], q3["unchecked"]) == (OWN, "ready", True)
+    assert sets_of(council_id)["Q3"]["unchecked"] is True
+    asked = len(agents.prompts["decision_analysis"])
+    assert rechecks(council_id, "Q3").status_code == 200
+    pool.run()
+    prompts = agents.prompts["decision_analysis"][asked:]
+    assert {"id": own, "source": "user", "text": HEADERS} in json.loads(
+        section(prompts[0], "PROPOSALS"))
+    q3 = decisions_of(council_id)["Q3"]
+    assert (q3["option"]["text"], q3["recheck"], q3["unchecked"]) == (HEADERS, None, False)
+    assert [c.text for c in stored(store, council_id).choices if c.question_id == "Q3"] == [
+        HEADERS]
+
+
+def test_a_stopped_recheck_of_a_new_choice_keeps_the_old_check(store, pool, agents):
+    council_id, _ = checked(store, pool)
+    assert edits(council_id, "Q1", MINE, "fixed").status_code == 200
+    assert chooses(council_id, "Q1", "F2").status_code == 200
+    agents.stuck = {"Q1"}
+    assert rechecks(council_id, "Q1").status_code == 200
+    pool.run()
+    q1 = decisions_of(council_id)["Q1"]
+    assert (q1["option"]["id"], q1["rationale"], q1["status"], q1["recheck"], q1["unchecked"]) == (
+        "P1", MINE, "draft", "failed", True)
+    assert [c.proposal for c in stored(store, council_id).choices if c.question_id == "Q1"] == [
+        "P1"]
+    assert error_of(approves(council_id)) == (409, "decisions_not_ready")
+    agents.stuck = set()
+    assert rechecks(council_id, "Q1").json()["decision"]["recheck"] == "running"
+    pool.run()
+    q1 = decisions_of(council_id)["Q1"]
+    assert (q1["option"]["id"], q1["rationale"], q1["rationaleBy"], q1["recheck"],
+            q1["unchecked"]) == ("F2", WHY, "ai", None, False)
+
+
+def rested(store, pool, agents) -> tuple[str, str]:
+    """Проверка Q1 опиралась на свой вариант Q3; его текст поменяли на «Вариантах» и Q3
+    пересчитали. Решение Q1 зафиксировано. В ответ — совет и id своего варианта."""
+    agents.judged["Q1"] = {"status": "validated", "proposal_id": "P1",
+                           "rationale": {"text": WHY, "source": "ai"},
+                           "validation": {"depends_on_question_ids": ["Q3"]}}
+    council_id, own = checked(store, pool)
+    assert edits(council_id, "Q1", MINE, "fixed").status_code == 200
+    assert rewrites(council_id, "Q3", own, HEADERS).status_code == 200
+    # Пока Q3 не пересчитали, у Q1 пересчитывать нечего.
+    assert decisions_of(council_id)["Q1"]["recheck"] is None
+    asked = len(agents.prompts["decision_analysis"])
+    assert rechecks(council_id, "Q3").status_code == 200
+    pool.run()
+    # Пересчитали только Q3: Q1 сам не пересчитывается.
+    assert {json.loads(section(prompt, "OPEN QUESTION"))["id"]
+            for prompt in agents.prompts["decision_analysis"][asked:]} == {"Q3"}
+    return council_id, own
+
+
+def test_decisions_that_rest_on_the_old_choice_can_be_rechecked_and_fixed(store, pool, agents):
+    """Решение владельца: решения других вопросов, проверка которых опиралась на прежний выбор,
+    сами не пересчитываются, но у них видно, что их можно пересчитать; фиксировать их можно."""
+    council_id, own = rested(store, pool, agents)
+    q1 = decisions_of(council_id)["Q1"]
+    assert (q1["recheck"], q1["unchecked"], q1["status"], q1["rationale"]) == (
+        "ready", False, "fixed", MINE)
+    # «В контексте» — решение Q3, как оно сейчас; проверка Q1 — с прежним текстом.
+    assert q1["context"] == [{"question": "Q3", "option": own, "text": HEADERS}]
+    found = next(f for f in stored(store, council_id).analysis.analyses if f.question_id == "Q1")
+    assert found.context == [f"Q3: {own}: {OWN}"]
+    assert sets_of(council_id)["Q1"]["unchecked"] is False
+    assert edits(council_id, "Q1", MINE, "fixed").status_code == 200
+    assert approves(council_id).status_code == 200
+
+
+def test_a_recheck_of_a_decision_that_rested_on_the_old_choice_takes_the_new_one(store, pool,
+                                                                               agents):
+    council_id, own = rested(store, pool, agents)
+    assert rechecks(council_id, "Q1").json()["decision"]["recheck"] == "running"
+    pool.run()
+    q1 = decisions_of(council_id)["Q1"]
+    # Выбор Q1 тот же — «почему» человека остаётся.
+    assert (q1["recheck"], q1["rationale"], q1["rationaleBy"], q1["status"]) == (
+        None, MINE, "user", "draft")
+    found = next(f for f in stored(store, council_id).analysis.analyses if f.question_id == "Q1")
+    assert found.context == [f"Q3: {own}: {HEADERS}"]
+
+
+def test_a_stream_of_the_prior_version_has_no_changed_choice(store):
+    """Поток прежней версии помнит только утверждённый выбор (свой вариант — в нём текстом): он
+    и на «Вариантах», и пересчитывать нечего."""
+    council_id = streaming(store)
+    questions = [OpenQuestion(id="Q1", text=SEARCH, source="inferred", proposal_ids=[2]),
+                 OpenQuestion(id="Q2", text=MEASURE, source="discovered")]
+    found = [QuestionOptions(question_id="Q1", verdict="recommended", proposals=[
+                 Proposal(id="P1", text=ONE, reason="так проще", recommended=True)]),
+             QuestionOptions(question_id="Q2", verdict="recommended", proposals=[
+                 Proposal(id="P2", text=SHARE, reason="мерило", recommended=True)])]
+    put(store, council_id, project_decisions=[],
+        questions=QuestionDiscovery(state="done", run="q1", steps=[], questions=questions),
+        scope=questions, proposals=ProposalDiscovery(state="done", run="p1", steps=[],
+                                                     options=found),
+        choices=[Choice(question_id="Q1", proposal="P1"),
+                 Choice(question_id="Q2", proposal="P3", text=OWN, based_on="P2")],
+        analysis=DecisionAnalysis(state="done", run="a1", steps=[], analyses=[
+            QuestionAnalysis(question_id="Q1", verdict="validated", proposal="P1",
+                             depends_on=["Q2"], context=[f"Q2: P3: {OWN}"], rationale=WHY),
+            QuestionAnalysis(question_id="Q2", verdict="validated", proposal="P3",
+                             rationale=WHY)]))
+    shown = decisions_of(council_id)
+    assert {q: (d["recheck"], d["unchecked"]) for q, d in shown.items()} == {
+        "Q1": (None, False), "Q2": (None, False)}
+    assert {q: item["unchecked"] for q, item in sets_of(council_id).items()} == {
+        "Q1": False, "Q2": False}
 
 
 # --- зафиксировать решения
