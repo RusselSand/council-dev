@@ -1,6 +1,7 @@
 """Заметки проекта: формат Causa, правила графа, номера, статусы решений и команда агентов."""
 
 import json
+from dataclasses import replace
 
 import pytest
 
@@ -11,9 +12,11 @@ from spec_council.notes import (
     declared_replacements,
     issues_in,
     main,
+    marked,
     parsed,
     path_of,
     rendered,
+    unmarked,
 )
 
 
@@ -44,6 +47,49 @@ def test_a_note_is_written_and_read_as_causa_does():
     assert parsed(text) == ADR
     assert rendered(IDEA).startswith("---\nid: IDEA-0001\ntype: idea\nlinks: []\n---\n")
     assert parsed(rendered(IDEA)) == IDEA
+
+
+def test_a_superseded_decision_says_by_what_as_the_last_frontmatter_line():
+    """Решение владельца к задаче «…заменённый ADR получает superseded_by во frontmatter»: поле —
+    последней строкой frontmatter, после links."""
+    superseded = replace(ADR, superseded_by="ADR-0002")
+    text = rendered(superseded)
+    assert text == ("---\nid: ADR-0001\ntype: adr\nlinks:\n- PRO-0001\nsuperseded_by: ADR-0002\n"
+                    f"---\n\n{ADR.body}\n")
+    assert parsed(text) == superseded
+    assert marked(rendered(ADR), "ADR-0002") == text
+    assert unmarked(text) == rendered(ADR)
+
+
+@pytest.mark.parametrize("by", ["ADR-0002", "ADR-2", "'ADR-0002'"])
+def test_the_same_superseded_by_leaves_the_file_as_it_is(by):
+    text = f"---\nid: ADR-0001\ntype: adr\nsuperseded_by: {by}\nlinks: []\n---\nРешение.\n"
+    assert marked(text, "ADR-0002") is None
+
+
+def test_another_superseded_by_is_replaced_in_place_and_the_rest_stays():
+    text = ("---\r\nid: ADR-0001\r\ntype: adr\r\nsuperseded_by: ADR-0009\r\nlinks: [PRO-0001]\r\n"
+            "status: superseded\r\n---\r\nРешение.\r\n\r\nsuperseded_by: в тексте\r\n")
+    assert marked(text, "ADR-0002") == text.replace("ADR-0009", "ADR-0002")
+
+
+def test_superseded_by_is_added_with_the_files_line_breaks():
+    text = "---\r\nid: ADR-0001\r\ntype: adr\r\nlinks: []\r\n---\r\nРешение.\r\n"
+    added = marked(text, "ADR-0002")
+    assert added == ("---\r\nid: ADR-0001\r\ntype: adr\r\nlinks: []\r\nsuperseded_by: ADR-0002"
+                     "\r\n---\r\nРешение.\r\n")
+    assert unmarked(added) == text
+    assert parsed(added).superseded_by == "ADR-0002"
+    with pytest.raises(NotesError, match="нет frontmatter"):
+        marked("Без frontmatter", "ADR-0002")
+
+
+def test_the_status_is_not_read_from_superseded_by():
+    """Статус решения считает каталог, а не поле: оно лишь записывает, что каталог уже считает."""
+    catalog = Catalog({note.id: note for note in (*CHAIN[:-1],
+                                                  replace(ADR, superseded_by="ADR-0002"))})
+    assert catalog.status("ADR-0001") == ("active", None)
+    assert catalog.problems() == []
 
 
 def test_links_written_by_hand_in_flow_style_are_read_too():

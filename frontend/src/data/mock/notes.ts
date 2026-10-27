@@ -235,6 +235,7 @@ const PROTO_STATUS: StatusChange[] = [
     supersededBy: 'ADR-0010',
     chain: ['OQ-0012', 'P41', 'ADR-0010'],
     note: 'После выгрузки ADR-0005 остаётся в каталоге, но не действует: следующие советы увидят его как «заменено ADR-0010» и отберут вместо него ADR-0010.',
+    frontmatter: true,
   },
 ];
 

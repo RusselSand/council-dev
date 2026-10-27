@@ -446,6 +446,7 @@ export const ru = {
   'notes.statusChange.arrow': '→',
   'notes.statusChange.by': 'заменено',
   'notes.statusChange.chain': 'цепочка: {chain}',
+  'notes.statusChange.frontmatter': 'во frontmatter: superseded_by: {id}',
   'notes.status.active': 'active',
   'notes.status.under_review': 'under_review',
   'notes.status.superseded': 'superseded',

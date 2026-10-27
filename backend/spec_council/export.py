@@ -16,7 +16,10 @@
 заметка, и её решение — решение исходного. Совет написал бы то же, что в прошлый раз, —
 остаётся то, что тогда записали, с правками человека. Файл, который правили руками после
 выгрузки, совет не трогает. Исчезнувшее само не удаляется. Итоги, что выгружали раньше, потоку
-больше не принадлежат: их совет не читает и не пишет.
+больше не принадлежат: их совет не читает и не пишет. Решениям каталога, которые запись делает
+заменёнными, она дописывает во frontmatter superseded_by — и только это (notes.marked); такое
+поле в файле прежней выгрузки — правка совета, а не человека: запись о выгрузке помнит файл без
+него (unmarked_digest, written_as).
 
 Тексты потока называют его части его же номерами: «по Q1», «(F3)». В заметки они ложатся
 номерами заметок, а у чего заметки нет — без номера (renumbered).
@@ -61,8 +64,10 @@ from .notes import (
     Note,
     NotesError,
     declared_replacements,
+    marked,
     path_of,
     rendered,
+    unmarked,
 )
 from .proposals import found_by_question
 from .questions import same_question
@@ -1025,6 +1030,27 @@ def digest_of(path: Path) -> str:
         return ""
 
 
+def unmarked_digest(path: Path, kind: str) -> str:
+    """Отпечаток выгруженного файла: заметки — без superseded_by во frontmatter (notes.unmarked).
+    Его дописывает и меняет выгрузка другого потока (notes.marked) — это правит совет, а не
+    человек, и отпечаток от этого не меняется. Файл задачи — как есть."""
+    if kind == "issue":
+        return digest_of(path)
+    try:
+        text = path.read_bytes().decode("utf-8")
+    except (OSError, UnicodeError):
+        return digest_of(path)
+    return hashlib.sha256(unmarked(text).encode("utf-8")).hexdigest()
+
+
+def written_as(path: Path, digest: str, kind: str) -> bool:
+    """Файл — тот, что выгрузили (digest): и тогда, когда выгрузка другого потока с тех пор
+    дописала или поменяла во frontmatter заметки, каким решением она заменена (unmarked_digest).
+    Запись прежней версии помнит отпечаток файла как есть (digest_of) — с полем, если оно в файле
+    тогда уже было."""
+    return digest in (digest_of(path), unmarked_digest(path, kind))
+
+
 def drafted(stream: Stream, fragments: Mapping[int, LabeledFragment], shelf: Shelf,
             previous: NotesExport | None, words: Mapping[str, str],
             language: str, reserved: Collection[str] = ()
@@ -1142,7 +1168,7 @@ def settled(plan: NotePlan, old: ExportedNote | None, shelf: Shelf) -> NotePlan:
     if held is None:
         return plan.model_copy(update={"action": "create", "current": None})
     path = shelf.path(plan.id, plan.type)
-    if old is not None and digest_of(path) != old.digest:
+    if old is not None and not written_as(path, old.digest, plan.type):
         return plan.model_copy(update={"action": "edited", "current": held.body})
     if held.body == plan.text.strip() and list(held.links) == plan.links:
         return plan.model_copy(update={"action": "same", "current": None})
@@ -1152,10 +1178,15 @@ def settled(plan: NotePlan, old: ExportedNote | None, shelf: Shelf) -> NotePlan:
 def written(notes: Sequence[NotePlan], vanished: Sequence[VanishedNote],
             edits: Mapping[str, str], delete: Sequence[str], shelf: Shelf,
             previous: NotesExport | None,
-            keep: Callable[[list[ExportedNote]], None] | None = None) -> list[ExportedNote]:
+            keep: Callable[[list[ExportedNote]], None] | None = None, *,
+            marks: Mapping[str, str] | None = None) -> list[ExportedNote]:
     """Записывает подтверждённое: заметки с правками человека (edits — по ключу), удаляет
     отмеченные исчезнувшие. Файлы, правленные руками, — не трогает. Вернёт, что выгружено, —
-    и исчезнувшие, что человек оставил в каталоге: они всё ещё потока.
+    и исчезнувшие, что человек оставил в каталоге: они всё ещё потока. marks — решения каталога,
+    что после записи стали заменёнными, и каким решением: в их файлы — во frontmatter —
+    дописывается superseded_by (notes.marked; решение владельца к задаче «Бекенд · Поток ·
+    Документация: заменённый ADR получает superseded_by во frontmatter»). Заметка, которую
+    запись переписывает, superseded_by из своего файла не теряет.
 
     Сначала номера в правках и пустой текст, потом временные файлы, подмена и удаление одним
     шагом с откатом (committed), потом keep — запись о выгрузке. Отказ на любом шаге, и в keep
@@ -1178,8 +1209,15 @@ def written(notes: Sequence[NotePlan], vanished: Sequence[VanishedNote],
     try:
         for plan in changed:
             path = where(plan.id, plan.type)
-            note = Note(plan.id, plan.type, texts[plan.key], tuple(plan.links))
+            held = shelf.held(plan.id, plan.type)
+            note = Note(plan.id, plan.type, texts[plan.key], tuple(plan.links),
+                        superseded_by=held.superseded_by if held is not None else None)
             staged.append((staged_file(path, file_text(note)), path))
+        for adr_id, by in (marks or {}).items():
+            path = where(adr_id, "adr")
+            text = marked(read_note(path), by, path)
+            if text is not None:
+                staged.append((staged_file(path, text), path))
     except NotesError:
         for part, _ in staged:
             part.unlink(missing_ok=True)
@@ -1202,7 +1240,8 @@ def written(notes: Sequence[NotePlan], vanished: Sequence[VanishedNote],
             exported.append(ExportedNote(key=plan.key, id=plan.id, type=plan.type,
                                          generated=plan.generated, written=texts[plan.key],
                                          links=plan.links,
-                                         digest=digest_of(where(plan.id, plan.type)),
+                                         digest=unmarked_digest(where(plan.id, plan.type),
+                                                                plan.type),
                                          note_numbers=True, references=references))
         exported += [old.model_copy(update={"kept": True}) for old in before.values()
                      if old.id in gone and old.id not in delete]
@@ -1310,6 +1349,14 @@ def numbering_problem(source: str, text: str) -> str | None:
         return ("строка замен не та: отдельным абзацем «Заменяет: ADR-…, ADR-….», как в "
                 "исходном тексте")
     return None
+
+
+def read_note(path: Path) -> str:
+    """Файл заметки как есть — с его переносами строк."""
+    try:
+        return path.read_text(encoding="utf-8", newline="")
+    except (OSError, UnicodeError) as exc:
+        raise NotesError(f"Заметку {path.name} не прочитать: {exc}") from exc
 
 
 def staged_file(path: Path, text: str) -> Path:

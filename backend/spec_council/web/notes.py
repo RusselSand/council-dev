@@ -5,7 +5,8 @@
 тому, что в каталоге сейчас (stream_notes.py). Язык заметок тот же, что у работы совета, — шаг ждёт
 вас сразу после «Утвердить итоги»; другой — сначала судья переводит черновик (решение q-008
 бекенда), а пока он переводит или перевод остановился, черновик не записать. «Записать в каталог»
-пишет черновик в каталог файлом на заметку, и шаг готов; после записи выгрузка та же — записанный
+пишет черновик в каталог файлом на заметку, а решениям проекта, что стали заменёнными, дописывает
+во frontmatter superseded_by, и шаг готов; после записи выгрузка та же — записанный
 черновик, с теми же метками и сменами статуса. Каталог с тех пор поменялся так, что перевод к
 черновику уже не подходит, — судья сначала переводит заново, и шаг снова «ИИ работает». Каталога
 нет — записывать некуда: шаг так же готов, а заметок нет. Записали последний поток — все готовы, и
@@ -80,6 +81,7 @@ class StatusChange(Schema):
     superseded_by: str | None
     chain: list[str]
     note: str
+    frontmatter: bool
 
 
 class NotesExport(Schema):
@@ -250,9 +252,13 @@ def exported_of(stream: Stored) -> list[Note]:
 
 
 def change_of(shift: StatusShift) -> StatusChange:
+    """Смена статуса решения проекта; frontmatter — запись допишет в его файл superseded_by
+    (решение владельца к задаче «…заменённый ADR получает superseded_by во frontmatter»)."""
+    superseded = shift.after == "superseded"
     return StatusChange(id=shift.adr_id, title=shift.title, from_=shift.before, to=shift.after,
-                        superseded_by=shift.superseded_by if shift.after == "superseded" else None,
-                        chain=shift.chain, note=shift_note(shift))
+                        superseded_by=shift.superseded_by if superseded else None,
+                        chain=shift.chain, note=shift_note(shift),
+                        frontmatter=superseded and shift.frontmatter)
 
 
 def shift_note(shift: StatusShift) -> str:

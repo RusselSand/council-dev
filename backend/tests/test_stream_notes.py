@@ -13,7 +13,7 @@ from spec_council import stream_notes
 from spec_council.app import app
 from spec_council.deps import get_agents, get_launcher, get_projects, get_repositories, get_store
 from spec_council.models import ExportedNote, NotePlan, NotesDraft, NotesExport, ProjectDraft
-from spec_council.notes import Catalog, Note, path_of, rendered
+from spec_council.notes import Catalog, Note, marked, path_of, rendered
 from spec_council.pipeline import ModelFailed
 from spec_council.projects import Projects
 from spec_council.store import InMemoryStore
@@ -374,15 +374,27 @@ def test_a_question_that_revisits_a_past_decision_supersedes_it(store, pool, pro
         "id": "ADR-0001", "title": PAST, "from": "active", "to": "superseded",
         "supersededBy": "ADR-0002", "chain": ["OQ-0002", proposal, "ADR-0002"],
         "note": "После выгрузки ADR-0001 остаётся в каталоге, но не действует: следующие советы "
-                "увидят его как «заменено ADR-0002» и отберут вместо него ADR-0002."}]
+                "увидят его как «заменено ADR-0002» и отберут вместо него ADR-0002.",
+        "frontmatter": True}]
     assert writes(council_id).status_code == 200
     catalog = Catalog.load(docs)
     assert catalog.status("ADR-0001") == ("superseded", "ADR-0002")
     assert catalog.notes["OQ-0002"].links == (found(export, "idea", "")["id"],)
     assert catalog.notes["ADR-0002"].body.endswith("\n\nЗаменяет: ADR-0001.")
     assert catalog.problems() == []
+    # Заменённое решение само говорит, каким заменено: superseded_by — последней строкой
+    # frontmatter (решение владельца к задаче «…заменённый ADR получает superseded_by во
+    # frontmatter»); текст решения тот же.
+    assert (docs / "adrs" / "ADR-0001.md").read_text(encoding="utf-8") == (
+        f"---\nid: ADR-0001\ntype: adr\nlinks:\n- PRO-0001\nsuperseded_by: ADR-0002\n---\n\n"
+        f"{PAST}\n\nТак проще.\n")
     # После записи — та же смена статуса: каталог её уже не помнит, а выгрузка помнит.
     assert export_of(council_id) == export
+    # Черновик прежней версии поле не дописывал — у его смены статуса этого нет.
+    draft = stored(store, council_id).notes_draft
+    put(store, council_id, notes_draft=NotesDraft.model_validate(
+        draft.model_dump(exclude={"shifts": {"__all__": {"frontmatter"}}})))
+    assert export_of(council_id)["statusChanges"][0]["frontmatter"] is False
 
 
 def past_decisions(root) -> None:
@@ -431,15 +443,17 @@ def test_a_decision_confirmed_to_replace_past_decisions_supersedes_them_all(stor
         {"id": adr, "type": "decision", "title": title, "change": "superseded", "revisits": None,
          "supersedes": [], "supersededBy": decided["id"]}
         for adr, title in (("ADR-0001", PAST), ("ADR-0002", OTHER_PAST))]
-    assert [(change["id"], change["from"], change["to"], change["supersededBy"], change["chain"])
-            for change in export["statusChanges"]] == [
-        (adr, "active", "superseded", decided["id"], [asked["id"], chosen["id"], decided["id"]])
-        for adr in ("ADR-0001", "ADR-0002")]
+    assert [(change["id"], change["from"], change["to"], change["supersededBy"], change["chain"],
+             change["frontmatter"]) for change in export["statusChanges"]] == [
+        (adr, "active", "superseded", decided["id"], [asked["id"], chosen["id"], decided["id"]],
+         True) for adr in ("ADR-0001", "ADR-0002")]
     assert writes(council_id).status_code == 200
     catalog = Catalog.load(docs)
     assert catalog.problems() == []
     assert catalog.status("ADR-0001") == catalog.status("ADR-0002") == (
         "superseded", decided["id"])
+    assert catalog.notes["ADR-0001"].superseded_by == catalog.notes["ADR-0002"].superseded_by \
+        == decided["id"]
     assert catalog.notes[decided["id"]].body == (
         "Искать по заголовкам тредов, потому что поиск по заголовкам дешевле всего.\n\n"
         "Заменяет: ADR-0002, ADR-0001.")
@@ -514,6 +528,111 @@ def test_an_open_question_revisiting_a_decision_gone_from_the_catalog_is_exporte
     assert approves(council_id).status_code == 200
     assert writes(council_id).status_code == 200
     assert Catalog.load(docs).problems() == []
+
+
+# --- superseded_by во frontmatter заменённого решения (решение владельца к задаче «Бекенд ·
+# Поток · Документация: заменённый ADR получает superseded_by во frontmatter»)
+
+def decided_replacing(store, pool, projects, *adrs: str) -> str:
+    """Итоги потока A утверждены, а решение по Q1 заменяет решения проекта adrs."""
+    council_id = assembled(store, pool)
+    replacing(store, council_id, "Q1", *adrs)
+    with_project(store, projects, council_id)
+    assert approves_one(council_id, "O1").status_code == 200
+    assert approves(council_id).status_code == 200
+    return council_id
+
+
+def test_a_superseded_by_already_in_the_file_stays_and_another_one_is_replaced(
+        store, pool, projects, docs):
+    """Поле уже есть и то же (ADR-3 и ADR-0003 — одно решение) — файл не меняется; другое —
+    заменяется на месте. Остальное в файле — как было: другие поля, текст, переносы строк."""
+    past_decisions(docs)
+    same = docs / "adrs" / "ADR-0001.md"
+    same.write_bytes(rendered(Note("ADR-0001", "adr", f"{PAST}\n\nТак проще.", ("PRO-0001",),
+                                   superseded_by="ADR-3")).encode())
+    other = docs / "adrs" / "ADR-0002.md"
+    other.write_bytes(b"---\r\nid: ADR-0002\r\ntype: adr\r\nsuperseded_by: ADR-0009\r\n"
+                      b"links: [PRO-0002]\r\nstatus: superseded\r\n---\r\n"
+                      + OTHER_PAST.encode() + b"\r\n")
+    before = same.read_bytes(), other.read_bytes()
+    council_id = decided_replacing(store, pool, projects, "ADR-0001", "ADR-0002")
+    export = export_of(council_id)
+    decided = found(export, "decision", "Искать по заголовкам тредов")["id"]
+    assert decided == "ADR-0003"
+    assert [(change["id"], change["supersededBy"], change["frontmatter"])
+            for change in export["statusChanges"]] == [
+        ("ADR-0001", decided, False), ("ADR-0002", decided, True)]
+    assert writes(council_id).status_code == 200
+    assert same.read_bytes() == before[0]
+    assert other.read_bytes() == before[1].replace(b"ADR-0009", decided.encode())
+    catalog = Catalog.load(docs)
+    assert catalog.status("ADR-0002") == ("superseded", decided)
+    assert catalog.notes["ADR-0002"].body == OTHER_PAST
+    assert export_of(council_id) == export
+
+
+def test_a_failed_save_puts_the_superseded_decision_back(store, pool, projects, docs,
+                                                         monkeypatch):
+    past_decision(docs)
+    adr = docs / "adrs" / "ADR-0001.md"
+    before = adr.read_bytes()
+    council_id = assembled(store, pool)
+    revisiting(store, council_id, "Q1")
+    with_project(store, projects, council_id)
+    assert approves_one(council_id, "O1").status_code == 200
+    assert approves(council_id).status_code == 200
+
+    def full(*args, **kwargs):
+        raise OSError(28, "No space left on device")
+
+    monkeypatch.setattr(store, "update_council", full)
+    with pytest.raises(OSError):
+        writes(council_id)
+    assert adr.read_bytes() == before
+    assert sorted(path.name for path in (docs / "adrs").iterdir()) == ["ADR-0001.md"]
+
+
+def test_a_decision_another_stream_superseded_is_not_a_hand_edit_of_its_own_stream(
+        store, pool, projects, docs):
+    """Решение одного потока заменил другой поток: superseded_by в его файл дописал совет, а не
+    человек, — для потока, что его записал, файл не «правили руками». Переписывает он такое
+    решение — superseded_by остаётся."""
+    first = outcomes_approved(store, pool, projects)
+    assert writes(first).status_code == 200
+    adr = docs / "adrs" / "ADR-0001.md"
+    second = decided_replacing(store, pool, projects, "ADR-0001")
+    by = found(export_of(second), "decision", "Искать по заголовкам тредов")["id"]
+    assert writes(second).status_code == 200
+    assert Catalog.load(docs).notes["ADR-0001"].superseded_by == by
+    # Выгрузка первого потока устарела — «Документация» снова ждёт вас.
+    record = stored(store, first).notes
+    put(store, first, notes=record.model_copy(update={"outcomes": ""}))
+    assert {note["change"] for note in export_of(first)["notes"]} == {"kept"}
+    # Файл решения с тех пор другой, а правок руками нет — перепишется, и поле останется. Запись
+    # о выгрузке — как у прежней версии: отпечаток файла как есть, с полем.
+    adr.write_text(rendered(Note("ADR-0001", "adr", "Старое решение.", ("PRO-0001",),
+                                 superseded_by=by)), encoding="utf-8")
+    digest = hashlib.sha256(adr.read_bytes()).hexdigest()
+    put(store, first, notes=record.model_copy(update={"outcomes": "", "notes": [
+        note.model_copy(update={"digest": digest}) if note.id == "ADR-0001" else note
+        for note in record.notes]}))
+    assert {note["id"]: note["change"] for note in export_of(first)["notes"]}["ADR-0001"] == \
+        "rewritten"
+    assert writes(first).status_code == 200
+    written = Catalog.load(docs).notes["ADR-0001"]
+    assert written.body.startswith("Искать по заголовкам тредов")
+    assert written.superseded_by == by
+    # Поток записал решение, когда поле в файле уже было, а потом совет заменил решение снова,
+    # другим, — поле поменялось на месте. И это не правка руками.
+    adr.write_bytes(marked(adr.read_bytes().decode("utf-8"), "ADR-0009").encode("utf-8"))
+    put(store, first, notes=stored(store, first).notes.model_copy(update={"outcomes": ""}))
+    assert {note["id"]: note["change"] for note in export_of(first)["notes"]}["ADR-0001"] == \
+        "kept"
+    # А правку текста руками видно и в файле с полем.
+    adr.write_bytes(adr.read_bytes() + "Дописали руками.\n".encode())
+    assert {note["id"]: note["change"] for note in export_of(first)["notes"]}["ADR-0001"] == \
+        "manual"
 
 
 # --- выгрузку не собрать

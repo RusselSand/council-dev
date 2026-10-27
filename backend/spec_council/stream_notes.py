@@ -16,8 +16,10 @@ Stream.notes_draft, черновик с ходом судьи (pipeline.NotesRun
 подходит, судья на «Записать в каталог» переводит заново.
 
 Записанный черновик ложится в поток (Stream.notes_draft, с номером выгрузки): после записи шаг
-показывает его — с теми же метками и сменами статуса решений проекта, что были до записи. Без ввода
-с экрана; каталог читает и пишет export.py.
+показывает его — с теми же метками и сменами статуса решений проекта, что были до записи. Решение
+проекта, которое запись делает заменённым, получает в своём файле superseded_by во frontmatter
+(решение владельца к задаче «Бекенд · Поток · Документация: заменённый ADR получает superseded_by во
+frontmatter»): это видно у смены его статуса. Без ввода с экрана; каталог читает и пишет export.py.
 """
 
 from collections.abc import Callable, Collection, Iterable, Mapping, Sequence
@@ -52,7 +54,7 @@ from .models import (
     TasksDraft,
     TasksExport,
 )
-from .notes import Catalog, Note, NotesError, order
+from .notes import Catalog, Note, NotesError, number_of, order
 from .options import seen
 from .pipeline import NotesRun, Runner, translating
 from .prompts import language, notes_language
@@ -93,9 +95,10 @@ def reserved(councils: Iterable[Council], council_id: str, group: str, root: Pat
 
 def written(stream: Stream, draft: NotesDraft, shelf: Shelf,
             save: Callable[[Stream], None]) -> None:
-    """Записать черновик в каталог: файлом на заметку, исчезнувшие остаются. Запись о выгрузке и
-    сам черновик — в поток (save), в той же сделке, что и файлы: не сохранились — файлы назад.
-    Граф вышел бы не по правилам или файл не записать — NotesError, каталог как был."""
+    """Записать черновик в каталог: файлом на заметку, исчезнувшие остаются; решениям проекта,
+    что стали заменёнными, — superseded_by во frontmatter (marks_of). Запись о выгрузке и сам
+    черновик — в поток (save), в той же сделке, что и файлы: не сохранились — файлы назад. Граф
+    вышел бы не по правилам или файл не записать — NotesError, каталог как был."""
     previous = export_in(stream.notes, shelf.root)
     graph_problems(shelf.catalog, draft.notes, draft.vanished, {}, [])
 
@@ -104,7 +107,8 @@ def written(stream: Stream, draft: NotesDraft, shelf: Shelf,
                              root=draft.root, notes=exported, refs=draft.refs, cited=draft.cited)
         save(stream.model_copy(update={"notes": record, "notes_draft": draft}))
 
-    written_notes(draft.notes, draft.vanished, {}, [], shelf, previous, keep)
+    written_notes(draft.notes, draft.vanished, {}, [], shelf, previous, keep,
+                  marks=marks_of(draft))
 
 
 def written_draft(stream: Stream) -> NotesDraft | None:
@@ -238,7 +242,9 @@ def shifts_of(catalog: Catalog, notes: Sequence[NotePlan],
     """Решения проекта (ADR каталога, кроме заметок самого потока — own), чей статус станет
     другим, когда черновик запишут: новое решение потока называет их строкой замен — их
     пересматривает его вопрос или их замену подтвердил человек (решение q-011 бекенда). Файл,
-    правленный руками, запись не трогает — в графе он остаётся как есть."""
+    правленный руками, запись не трогает — в графе он остаётся как есть. Решение станет
+    заменённым — запись допишет в его файл, каким решением (frontmatter), если там этого ещё нет
+    (решение владельца к задаче «…заменённый ADR получает superseded_by во frontmatter»)."""
     after = dict(catalog.notes)
     for plan in notes:
         if plan.action != "edited":
@@ -252,10 +258,20 @@ def shifts_of(catalog: Catalog, notes: Sequence[NotePlan],
         before, _ = catalog.status(note.id)
         status, by = then.status(note.id)
         if status != before:
-            shifts.append(StatusShift(adr_id=note.id, title=headline(note.body), before=before,
-                                      after=status, superseded_by=by,
-                                      chain=chain_of(then, note.id, by, ours)))
+            shifts.append(StatusShift(
+                adr_id=note.id, title=headline(note.body), before=before, after=status,
+                superseded_by=by, chain=chain_of(then, note.id, by, ours),
+                frontmatter=status == "superseded" and by is not None and (
+                    note.superseded_by is None
+                    or number_of(note.superseded_by) != number_of(by))))
     return shifts
+
+
+def marks_of(draft: NotesDraft) -> dict[str, str]:
+    """Решения каталога, что станут заменёнными, когда черновик запишут, — и каким решением: в
+    их файлы запись допишет superseded_by (export.written)."""
+    return {shift.adr_id: shift.superseded_by for shift in draft.shifts
+            if shift.after == "superseded" and shift.superseded_by is not None}
 
 
 def chain_of(catalog: Catalog, adr_id: str, by: str | None, ours: Collection[str]) -> list[str]:

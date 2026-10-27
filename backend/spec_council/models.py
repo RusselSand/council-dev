@@ -1103,6 +1103,9 @@ class StatusShift(BaseModel):
     after: DecisionStatus
     superseded_by: str | None = None
     chain: list[str] = []
+    # Запись допишет в файл решения во frontmatter superseded_by — его там нет или он другой
+    # (notes.marked). Черновики прежней версии поле не дописывали — у них его нет.
+    frontmatter: bool = False
 
 
 class NotesDraft(BaseModel):
@@ -1148,6 +1151,8 @@ class ExportedNote(BaseModel):
     generated: str
     written: str
     links: list[str] = []
+    # Отпечаток заметки — без superseded_by во frontmatter: его дописывает и меняет совет
+    # (export.unmarked_digest). У записи прежней версии — отпечаток файла как есть.
     digest: str
     # Исчезла из потока, а человек оставил её в каталоге: заметка всё ещё потока — её решения
     # не «прошлые» для него, и повторная выгрузка снова предложит её удалить.
