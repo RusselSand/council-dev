@@ -259,6 +259,7 @@ export const ru = {
   'stream.runs.state.failed': 'сбой',
   'stream.runs.state.skipped': 'не понадобился',
   'stream.runs.thinking': '{model} · думает {time}',
+  'stream.runs.fixing': '{model} · исправляет ответ · попытка {attempt} · {time}',
   'stream.phase.project_decisions_discovery': 'Отбор прошлых решений',
   'stream.phase.project_decisions_judge': 'Судья отбора',
   'stream.phase.question_discovery': 'Сбор вопросов',
@@ -541,6 +542,8 @@ export const ru = {
   'run.done': 'готово',
   'run.failed': 'не справилась',
   'run.skipped': 'не понадобился',
+  'run.fixing': 'исправляет ответ · попытка {attempt}',
+  'rejected.title': 'Попытка {attempt} не прошла',
 
   'project.none': 'Без проекта',
   'project.newButton': '+ Новый проект',

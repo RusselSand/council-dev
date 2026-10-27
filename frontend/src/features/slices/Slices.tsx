@@ -11,21 +11,16 @@ import { useSlices } from './useSlices';
 
 /**
  * Этап «Нарезка»: пока модели режут текст — «ИИ работает» и ход работы; нет — фрагменты с типами и «Дальше —
- * Предложить группы →». Пока нарезка грузится — «Загружаем…» или ошибка. Другой совет — другой экран: ставьте
- * с key={council.id}.
+ * Предложить группы →», а остановилась на судье, чей ответ не прошёл проверку, — под ними и ход работы. Пока нарезка
+ * грузится — «Загружаем…» или ошибка. Другой совет — другой экран: ставьте с key={council.id}.
  */
 export function Slices({ council }: { council: CouncilSummary }) {
   const { t } = useI18n();
   const screen = useSlices(council);
   if (!screen.loaded) return <LoadState loading={screen.loading} error={screen.error} onRetry={screen.reload} />;
+  const progress = <RunProgress rows={screen.progress} phaseLabel={(phase) => t(`slices.phase.${phase}`)} />;
   if (screen.running) {
-    return (
-      <RunningStage
-        title={t('slices.running.title')}
-        intro={t('slices.running.intro')}
-        progress={<RunProgress rows={screen.progress} phaseLabel={(phase) => t(`slices.phase.${phase}`)} />}
-      />
-    );
+    return <RunningStage title={t('slices.running.title')} intro={t('slices.running.intro')} progress={progress} />;
   }
   return (
     <Columns
@@ -38,6 +33,7 @@ export function Slices({ council }: { council: CouncilSummary }) {
             </Button>
           </NextStep>
           <LoadState loading={false} error={screen.proposeError} onRetry={screen.propose} />
+          {screen.rejectedShown && progress}
         </>
       }
       stickySide

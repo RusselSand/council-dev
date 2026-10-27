@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { useCouncilStreams, useRetryStream, type ApiError } from '../../data';
 import { STEPS, type CouncilSummary, type State, type Step } from '../../domain/council';
-import type { RunState } from '../../domain/run';
+import { fixing, type RejectedAnswer, type RunState } from '../../domain/run';
 import {
   clock,
   currentPhase,
@@ -72,6 +72,8 @@ export interface RunGroup {
   /** «готово», «сбой», «думает», «ждёт», «не понадобился». */
   stateLabel: string;
   runs: RunChip[];
+  /** Ответы судьи этой части, которые не прошли проверку; у частей моделей совета — пусто. */
+  rejected: RejectedAnswer[];
 }
 
 /** Пересчёт решения в «Ходе работы»: строка «Q5 · судья · 0:42» и, если она раскрыта, ход пересчёта по частям. */
@@ -273,9 +275,16 @@ export function useStreamPage(council: CouncilSummary, route: StepRoute): Stream
           state: run.state,
           label:
             run.state === 'running' && run.startedAt
-              ? t('stream.runs.thinking', { model: run.model, time: clock(workedSeconds(run.startedAt, now)) })
+              ? fixing(run)
+                ? t('stream.runs.fixing', {
+                    model: run.model,
+                    attempt: run.attempt,
+                    time: clock(workedSeconds(run.startedAt, now)),
+                  })
+                : t('stream.runs.thinking', { model: run.model, time: clock(workedSeconds(run.startedAt, now)) })
               : run.model,
         })),
+        rejected: phaseRuns.flatMap((run) => run.rejected),
       };
     });
 

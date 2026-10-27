@@ -385,8 +385,8 @@ def test_approved_questions_go_on_without_the_removed_ones_and_the_options_start
     assert [(run["model"], run["state"]) for run in work["runs"]] == [
         ("sol", "running"), ("fable", "running")]
     assert all(run["startedAt"].endswith("Z") for run in work["runs"])
-    assert judge == {"phase": "proposal_judge",
-                     "runs": [{"model": "fable", "state": "waiting", "startedAt": None}]}
+    assert judge == {"phase": "proposal_judge", "runs": [
+        {"model": "fable", "state": "waiting", "attempt": 1, "rejected": [], "startedAt": None}]}
     assert [(q.id, q.text) for q in stored(store, council_id).scope] == [
         ("Q1", SEARCH), ("Q3", TEXTS[4]), ("Q4", HOSTING)]
     assert stored(store, council_id).proposals.launch == 1

@@ -3,6 +3,7 @@ import { useI18n } from '../../i18n';
 import { Caption } from '../../ui/Caption';
 import { Card } from '../../ui/Card';
 import { Dot, type DotTone } from '../../ui/Dot';
+import { RejectedAnswers } from '../RejectedAnswers';
 import styles from './RunProgress.module.css';
 
 /**
@@ -26,7 +27,8 @@ interface RunProgressProps<P extends string> {
 
 /**
  * «Ход работы»: по строке на часть и состояние моделей — точка, часть, модели через запятую, состояние («Нарезка ·
- * sol · работает…»); под ними — пояснение.
+ * sol · работает…»); судья исправляет ответ — «исправляет ответ · попытка 2», под его строкой — ответы, которые не
+ * прошли проверку. Под строками — пояснение.
  */
 export function RunProgress<P extends string>({ rows, phaseLabel }: RunProgressProps<P>) {
   const { t } = useI18n();
@@ -35,11 +37,16 @@ export function RunProgress<P extends string>({ rows, phaseLabel }: RunProgressP
       <Caption>{t('progress.title')}</Caption>
       <ul className={styles.list}>
         {rows.map((row) => (
-          <li key={`${row.phase}:${row.state}`} className={styles.row}>
-            <Dot tone={RUN_TONE[row.state]} size="md" />
-            <span className={styles.phase}>{phaseLabel(row.phase)}</span>
-            <span className={styles.models}>{row.models.join(', ')}</span>
-            <span className={styles.state}>{t(`run.${row.state}`)}</span>
+          <li key={`${row.phase}:${row.state}:${row.models.join(',')}`} className={styles.item}>
+            <div className={styles.row}>
+              <Dot tone={RUN_TONE[row.state]} size="md" />
+              <span className={styles.phase}>{phaseLabel(row.phase)}</span>
+              <span className={styles.models}>{row.models.join(', ')}</span>
+              <span className={styles.state}>
+                {row.attempt ? t('run.fixing', { attempt: row.attempt }) : t(`run.${row.state}`)}
+              </span>
+            </div>
+            <RejectedAnswers answers={row.rejected} />
           </li>
         ))}
       </ul>

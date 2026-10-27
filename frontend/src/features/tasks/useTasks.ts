@@ -3,7 +3,7 @@ import { useApproveTasks, useCouncilTasks, useRetryTasks, useRound, type ApiErro
 import type { CouncilSummary } from '../../domain/council';
 import type { Catalog } from '../../domain/notes';
 import { adrLabel } from '../../domain/outcomes';
-import { progressRows, type ProgressRow } from '../../domain/run';
+import { hasRejected, progressRows, type ProgressRow } from '../../domain/run';
 import {
   dependencyLabels,
   parentLabel,
@@ -79,6 +79,8 @@ export interface TasksScreen {
 
   /** План или перевод задач остановился: красная плашка и «Запустить снова». */
   failed: boolean;
+  /** Остановился, а у судьи есть ответы, которые не прошли проверку: под плашкой — «Ход работы». */
+  rejectedShown: boolean;
   /** Почему остановился — текст пишет сервер. */
   failure: string;
   /** «Запустить снова». */
@@ -207,6 +209,7 @@ export function useTasks(council: CouncilSummary): TasksScreen {
     progress: progressRows(plan?.progress ?? []),
 
     failed: council.stages.tasks === 'failed',
+    rejectedShown: council.stages.tasks === 'failed' && hasRejected(plan?.progress ?? []),
     failure: plan?.error ?? '',
     retry: () => {
       if (!retryAction.pending) void retryAction.run(council.id);

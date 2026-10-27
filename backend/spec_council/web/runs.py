@@ -8,33 +8,50 @@
 from collections.abc import Collection
 from typing import Literal
 
-from ..models import Step, StepName
+from ..models import ModelRun, Step, StepName
 from .schema import Instant, Schema
 
 RunState = Literal["waiting", "running", "done", "failed", "skipped"]
 
 
+class RejectedAnswer(Schema):
+    """Ответ судьи, который не прошёл проверку: которая попытка, почему не принят, что написал."""
+
+    attempt: int
+    reason: str
+    text: str
+
+
 class Run(Schema):
     model: str
     state: RunState
+    attempt: int
+    rejected: list[RejectedAnswer]
 
 
 class StepRun(Run):
     started_at: Instant | None
 
 
+def rejected_of(run: ModelRun) -> list[RejectedAnswer]:
+    return [RejectedAnswer(attempt=one.attempt, reason=one.reason, text=one.text)
+            for one in run.rejected]
+
+
 def runs_of(step: Step, judge: str) -> list[Run]:
     """Модели части хода по порядку; судья, который не понадобился, — judge с skipped."""
     if step.state == "skipped" and not step.runs:
-        return [Run(model=judge, state="skipped")]
-    return [Run(model=run.model, state=run.state) for run in step.runs]
+        return [Run(model=judge, state="skipped", attempt=1, rejected=[])]
+    return [Run(model=run.model, state=run.state, attempt=run.attempt, rejected=rejected_of(run))
+            for run in step.runs]
 
 
 def step_runs_of(step: Step, judge: str) -> list[StepRun]:
     """Как runs_of, и ещё когда модель начала работать — только у той, что работает сейчас."""
     if step.state == "skipped" and not step.runs:
-        return [StepRun(model=judge, state="skipped", started_at=None)]
-    return [StepRun(model=run.model, state=run.state,
+        return [StepRun(model=judge, state="skipped", attempt=1, rejected=[], started_at=None)]
+    return [StepRun(model=run.model, state=run.state, attempt=run.attempt,
+                    rejected=rejected_of(run),
                     started_at=run.started_at if run.state == "running" else None)
             for run in step.runs]
 

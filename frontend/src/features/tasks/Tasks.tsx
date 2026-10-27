@@ -15,7 +15,8 @@ import { useTasks } from './useTasks';
 
 /**
  * Этап «Задачи»: пока модели строят план или судья переводит задачи — «ИИ работает» и ход работы; иначе — план
- * остановился — «План задач остановился» и «Запустить снова»; не все потоки готовы — «Не все потоки готовы»; «Задачи для
+ * остановился — «План задач остановился» и «Запустить снова», а на судье, чей ответ не прошёл проверку, — под ней и ход
+ * работы; не все потоки готовы — «Не все потоки готовы»; «Задачи для
  * coding agents» — родительские задачи итогов, в каждой — её подзадачи, свёрнутые и открытые; «Уйдут из каталога»;
  * внизу — «Записать задачи» и «Записать в каталог». Пока план грузится — «Загружаем…» или ошибка. Другой совет — другой
  * экран: ставьте с key={council.id}.
@@ -24,14 +25,9 @@ export function Tasks({ council }: { council: CouncilSummary }) {
   const { t } = useI18n();
   const screen = useTasks(council);
   if (!screen.loaded) return <LoadState loading={screen.loading} error={screen.error} onRetry={screen.reload} />;
+  const progress = <RunProgress rows={screen.progress} phaseLabel={(phase) => t(`tasks.phase.${phase}`)} />;
   if (screen.running) {
-    return (
-      <RunningStage
-        title={t('tasks.running.title')}
-        intro={t('tasks.running.intro')}
-        progress={<RunProgress rows={screen.progress} phaseLabel={(phase) => t(`tasks.phase.${phase}`)} />}
-      />
-    );
+    return <RunningStage title={t('tasks.running.title')} intro={t('tasks.running.intro')} progress={progress} />;
   }
   return (
     <>
@@ -44,6 +40,7 @@ export function Tasks({ council }: { council: CouncilSummary }) {
           onRetry={screen.retry}
         />
       )}
+      {screen.rejectedShown && progress}
       {screen.pending && <PendingStreams text={screen.pending} />}
       <TitledCard caption={t('tasks.caption')} title={t('tasks.title')} intro={t('tasks.intro')}>
         {screen.parents.map((parent) => (

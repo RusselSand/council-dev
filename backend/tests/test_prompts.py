@@ -46,6 +46,7 @@ GIVEN = {
                   "repository_context", "design"},
     "task_plan_judge": {"ideas", "outcomes", "decisions", "constraints_and_risks",
                         "repository_context", "design", "plan_candidates"},
+    "answer_fix": {"task", "answer", "reason"},
 }
 
 
@@ -98,5 +99,7 @@ def test_every_prompt_writes_for_the_user_in_the_working_language(monkeypatch):
     подставляет сам render."""
     monkeypatch.setattr(prompts, "language", lambda: "Basque")
     for name, given in GIVEN.items():
+        if name == "answer_fix":
+            continue    # обёртка: язык работы — в самом задании, которое она несёт ({{task}})
         text = render(name, **{key: f"<{key}>" for key in given})
         assert "These instructions are in English" in text and "Basque" in text, name

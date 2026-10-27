@@ -182,6 +182,12 @@ def error_of(res) -> tuple[int, str]:
     return res.status_code, res.json()["error"]["code"]
 
 
+def shown_run(model: str, state: str) -> dict:
+    """Работа модели в ходе шага, как её видит экран: первая попытка, ответов, что не прошли
+    проверку, нет; модель не работает — без времени."""
+    return {"model": model, "state": state, "attempt": 1, "rejected": [], "startedAt": None}
+
+
 def stored(store, council_id, stream_id="A") -> Stream:
     return next(one for one in store.get_council(council_id).streams if one.group == stream_id)
 
@@ -274,8 +280,7 @@ def test_a_step_starts_the_models_and_their_end_hands_the_step_to_the_human(stor
     assert [(run["model"], run["state"]) for run in work["runs"]] == [
         ("sol", "running"), ("fable", "running")]
     assert all(run["startedAt"].endswith("Z") for run in work["runs"])
-    assert judge == {"phase": "question_judge",
-                     "runs": [{"model": "fable", "state": "waiting", "startedAt": None}]}
+    assert judge == {"phase": "question_judge", "runs": [shown_run("fable", "waiting")]}
     assert steps["options"]["state"] == "idle"
     council = summary_of(council_id)
     assert council["streams"][0] == {"id": "A", "step": "questions"}
@@ -287,11 +292,9 @@ def test_a_step_starts_the_models_and_their_end_hands_the_step_to_the_human(stor
     assert (questions["state"], questions["note"], questions["text"]) == (
         "waiting", "найден 1 вопрос", None)
     assert questions["progress"] == [
-        {"phase": "question_discovery", "runs": [
-            {"model": "sol", "state": "done", "startedAt": None},
-            {"model": "fable", "state": "done", "startedAt": None}]},
-        {"phase": "question_judge", "runs": [
-            {"model": "fable", "state": "skipped", "startedAt": None}]}]
+        {"phase": "question_discovery", "runs": [shown_run("sol", "done"),
+                                                  shown_run("fable", "done")]},
+        {"phase": "question_judge", "runs": [shown_run("fable", "skipped")]}]
     council = summary_of(council_id)
     assert {"stage": "streams", "stream": "A", "step": "questions", "state": "waiting",
             "text": "Отберите вопросы"} in council["activity"]
@@ -324,7 +327,7 @@ def test_a_failed_step_is_run_again_and_the_paid_answers_are_kept(store, pool, a
     assert [(run["model"], run["state"]) for run in work["runs"]] == [
         ("sol", "running"), ("fable", "done")]
     assert work["runs"][0]["startedAt"] and work["runs"][1]["startedAt"] is None
-    assert judge["runs"] == [{"model": "fable", "state": "waiting", "startedAt": None}]
+    assert judge["runs"] == [shown_run("fable", "waiting")]
     assert {"stage": "streams", "stream": "A", "step": "questions", "state": "running",
             "text": "sol собирает вопросы"} in summary_of(council_id)["activity"]
     run = stored(store, council_id).questions
@@ -446,9 +449,8 @@ def test_a_retry_while_the_server_stops_leaves_no_model_working(store, pool, age
     assert (questions["state"], questions["text"]) == (
         "failed", "sol не справилась: не запущен: cannot schedule new futures after shutdown.")
     work, judge = questions["progress"]
-    assert work["runs"] == [{"model": "sol", "state": "failed", "startedAt": None},
-                            {"model": "fable", "state": "done", "startedAt": None}]
-    assert judge["runs"] == [{"model": "fable", "state": "waiting", "startedAt": None}]
+    assert work["runs"] == [shown_run("sol", "failed"), shown_run("fable", "done")]
+    assert judge["runs"] == [shown_run("fable", "waiting")]
     assert summary_of(council_id)["streams"][0] == {"id": "A", "step": "questions"}
 
 

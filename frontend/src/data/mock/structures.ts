@@ -3,6 +3,7 @@ import type { RunState } from '../../domain/run';
 import type { Fragment } from '../../domain/slicing';
 import type { Group, GroupLink, LinkKind, Structure, StructureStep } from '../../domain/structure';
 import { ApiError } from '../errors';
+import { modelRun } from './runs';
 import { G1_FRAGMENTS, PROTO_FRAGMENTS } from './slicings';
 
 /** Ход раскладки: у раскладки — модели совета, у судьи — судья. */
@@ -11,8 +12,8 @@ const progress = (
   judge: string,
   [structure, judgeState]: [RunState[], RunState],
 ): StructureStep[] => [
-  { phase: 'structure', runs: participants.map((model, i) => ({ model, state: structure[i] ?? 'waiting' })) },
-  { phase: 'structure_judge', runs: [{ model: judge, state: judgeState }] },
+  { phase: 'structure', runs: participants.map((model, i) => modelRun(model, structure[i] ?? 'waiting')) },
+  { phase: 'structure_judge', runs: [modelRun(judge, judgeState)] },
 ];
 
 const link = (kind: LinkKind, group: string, fragment: string | null = null): GroupLink => ({ kind, group, fragment });

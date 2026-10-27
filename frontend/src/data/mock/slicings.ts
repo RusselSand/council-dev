@@ -1,5 +1,6 @@
 import type { RunState } from '../../domain/run';
 import type { Fragment, Label, Slicing, SlicingStep } from '../../domain/slicing';
+import { modelRun } from './runs';
 
 /** Ход работы: у нарезки и разметки — модели совета, у судей — судья. */
 const progress = (
@@ -7,10 +8,10 @@ const progress = (
   judge: string,
   [slice, sliceJudge, label, labelJudge]: [RunState[], RunState, RunState[], RunState],
 ): SlicingStep[] => [
-  { phase: 'slice', runs: participants.map((model, i) => ({ model, state: slice[i] ?? 'waiting' })) },
-  { phase: 'slice_judge', runs: [{ model: judge, state: sliceJudge }] },
-  { phase: 'label', runs: participants.map((model, i) => ({ model, state: label[i] ?? 'waiting' })) },
-  { phase: 'label_judge', runs: [{ model: judge, state: labelJudge }] },
+  { phase: 'slice', runs: participants.map((model, i) => modelRun(model, slice[i] ?? 'waiting')) },
+  { phase: 'slice_judge', runs: [modelRun(judge, sliceJudge)] },
+  { phase: 'label', runs: participants.map((model, i) => modelRun(model, label[i] ?? 'waiting')) },
+  { phase: 'label_judge', runs: [modelRun(judge, labelJudge)] },
 ];
 
 /** Готовая нарезка: все модели отработали. */

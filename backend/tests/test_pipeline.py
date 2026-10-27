@@ -20,6 +20,7 @@ from spec_council.models import (
     StepName,
 )
 from spec_council.pipeline import (
+    FIXES,
     DecisionRun,
     DesignRun,
     GroupingRun,
@@ -37,6 +38,7 @@ from spec_council.slicing import BadAnswer
 from spec_council.store import halted
 from spec_council.tasks import Allowed, Context, Inputs, plan_of
 from tests.figma_fake import LINK, FakeFigma
+from tests.fixing import answer_of, fixing, reason_of, task_of
 
 TEXT = ("Хочу воркер для Codex CLI. Состояние держать в файлах, без базы. "
         "Главное — не потерять результат.")
@@ -63,6 +65,7 @@ class FakeRunner:
         self.replies = replies
         self.asked: dict[tuple[str, str], str] = {}
         self.keys: list[str] = []
+        self.prompts: list[str] = []     # промпт каждого вызова — по порядку, как keys
         self.forgotten: list[str] = []
         self.identities: dict[str, str] = {}
         self.workspaces: dict[tuple[str, str], object] = {}
@@ -72,6 +75,7 @@ class FakeRunner:
         self.asked[step, model] = prompt
         self.workspaces[step, model] = workspace
         self.keys.append(key)
+        self.prompts.append(prompt)
         reply = self.replies[step, model]
         if callable(reply):
             reply = reply(prompt)
@@ -144,16 +148,129 @@ def test_one_model_seeing_two_variants_is_a_dispute_too():
     assert steps(result)["slice_judge"] == "done"
 
 
-def test_judge_inventing_a_boundary_fails_the_slicing():
-    replies = {**AGREED, ("slice", "fable"): sliced([TEXT]),
-               ("slice_judge", "fable"): {"status": "ok", "fragments": ["Хочу воркер", TEXT[12:]]}}
-    result, runner, _ = run(replies)
+def test_judge_inventing_a_boundary_fails_the_slicing_when_fixing_does_not_help():
+    invented = {"status": "ok", "fragments": ["Хочу воркер", TEXT[12:]]}
+    replies = {**AGREED, ("slice", "fable"): sliced([TEXT]), ("slice_judge", "fable"): invented}
+    result, runner, reports = run(replies)
     assert result.state == "failed"
     assert "не было ни в одном варианте" in result.error
     assert steps(result)["slice_judge"] == "failed"
-    judge_key = next(k for k in runner.keys if "-slice_judge-" in k)
-    # Негодный ответ — из лотка, чтобы повтор спросил заново.
-    assert runner.forgotten == [judge_key]
+    # Судья исправлял ответ дважды, и каждый раз — новый вызов со своим ключом.
+    judge_keys = [k for k in runner.keys if "-slice_judge-" in k]
+    assert len(judge_keys) == 1 + FIXES == len(set(judge_keys))
+    # Исправить не вышло — все его ответы из лотка, чтобы повтор спросил заново.
+    assert runner.forgotten == judge_keys
+    [judge] = result.steps[1].runs
+    assert judge.error == f"негодный ответ: {judge.rejected[-1].reason}"
+    assert [(one.attempt, one.text) for one in judge.rejected] == [
+        (n, json.dumps(invented, ensure_ascii=False)) for n in (1, 2, 3)]
+    assert all("не было ни в одном варианте" in one.reason for one in judge.rejected)
+    # Пока судья исправлял, видно, которая попытка идёт.
+    working = [step.runs[0].attempt for report in reports for step in report.steps
+               if step.name == StepName.slice_judge and step.state == "running"
+               and step.runs[0].state == "running"]
+    assert sorted(set(working)) == [1, 2, 3]
+
+
+def test_judge_fixes_an_answer_that_failed_the_check_in_the_same_run():
+    """Ответ судьи не прошёл проверку — судья видит тот же промпт, свой ответ и причину отказа и
+    исправляет его; шаг идёт дальше. Отклонённый ответ остаётся у работы судьи."""
+    invented = {"status": "ok", "fragments": ["Хочу воркер", TEXT[12:]]}
+    good = {"status": "ok", "fragments": PARTS, "decisions": []}
+    replies = {**AGREED, ("slice", "fable"): sliced([TEXT]),
+               ("slice_judge", "fable"): lambda prompt: good if fixing(prompt) else invented}
+    result, runner, _ = run(replies)
+    assert result.state == "done" and steps(result)["slice_judge"] == "done"
+    first, fix = [prompt for key, prompt in zip(runner.keys, runner.prompts, strict=True)
+                  if "-slice_judge-" in key]
+    assert task_of(fix) == first and not fixing(first)
+    assert answer_of(fix) == json.dumps(invented, ensure_ascii=False)
+    assert "не было ни в одном варианте" in reason_of(fix)
+    [judge] = result.steps[1].runs
+    assert (judge.state, judge.attempt, judge.error) == ("done", 2, None)
+    [rejected] = judge.rejected
+    assert rejected.attempt == 1 and "не было ни в одном варианте" in rejected.reason
+    # Итог сохранён — из лотка уходит всё, и отклонённый ответ тоже.
+    judge_keys = [k for k in runner.keys if "-slice_judge-" in k]
+    assert len(set(judge_keys)) == 2 and set(judge_keys) <= set(runner.forgotten)
+
+
+def test_a_fixed_judge_answer_keeps_the_rejected_one_for_a_retry():
+    """Шаг дальше упал — исправленный ответ стоит на отклонённом, и оба остаются в лотке: повтор
+    возьмёт их даром."""
+    invented = {"status": "ok", "fragments": ["Хочу воркер", TEXT[12:]]}
+    good = {"status": "ok", "fragments": PARTS, "decisions": []}
+    replies = {**AGREED, ("slice", "fable"): sliced([TEXT]),
+               ("slice_judge", "fable"): lambda prompt: good if fixing(prompt) else invented,
+               ("label", "sol"): ModelFailed("лимит"), ("label", "fable"): ModelFailed("лимит")}
+    result, runner, _ = run(replies)
+    assert result.state == "failed" and steps(result)["slice_judge"] == "done"
+    assert not [k for k in runner.forgotten if "-slice_judge-" in k]
+
+
+def test_a_retry_takes_the_fixed_judge_answer_without_showing_the_judge_working():
+    """Повтор хода, где судья уже ответил, исправив ответ: вся цепочка — из лотка, с теми же
+    ключами, а судья так и остаётся готовым — с номером попытки, на которой ответ приняли."""
+    invented = {"status": "ok", "fragments": ["Хочу воркер", TEXT[12:]]}
+    good = {"status": "ok", "fragments": PARTS, "decisions": []}
+    replies = {**AGREED, ("slice", "fable"): sliced([TEXT]),
+               ("slice_judge", "fable"): lambda prompt: good if fixing(prompt) else invented}
+    _, first, _ = run(replies)
+    runner, reports = FakeRunner(replies), []
+    pipeline = SlicingRun("c1", TEXT, ["sol", "fable"], "fable", runner, reports.append)
+    pipeline.replayed = {(StepName.slice_judge, "fable")}
+    result = pipeline.run()
+    assert result.state == "done"
+    assert ([k for k in runner.keys if "-slice_judge-" in k]
+            == [k for k in first.keys if "-slice_judge-" in k])
+    assert not [report for report in reports for step in report.steps
+                if step.name == StepName.slice_judge and step.runs
+                and step.runs[0].state == "running"]
+    [judge] = result.steps[1].runs
+    assert (judge.state, judge.attempt) == ("done", 2)
+    assert [one.attempt for one in judge.rejected] == [1]
+
+
+def test_an_honest_refusal_of_the_judge_is_not_fixed():
+    """Судья отверг всех кандидатов — это не негодный ответ: его не исправляют."""
+    replies = {**AGREED, ("slice", "fable"): sliced([TEXT]),
+               ("slice_judge", "fable"): {"status": "no_valid_option",
+                                          "problem": "обе нарезки рвут мысль"}}
+    result, runner, _ = run(replies)
+    assert result.state == "failed" and "не принял ни один вариант" in result.error
+    assert len([k for k in runner.keys if "-slice_judge-" in k]) == 1
+    assert result.steps[1].runs[0].rejected == []
+
+
+def test_a_participant_answer_that_fails_the_check_is_not_fixed():
+    """Повторы с правкой — только у судьи: участник с негодным ответом выбывает, как раньше."""
+    replies = {**AGREED, ("slice", "sol"): "не знаю, как это нарезать",
+               ("slice_judge", "fable"): {"status": "ok", "fragments": PARTS, "decisions": []}}
+    result, runner, _ = run(replies)
+    assert len([k for k in runner.keys if "-slice-sol-" in k]) == 1
+    sol = result.steps[0].runs[0]
+    assert (sol.state, sol.attempt, sol.rejected) == ("failed", 1, [])
+
+
+def test_a_judge_stopped_while_fixing_keeps_what_is_paid():
+    """Ход остановили, пока судья исправлял ответ: правку уже не зовут, а оплаченный ответ
+    остаётся в лотке."""
+    invented = {"status": "ok", "fragments": ["Хочу воркер", TEXT[12:]]}
+    runner, reports = FakeRunner({**AGREED, ("slice", "fable"): sliced([TEXT])}), []
+    pipeline = SlicingRun("c1", TEXT, ["sol", "fable"], "fable", runner, reports.append)
+
+    def judge(prompt):
+        pipeline.stop()
+        return invented
+
+    runner.replies["slice_judge", "fable"] = judge
+    result = pipeline.run()
+    assert result.state == "failed"
+    assert len([k for k in runner.keys if "-slice_judge-" in k]) == 1
+    assert not [k for k in runner.forgotten if "-slice_judge-" in k]
+    [judge_run] = result.steps[1].runs
+    assert (judge_run.state, judge_run.error) == ("failed", "ход остановлен")
+    assert [one.attempt for one in judge_run.rejected] == [1]
 
 
 def test_only_disputed_labels_go_to_the_judge():

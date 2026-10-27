@@ -71,7 +71,14 @@ Figma через REST API, модели читают снимок:
 
 Каждый вызов модели идёт с ключом из совета, шага, модели и хеша промпта. Повтор после
 сбоя берёт уже оплаченный ответ даром, изменённый текст — это новый вызов. Негодный
-ответ из лотка выбрасывается сразу, иначе повтор получал бы его же.
+ответ из лотка выбрасывается, иначе повтор получал бы его же.
+
+Ответ судьи не прошёл проверку (BadAnswer) — в том же ходе судья его исправляет: тот же
+промпт, его ответ и причина отказа (answer_fix.md) — новый вызов со своим ключом, до FIXES
+раз; не вышло и тогда — шаг падает с последней причиной. Отклонённые ответы ход хранит у
+работы судьи (ModelRun.rejected), а из лотка они уходят, только когда исправить не вышло:
+исправленный ответ стоит на них, и повтор хода берёт всю цепочку даром. Честный отказ судьи
+от всех кандидатов (JudgeRejected) — не негодный ответ: его не исправляют.
 
 Ход можно остановить (CouncilRun.stop): модели больше не зовут, а идущий вызов CLI обрывается;
 оплаченное остаётся в лотке.
@@ -136,6 +143,7 @@ from .models import (
     QuestionAnalysis,
     QuestionDiscovery,
     QuestionOptions,
+    RejectedAnswer,
     RepositoryScan,
     ScannedRepository,
     Slicing,
@@ -224,6 +232,8 @@ log = logging.getLogger(__name__)
 
 # Судья отверг всех кандидатов шага — чьи ответы при этом выбросить из лотка.
 CANDIDATES = {StepName.slice_judge: StepName.slice, StepName.structure_judge: StepName.structure}
+# Сколько раз судья исправляет ответ, который не прошёл проверку, прежде чем шаг упадёт.
+FIXES = 2
 
 
 class ModelFailed(RuntimeError):
@@ -570,7 +580,7 @@ class CouncilRun[S: (Slicing, Structure, IdeaDiscovery, RepositoryScan, DesignSc
     def _ask_judge[T](self, step: StepName, prompt: str, parse: Callable[[dict], T]) -> T:
         if (step, self.judge) not in self.replayed:
             self._set_step(step, "running")
-        answer = self._ask(step, self.judge, prompt, parse)
+        answer = self._ask(step, self.judge, prompt, parse, fixes=FIXES)
         if answer is None:
             self._set_step(step, "failed")
             raise StageFailed(f"судья {self.judge}: {self._step(step).runs[0].error}")
@@ -578,49 +588,77 @@ class CouncilRun[S: (Slicing, Structure, IdeaDiscovery, RepositoryScan, DesignSc
         return answer
 
     def _ask[T](self, step: StepName, model: str, prompt: str, parse: Callable[[dict], T],
-                kept: Callable[[str, T], None] | None = None) -> T | None:
+                kept: Callable[[str, T], None] | None = None, *, fixes: int = 0) -> T | None:
         """Ответ модели или None, если она не справилась. kept(model, ответ) — под замком хода,
-        до того как модель станет готовой: что он записал, уходит вместе с её готовностью."""
+        до того как модель станет готовой: что он записал, уходит вместе с её готовностью.
+        fixes — сколько раз модель исправляет ответ, который не прошёл проверку (у судьи —
+        FIXES): ход спрашивает её снова с причиной отказа, а отклонённые ответы хранит у её
+        работы (ModelRun.rejected)."""
         # Повтор с тем же ключом берёт оплаченный ответ даром — только если отвечает та же
         # модель: провайдер и модель за alias тоже в ключе.
         identity = self.runner.identity(model)
-        key = (f"{self.council_id}-{step}-{model}-"
-               f"{digest(identity + self.fingerprint + self.salt + prompt)}")
         if self._halt.is_set():
             self._set_run(step, model, "failed", "ход остановлен")
             return None
-        if not self._replaying(step, model):
-            self._set_run(step, model, "running")
-        try:
-            reply = self.runner.ask(model, prompt, key, workspace=self.workspace,
-                                    stop=self._halt.is_set)
-        except ModelFailed as exc:
-            self._set_run(step, model, "failed", str(exc))
-            return None
-        try:
-            answer = parse(parse_json(reply))
-        except JudgeRejected as exc:
-            # Судья честно отверг всех кандидатов. Их ответы — из лотка, иначе повтор взял бы
-            # тех же кандидатов даром и снова заплатил бы судье за тот же отказ.
+        # Повтор хода берёт из лотка и исправления: модель так и остаётся готовой.
+        replaying = self._replaying(step, model)
+        if not replaying:
+            self._set_run(step, model, "running", attempt=1)
+        asked, rejected, attempt = prompt, [], 1
+        while True:
+            if attempt > 1 and self._halt.is_set():
+                # Остановили, пока судья исправлял: оплаченное остаётся в лотке.
+                self._set_run(step, model, "failed", "ход остановлен")
+                return None
+            # Правка — свой ключ, и у каждой попытки свой: судья мог дважды ответить одинаково, и
+            # промпт правки тогда тот же, а лоток отдал бы прежний ответ даром.
+            turn = f"\nпопытка {attempt}" if attempt > 1 else ""
+            key = (f"{self.council_id}-{step}-{model}-"
+                   f"{digest(identity + self.fingerprint + self.salt + asked + turn)}")
+            try:
+                reply = self.runner.ask(model, asked, key, workspace=self.workspace,
+                                        stop=self._halt.is_set)
+            except ModelFailed as exc:
+                self._set_run(step, model, "failed", str(exc))
+                return None
+            try:
+                answer = parse(parse_json(reply))
+            except JudgeRejected as exc:
+                # Судья честно отверг всех кандидатов. Их ответы — из лотка, иначе повтор взял бы
+                # тех же кандидатов даром и снова заплатил бы судье за тот же отказ.
+                with self._lock:
+                    candidates = self._keys.pop(CANDIDATES[step], [])
+                self.runner.forget([*candidates, *rejected, key])
+                self._set_run(step, model, "failed", str(exc))
+                return None
+            except Exception as exc:
+                # Любая ошибка разбора — негодный ответ. Не BadAnswer — это недосмотр разбора, и
+                # исправлять его модели незачем.
+                if not isinstance(exc, BadAnswer):
+                    log.exception("разбор ответа %s на шаге %s упал", model, step)
+                rejected.append(key)
+                if fixes:
+                    self._reject(step, model, attempt, str(exc), reply)
+                if isinstance(exc, BadAnswer) and attempt <= fixes:
+                    asked = render("answer_fix", task=prompt, answer=reply, reason=str(exc))
+                    attempt += 1
+                    if replaying:
+                        self._set_attempt(step, model, attempt)
+                    else:
+                        self._set_run(step, model, "running", attempt=attempt)
+                    continue
+                # Исправить не вышло — из лотка их вон: иначе повтор взял бы те же ответы даром
+                # и упал бы на них снова.
+                self.runner.forget(rejected)
+                self._set_run(step, model, "failed", f"негодный ответ: {exc}")
+                return None
             with self._lock:
-                candidates = self._keys.pop(CANDIDATES[step], [])
-            self.runner.forget([*candidates, key])
-            self._set_run(step, model, "failed", str(exc))
-            return None
-        except Exception as exc:
-            # Любая ошибка разбора — негодный ответ, и из лотка его вон: иначе повтор взял бы
-            # тот же ответ даром и упал бы на нём снова. Не BadAnswer — это недосмотр разбора.
-            if not isinstance(exc, BadAnswer):
-                log.exception("разбор ответа %s на шаге %s упал", model, step)
-            self.runner.forget([key])
-            self._set_run(step, model, "failed", f"негодный ответ: {exc}")
-            return None
-        with self._lock:
-            self._keys.setdefault(step, []).append(key)
-            if kept is not None:
-                kept(model, answer)
-        self._set_run(step, model, "done", identity=identity)
-        return answer
+                # Отклонённые — тоже: исправленный ответ стоит на них.
+                self._keys.setdefault(step, []).extend([*rejected, key])
+                if kept is not None:
+                    kept(model, answer)
+            self._set_run(step, model, "done", identity=identity)
+            return answer
 
     def _replaying(self, step: StepName, model: str) -> bool:
         """Повтор зовёт модель за ответом, который она уже дала (replayed): его берут из лотка, а
@@ -663,16 +701,37 @@ class CouncilRun[S: (Slicing, Structure, IdeaDiscovery, RepositoryScan, DesignSc
             self._publish()
 
     def _set_run(self, name: StepName, model: str, state: str, error: str | None = None, *,
-                 identity: str | None = None) -> None:
-        """identity — кто ответил под alias, когда ответ принят (done)."""
+                 identity: str | None = None, attempt: int | None = None) -> None:
+        """identity — кто ответил под alias, когда ответ принят (done); attempt — которая
+        попытка пошла (running)."""
         with self._lock:
-            run = next(run for run in self._step(name).runs if run.model == model)
+            run = self._run(name, model)
             run.state, run.error = state, error
             if state == "running":
                 run.started_at = datetime.now(UTC)
             if identity is not None:
                 run.identity = identity
+            if attempt is not None:
+                run.attempt = attempt
             self._publish()
+
+    def _set_attempt(self, name: StepName, model: str, attempt: int) -> None:
+        """Повтор хода проходит исправления из лотка: модель так и остаётся готовой, а номер
+        попытки — как у ответа, который приняли, а не 1 нового хода."""
+        with self._lock:
+            self._run(name, model).attempt = attempt
+            self._publish()
+
+    def _reject(self, name: StepName, model: str, attempt: int, reason: str, text: str) -> None:
+        """Ответ не прошёл проверку — он остаётся у работы модели: видно, что она написала не
+        так."""
+        with self._lock:
+            self._run(name, model).rejected.append(
+                RejectedAnswer(attempt=attempt, reason=reason, text=text))
+            self._publish()
+
+    def _run(self, name: StepName, model: str) -> ModelRun:
+        return next(run for run in self._step(name).runs if run.model == model)
 
     def _finish(self, *, error: str | None = None, **result: Any) -> None:
         with self._lock:

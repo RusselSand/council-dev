@@ -4,6 +4,7 @@ import type { RunState } from '../../domain/run';
 import type { ParentTask, Task, TaskStep, VanishedTask } from '../../domain/tasks';
 import { COUNCIL_LANGUAGE } from './notes';
 import { PROJECTS, type MockProject } from './projects';
+import { modelRun } from './runs';
 
 /**
  * План задач совета в моках — каким его построили модели, когда были готовы все потоки (решение q-009 бекенда): задачи,
@@ -396,15 +397,15 @@ export function plannedProgress(
   translated: boolean,
 ): TaskStep[] {
   const steps: TaskStep[] = [
-    { phase: 'task_plan', runs: participants.map((model) => ({ model, state: 'done' })) },
-    { phase: 'task_plan_judge', runs: [{ model: judge, state: judgeState }] },
+    { phase: 'task_plan', runs: participants.map((model) => modelRun(model, 'done')) },
+    { phase: 'task_plan_judge', runs: [modelRun(judge, judgeState)] },
   ];
-  if (translated) steps.push({ phase: 'task_translation', runs: [{ model: judge, state: 'done' }] });
+  if (translated) steps.push({ phase: 'task_translation', runs: [modelRun(judge, 'done')] });
   return steps;
 }
 
 /** Модели строят план: модели совета работают, судья задач ждёт своей очереди. */
 export const startedProgress = (participants: string[], judge: string): TaskStep[] => [
-  { phase: 'task_plan', runs: participants.map((model) => ({ model, state: 'running' })) },
-  { phase: 'task_plan_judge', runs: [{ model: judge, state: 'waiting' }] },
+  { phase: 'task_plan', runs: participants.map((model) => modelRun(model, 'running')) },
+  { phase: 'task_plan_judge', runs: [modelRun(judge, 'waiting')] },
 ];

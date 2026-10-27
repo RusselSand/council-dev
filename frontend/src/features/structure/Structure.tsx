@@ -12,20 +12,18 @@ import { useStructure } from './useStructure';
 
 /**
  * Этап «Группы»: пока модели раскладывают фрагменты — «ИИ работает» и ход работы; нет — группы, их правка
- * и «Подтвердить группы». Раскладка остановилась — над группами красная плашка и «Запустить снова». Пока раскладка
- * грузится — «Загружаем…» или ошибка. Другой совет — другой экран: ставьте с key={council.id}.
+ * и «Подтвердить группы». Раскладка остановилась — над группами красная плашка и «Запустить снова», а на судье, чей
+ * ответ не прошёл проверку, — под ней и ход работы. Пока раскладка грузится — «Загружаем…» или ошибка. Другой совет —
+ * другой экран: ставьте с key={council.id}.
  */
 export function Structure({ council }: { council: CouncilSummary }) {
   const { t } = useI18n();
   const screen = useStructure(council);
   if (!screen.loaded) return <LoadState loading={screen.loading} error={screen.error} onRetry={screen.reload} />;
+  const progress = <RunProgress rows={screen.progress} phaseLabel={(phase) => t(`structure.phase.${phase}`)} />;
   if (screen.running) {
     return (
-      <RunningStage
-        title={t('structure.running.title')}
-        intro={t('structure.running.intro')}
-        progress={<RunProgress rows={screen.progress} phaseLabel={(phase) => t(`structure.phase.${phase}`)} />}
-      />
+      <RunningStage title={t('structure.running.title')} intro={t('structure.running.intro')} progress={progress} />
     );
   }
   return (
@@ -39,6 +37,7 @@ export function Structure({ council }: { council: CouncilSummary }) {
           onRetry={screen.retry}
         />
       )}
+      {screen.rejectedShown && progress}
       <BlockTitle title={screen.title} intro={t('structure.intro')} layout="inline" />
       {screen.groups.length > 0 && (
         <GroupGrid groups={screen.groups} titleDraft={screen.titleDraft} locked={screen.locked} handlers={screen} />
