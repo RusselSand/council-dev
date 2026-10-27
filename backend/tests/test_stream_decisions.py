@@ -1304,6 +1304,36 @@ def test_a_check_of_the_prior_version_went_with_the_choice_before_the_recheck(st
     assert (others["Q2"], others["Q3"]) == (["Q1: P1"], ["Q1: P1"])
 
 
+def test_a_check_of_the_prior_version_keeps_the_choice_its_context_remembers(store, pool,
+                                                                             agents):
+    """Проверка прежней версии опиралась на Q1 и помнит в контексте, с каким его выбором шла: P1.
+    Q1 ещё в прежней версии пересчитали с F2, теперь вернули P1, и его новая проверка опирается на
+    Q3. Проверке Q3 дописывается выбор Q1 из её контекста, а не прежний утверждённый: она шла с
+    P1, и он сейчас утверждён — пересчитывать нечего. Q2 на Q1 не опирался — ему дописан F2."""
+    agents.judged["Q3"] = leaning_on("Q1")
+    council_id, _ = checked(store, pool)
+    del agents.judged["Q3"]
+    assert chooses(council_id, "Q1", "F2").status_code == 200
+    assert rechecks(council_id, "Q1").status_code == 200
+    pool.run()
+    analysis = stored(store, council_id).analysis
+    put(store, council_id, analysis=analysis.model_copy(update={"analyses": [
+        found.model_copy(update={"others": []}) for found in analysis.analyses]}))
+    q3 = decisions_of(council_id)["Q3"]
+    assert (q3["recheck"], q3["stale"]) == ("ready", [
+        {"question": "Q1", "checked": "P1", "checkedText": None, "chosen": "F2",
+         "chosenText": None}])
+    assert chooses(council_id, "Q1", "P1").status_code == 200
+    agents.judged["Q1"] = leaning_on("Q3")
+    assert rechecks(council_id, "Q1").status_code == 200
+    pool.run()
+    shown = decisions_of(council_id)
+    assert (shown["Q3"]["recheck"], shown["Q3"]["stale"]) == (None, [])
+    assert shown["Q1"]["context"][0]["question"] == "Q3"
+    others = {f.question_id: f.others for f in stored(store, council_id).analysis.analyses}
+    assert (others["Q2"], others["Q3"]) == (["Q1: F2"], ["Q1: P1"])
+
+
 # --- вариант решения удалили на «Вариантах»: пересчитать вопрос
 
 def ids_of(prompt) -> list[str]:

@@ -308,9 +308,10 @@ def rechecked(stream: Stream, question_id: str, work: DecisionAnalysis) -> Strea
     решение — как его оставили модели: «почему» и отметки прежнего выбора к новому не идут. Так же
     — когда вариант прежней проверки удалили на «Вариантах» (gone_of). Проверкам других вопросов,
     которые не помнят, с каким выбором этого вопроса шли (их делали до того, как стали помнить
-    others), дописывается прежний: с ним они и шли — и те, на которые опирается новая проверка,
-    можно пересчитать (shifted). Порядок решений остаётся прежним: у новой проверки зависимости
-    могли стать другими, а порядок меняется только с новым запуском шага (order_of)."""
+    others), дописывается, с каким они шли (remembering), — и те, на которые опирается новая
+    проверка, можно пересчитать (shifted). Порядок решений остаётся прежним: у новой проверки
+    зависимости могли стать другими, а порядок меняется только с новым запуском шага
+    (order_of)."""
     rechecks = {**stream.rechecks, question_id: work}
     if work.state != "done":
         return stream.model_copy(update={"rechecks": rechecks})
@@ -347,12 +348,20 @@ def rechecked(stream: Stream, question_id: str, work: DecisionAnalysis) -> Strea
 def remembering(analyses: list[QuestionAnalysis], before: Choice) -> list[QuestionAnalysis]:
     """Проверки шага, где каждая помнит, с каким выбором вопроса before.question_id шла:
     утверждённый выбор того поменяли, и проверка, которая его не помнит (её делали до того, как
-    стали помнить others), шла с прежним — before."""
+    стали помнить others), шла с прежним — before. Опиралась она на этот вопрос — с каким выбором
+    шла, она помнит в контексте: выбор могли поменять и раньше, и тогда он не before."""
     question = before.question_id
     return [found if found.question_id == question
             or any(entry.split(": ", 1)[0] == question for entry in found.others)
-            else found.model_copy(update={"others": [*found.others, choice_entry(before)]})
+            else found.model_copy(update={"others": [*found.others, seen_by(found, before)]})
             for found in analyses]
+
+
+def seen_by(found: QuestionAnalysis, before: Choice) -> str:
+    """С каким выбором вопроса before.question_id шла проверка, которая не помнит others: с тем,
+    что в её контексте, если она на него опиралась, иначе — с прежним утверждённым, before."""
+    return next((entry for entry in found.context
+                 if entry.split(": ", 1)[0] == before.question_id), choice_entry(before))
 
 
 def order_of(analysis: DecisionAnalysis | None) -> Order:
