@@ -744,13 +744,17 @@ def test_an_export_to_another_folder_is_not_the_one_here(store, pool, projects, 
 # --- перевод заметок (решение q-008 бекенда)
 
 class Translating(Agents):
-    """Модели совета, как на «Итогах»; судья переводит заметки — каждый текст с пометкой EN.
-    failing — перевод не справляется; turns — какие заметки судья переводил в каждом ходе."""
+    """Модели совета, как на «Итогах»; судья переводит заметки — каждый текст с пометкой EN
+    (translate) и вносит в глоссарий glossary. failing — перевод не справляется; turns — какие
+    заметки судья переводил в каждом ходе, briefs — что он видел."""
 
     def __init__(self):
         super().__init__()
         self.failing_translation = False
         self.turns: list[list[str]] = []
+        self.briefs: list[str] = []
+        self.translate = lambda text: f"EN {text}"
+        self.glossary: list[dict] = []
 
     def ask(self, model, prompt, key, workspace=None, stop=None):
         if key.split("-")[1] != "notes_translation":
@@ -759,8 +763,9 @@ class Translating(Agents):
             raise ModelFailed("превышено время молчания CLI (15 мин)")
         notes = json.loads(prompt.split("## NOTES\n")[1])
         self.turns.append([note["key"] for note in notes])
-        return json.dumps({"notes": [{"key": note["key"], "text": f"EN {note['text']}"}
-                                     for note in notes]})
+        self.briefs.append(prompt)
+        return json.dumps({"notes": [{"key": note["key"], "text": self.translate(note["text"])}
+                                     for note in notes], "glossary": self.glossary})
 
 
 def notes_in(monkeypatch, language: str) -> None:
@@ -890,11 +895,12 @@ def test_a_translation_follows_the_notes_when_another_stream_took_their_numbers(
                                             ("OQ-0004", "question", "new")]
     stream = writes(second).json()["stream"]
     assert steps_of(stream)["notes"]["state"] == "done"
-    # Судью заново не звали: перевод перешёл на новые номера — и в тексте заметки тоже.
+    # Судью заново не звали: перевод перешёл на новые номера — и в тексте заметки тоже. «Потому
+    # что» судья не переводил: связка — из словаря языка заметок.
     assert len(translating.turns) == 2
     catalog = Catalog.load(docs)
     assert catalog.notes["ADR-0003"].body == (
-        "EN Искать по заголовкам тредов, потому что так советует OQ-0005.")
+        "EN Искать по заголовкам тредов, because так советует OQ-0005.")
     assert catalog.notes["IDEA-0002"].body == "EN Хочу базу знаний."
     assert catalog.problems() == []
 
@@ -938,6 +944,104 @@ def test_a_draft_that_cannot_be_built_waits_and_says_why(store, pool, projects, 
     assert steps_of(stream_of(council_id))["notes"]["state"] == "waiting"
     assert pool.jobs == []
     assert error_of(client.get(path(council_id))) == (500, "internal")
+
+
+# --- связки и единые термины (решение владельца к задаче «Бекенд · Перевод заметок и задач:
+# заголовки из словаря, единые термины»)
+
+def section(prompt: str, title: str) -> str:
+    return prompt.split(f"\n## {title}\n")[1].split("\n## ")[0].strip()
+
+
+def test_the_judge_translates_the_text_and_the_labels_come_from_the_notes_language(
+        store, pool, projects, docs, translating):
+    """«Потому что» и подпись строки замен судья видит метками и не переводит: в каталоге на их
+    месте — связки языка заметок, дословно."""
+    past_decision(docs)
+    council_id = assembled(store, pool)
+    revisiting(store, council_id, "Q1")
+    with_project(store, projects, council_id)
+    assert approves_one(council_id, "O1").status_code == 200
+    assert approves(council_id).status_code == 200
+    pool.run()
+    [prompt] = translating.briefs
+    sources = prompt.split("## NOTES\n")[1]
+    assert "потому что" not in sources and "Заменяет" not in sources
+    assert ("Искать по заголовкам тредов, ⟦because⟧ поиск по заголовкам дешевле всего.\n\n"
+            "⟦replaces⟧: ADR-0001.") in [note["text"] for note in json.loads(sources)]
+    assert section(prompt, "Fixed labels").endswith(
+        "- ⟦because⟧ — “because”\n- ⟦replaces⟧ — “Supersedes”")
+    assert writes(council_id).status_code == 200
+    catalog = Catalog.load(docs)
+    assert catalog.notes["ADR-0002"].body == (
+        "EN Искать по заголовкам тредов, because поиск по заголовкам дешевле всего.\n\n"
+        "Supersedes: ADR-0001.")
+    assert catalog.status("ADR-0001") == ("superseded", "ADR-0002")
+
+
+def quoting(store, pool, projects, **stream) -> str:
+    """Итоги потока A утверждены, а «почему» решения по Q1 называет список «Не распределены».
+    stream — что ещё положить в поток до этого."""
+    council_id = assembled(store, pool)
+    with_project(store, projects, council_id)
+    put(store, council_id, **stream, decisions=[
+        decision.model_copy(update={"rationale": "Так подписан список «Не распределены»."})
+        if decision.question_id == "Q1" else decision
+        for decision in stored(store, council_id).decisions])
+    assert approves_one(council_id, "O1").status_code == 200
+    assert approves(council_id).status_code == 200
+    return council_id
+
+
+def test_the_glossary_of_a_translation_stays_with_the_export(store, pool, projects, docs,
+                                                             translating):
+    """Судья пополняет глоссарий тем, что перевёл; что не из текстов потока — не берётся."""
+    translating.translate = lambda text: f"EN {text}".replace("Не распределены", "Unassigned")
+    translating.glossary = [{"source": "Не распределены", "translation": "Unassigned"},
+                            {"source": "Канбан", "translation": "Kanban"}]
+    council_id = quoting(store, pool, projects)
+    pool.run()
+    assert writes(council_id).status_code == 200
+    assert stored(store, council_id).notes.glossary == {"Не распределены": "Unassigned"}
+    assert stored(store, council_id).notes_draft.glossary == {"Не распределены": "Unassigned"}
+    assert Catalog.load(docs).notes["ADR-0001"].body == (
+        "EN Искать по заголовкам тредов, because так подписан список «Unassigned».")
+
+
+def test_a_new_export_translates_quoted_phrases_as_the_last_one_did(store, pool, projects, docs,
+                                                                    translating):
+    """Повторная выгрузка начинает с глоссария прошлой: судья видит из него то, что есть в
+    текстах, а фраза в кавычках, переведённая иначе, — негодный ответ: перевод остановился, и
+    «Запустить снова» спрашивает судью заново."""
+    previous = NotesExport(run="n0", outcomes="old", language="English", root=str(docs),
+                           glossary={"Не распределены": "Unassigned", "Канбан": "Kanban"})
+    council_id = quoting(store, pool, projects, notes=previous)
+    pool.run()
+    [prompt] = translating.briefs
+    assert json.loads(section(prompt, "GLOSSARY").split("\n\n")[-1]) == [
+        {"source": "Не распределены", "translation": "Unassigned"}]
+    notes = steps_of(stream_of(council_id))["notes"]
+    assert notes["state"] == "failed"
+    assert notes["text"] == ("fable не справилась: негодный ответ: в переводе ADR-0001 «Не "
+                             "распределены» переведено не так, как в глоссарии: «Unassigned».")
+    assert error_of(writes(council_id)) == (409, "notes_not_ready")
+    translating.translate = lambda text: f"EN {text}".replace("Не распределены", "Unassigned")
+    assert retries(council_id).status_code == 200
+    pool.run()
+    assert writes(council_id).status_code == 200
+    assert "«Unassigned»" in Catalog.load(docs).notes["ADR-0001"].body
+    assert stored(store, council_id).notes.glossary == previous.glossary
+
+
+def test_a_stream_written_before_glossaries_opens_and_translates(store, pool, projects, docs,
+                                                                 translating):
+    """Выгрузка и черновик прежней версии — без глоссария: перевод начинается с пустого."""
+    old = {"run": "n0", "outcomes": "old", "language": "English", "root": str(docs)}
+    council_id = quoting(store, pool, projects, notes=NotesExport.model_validate(old))
+    pool.run()
+    assert json.loads(section(translating.briefs[0], "GLOSSARY").split("\n\n")[-1]) == []
+    assert writes(council_id).status_code == 200
+    assert stored(store, council_id).notes.glossary == {}
 
 
 def test_a_translation_that_could_not_be_launched_stops_the_step(store, pool, projects,

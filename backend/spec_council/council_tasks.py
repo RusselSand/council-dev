@@ -8,7 +8,10 @@
 утвердили, — модели сами строят план (begun): по утверждённым итогам всех потоков с номерами
 заметок (tasks.py), а если исследование пройдено сканом — по снимку тех же рабочих копий, который
 ход читает уже в фоне (PlanRun). План готов, а задачи пишутся не на том языке, на котором работает
-совет, — судья сразу переводит файлы задач (как заметки на «Документации», решение q-008 бекенда).
+совет, — судья сразу переводит файлы задач (как заметки на «Документации», решение q-008 бекенда):
+связки — из словаря языка заметок, фразы — по глоссарию, который начинается с глоссариев выгрузок
+потоков, и с решениями, на которых стоит задача, как они лежат в каталоге (references_of; решение
+владельца к задаче «Бекенд · Перевод заметок и задач…», translation.py).
 «Записать в каталог» на «Задачах» пишет файлы в папку задач проекта (tasks_export.py): на каждый
 утверждённый итог — родительская задача, задачи плана — её подзадачи (решение владельца к задаче
 «Бекенд · Итоги → родительские задачи…»); папки нет — «Задачи» готовы без записи. План
@@ -48,6 +51,7 @@ from .models import (
     NotePlan,
     Research,
     ScannedRepository,
+    Stream,
     TaskPlan,
     TasksDraft,
     TasksExport,
@@ -67,7 +71,7 @@ from .repository import (
 )
 from .standing import Folders, current_plan, streams_ready, tasks_translation, tasks_work
 from .store import Store, council_lock
-from .stream_notes import carried, translates
+from .stream_notes import carried, glossary_of, translates
 from .tasks import (
     basis_of,
     inputs_of,
@@ -79,6 +83,7 @@ from .tasks import (
     research_texts,
 )
 from .tasks_export import aligned, drafted_tasks
+from .translation import merged
 
 
 class PlanRefused(ValueError):
@@ -373,7 +378,8 @@ def translation_of(council: Council, draft: TasksDraft, shelf: Shelf, context: C
     state.reused = resumed(state, before if again else None, datetime.now(UTC),
                            context.runner.identity)
     pipeline = NotesRun(council.id, state, export_in(council.tasks_export, shelf.issues), shelf,
-                        council.judge, context.runner, report)
+                        council.judge, context.runner, report, words=words_for(language()),
+                        references=references_of(council, draft, shelf))
     pipeline.replayed = {(part.name, run.model) for part in state.steps for run in part.runs
                          if run.state == "done"}
     held(pipeline)
@@ -403,13 +409,38 @@ def draft_of(council: Council, plan: TaskPlan, notes: Path, issues: Path,
     задач не прочитать, или заметки, на которых план стоит, удалили — NotesError с причиной."""
     shelf = shelf_of(notes, issues)
     fragments = {f.id: f for f in council.slicing.fragments} if council.slicing else {}
+    previous = export_in(council.tasks_export, issues)
     files, vanished, numbers = drafted_tasks(
-        plan, fragments, shelf, export_in(council.tasks_export, issues), words_for(language()),
+        plan, fragments, shelf, previous, words_for(language()),
         notes_language(), reserved_by_others(store, council.id, issues),
         outcome_names(council, fragments, plan.cited), parents_of(council))
     return TasksDraft(state="done", run=uuid4().hex[:8], plan=plan.run,
                       language=notes_language(), root=str(issues), notes=files,
-                      vanished=vanished, numbers=numbers), shelf
+                      vanished=vanished, numbers=numbers,
+                      glossary=merged(*(glossary_of(stream.notes, notes_language())
+                                        for stream in streams_in(council, notes)),
+                                      glossary_of(previous, notes_language()))), shelf
+
+
+def streams_in(council: Council, notes: Path) -> list[Stream]:
+    """Потоки совета, записанные в каталог заметок notes."""
+    return [stream for stream in council.streams or []
+            if stream.notes is not None and stream.notes.root == str(notes)]
+
+
+def references_of(council: Council, draft: TasksDraft,
+                  shelf: Shelf) -> dict[str, list[dict[str, str]]]:
+    """Решения потоков совета, на которых стоит каждый файл задачи (его ссылки), — как они лежат в
+    каталоге заметок, с текстом, который переводили: судья переводит задачу теми же словами
+    (решение владельца к задаче «Бекенд · Перевод заметок и задач…»). Решения, записанные на другом
+    языке, и решения проекта из других советов — нет: перевода их текста здесь нет."""
+    sources = {note.id: note.generated for stream in streams_in(council, shelf.root)
+               if stream.notes is not None and stream.notes.language == draft.language
+               for note in stream.notes.notes if note.type == "adr"}
+    return {note.key: [{"id": link, "source": sources[link],
+                        "translation": shelf.catalog.notes[link].body}
+                       for link in note.links if link in sources and link in shelf.catalog.notes]
+            for note in draft.notes}
 
 
 def wrote(council: Council, folders: Folders,
@@ -436,7 +467,8 @@ def wrote(council: Council, folders: Folders,
 
     def keep(exported: list[ExportedNote]) -> None:
         record = TasksExport(run=draft.run, plan=draft.plan, language=draft.language,
-                             root=draft.root, notes=exported, numbers=draft.numbers)
+                             root=draft.root, notes=exported, numbers=draft.numbers,
+                             glossary=draft.glossary)
         context.store.update_council(council.id, {"tasks_export": record, "tasks_draft": draft})
 
     graph_problems(shelf.catalog, draft.notes, draft.vanished, edits, delete)
