@@ -6,7 +6,9 @@ import styles from './StatusChange.module.css';
 
 /**
  * «Статус решения проекта меняется», как в макете: красная плашка — id и зачёркнутое решение; статус до и после
- * («active → superseded») и какой заметкой заменено; цепочка, откуда смена; что это значит для следующих советов.
+ * («active → superseded») и какой заметкой заменено; цепочка, откуда смена; что запись допишет во frontmatter файла
+ * решения — этого в макете нет (решение владельца к задаче «…заменённый ADR получает superseded_by во frontmatter»);
+ * что это значит для следующих советов.
  */
 export function StatusChange({ change }: { change: StatusChangeView }) {
   const { t } = useI18n();
@@ -35,6 +37,7 @@ export function StatusChange({ change }: { change: StatusChangeView }) {
         )}
       </div>
       {change.chain && <span className={styles.chain}>{change.chain}</span>}
+      {change.frontmatter && <span className={styles.chain}>{change.frontmatter}</span>}
       <p className={styles.note}>{change.note}</p>
     </Highlight>
   );

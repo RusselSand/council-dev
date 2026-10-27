@@ -18,6 +18,10 @@ ADR заменён, когда из него вырос вопрос и на в�
 прежней версии), — или когда новое ADR называет его своей строкой замен: «Заменяет: ADR-0003,
 ADR-0005.» Так совет пишет решение, замену которым подтвердил человек (решение q-011 бекенда), и
 решение вопроса, который пересматривает решение проекта: вопрос остаётся в цепочке своей идеи.
+Заменённое ADR и само говорит, каким заменено: во frontmatter — `superseded_by: ADR-…` (решение
+владельца к задаче «Бекенд · Поток · Документация: заменённый ADR получает superseded_by во
+frontmatter»). Его дописывает выгрузка, после которой ADR стал заменённым (marked); статус решения
+по-прежнему считает Catalog.status, а не это поле.
 
 Номера — общие на весь каталог: следующий свободный номер типа, с нулями до четырёх знаков.
 
@@ -53,6 +57,8 @@ REPLACES_LINE = re.compile(r"[^\W\d_]+(?:[ \t-][^\W\d_]+)*[ \t]*:[ \t]*"
 ADR_ID = re.compile(r"ADR-\d+")
 NUMBERED = re.compile(r"([A-Z]+)-(\d+)")
 FRONTMATTER = re.compile(r"\A---\r?\n(.*?)\r?\n---\r?\n?(.*)\Z", re.DOTALL)
+# Строка frontmatter заменённого ADR: каким решением он заменён.
+SUPERSEDED_BY = re.compile(r"superseded_by\s*:(.*?)(\r?\n)?\Z", re.DOTALL)
 
 
 class NotesError(ValueError):
@@ -61,11 +67,14 @@ class NotesError(ValueError):
 
 @dataclass(frozen=True)
 class Note:
+    """Заметка. superseded_by — у ADR, что записан заменённым: каким решением (frontmatter)."""
+
     id: str
     type: str
     body: str
     links: tuple[str, ...] = ()
     path: Path | None = field(default=None, compare=False)
+    superseded_by: str | None = None
 
     def as_dict(self) -> dict[str, object]:
         return {"id": self.id, "type": self.type, "body": self.body, "links": list(self.links)}
@@ -121,14 +130,58 @@ def parsed(text: str, path: Path | None = None) -> Note:
         raise NotesError(f"Заметка{where} {note_id}: номер не по формату "
                          f"{PREFIXES[str(kind)]}-0001 для type {kind}")
     links = meta.get("links", [])
-    return Note(note_id, str(kind), found.group(2).strip(), tuple(links), path)
+    by = meta.get("superseded_by")
+    return Note(note_id, str(kind), found.group(2).strip(), tuple(links), path,
+                superseded_by=by if isinstance(by, str) and by else None)
 
 
 def rendered(note: Note) -> str:
-    """Заметка файлом — как пишет Causa."""
+    """Заметка файлом — как пишет Causa; у заменённого ADR каким он заменён — последней строкой
+    frontmatter, после links."""
     links = "links: []" if not note.links else "links:\n" + "\n".join(
         f"- {link}" for link in note.links)
-    return f"---\nid: {note.id}\ntype: {note.type}\n{links}\n---\n\n{note.body.strip()}\n"
+    by = f"\nsuperseded_by: {note.superseded_by}" if note.superseded_by else ""
+    return f"---\nid: {note.id}\ntype: {note.type}\n{links}{by}\n---\n\n{note.body.strip()}\n"
+
+
+def marked(text: str, by: str, path: Path | None = None) -> str | None:
+    """Файл заметки text, где во frontmatter записано, каким решением она заменена:
+    `superseded_by: by` — последней строкой, после links. Поле уже есть: то же (ADR-7 и ADR-0007 —
+    одно решение) — None, файл не меняется; другое — его значение заменяется на месте. Остальное в
+    файле — как было, с теми же переносами строк."""
+    found = FRONTMATTER.match(text)
+    if found is None:
+        where = f" {path}" if path else ""
+        raise NotesError(f"В заметке{where} нет frontmatter между строками ---")
+    start, end = found.span(1)
+    rows = text[start:end].splitlines(keepends=True)
+    fields = [(n, row) for n, line in enumerate(rows) if (row := SUPERSEDED_BY.match(line))]
+    if not fields:
+        newline = "\r\n" if text.startswith("\r\n", end) else "\n"
+        return f"{text[:end]}{newline}superseded_by: {by}{text[end:]}"
+    # Строк несколько — действует последняя, как её читает parsed.
+    at, row = fields[-1]
+    if number_of(scalar(row.group(1))) == number_of(by):
+        return None
+    rows[at] = f"superseded_by: {by}{row.group(2) or ''}"
+    return text[:start] + "".join(rows) + text[end:]
+
+
+def unmarked(text: str) -> str:
+    """Файл заметки без строки superseded_by во frontmatter — каким он был, пока её не дописали
+    (marked). Нет frontmatter или такой строки — как есть."""
+    found = FRONTMATTER.match(text)
+    if found is None:
+        return text
+    start, end = found.span(1)
+    rows = text[start:end].splitlines(keepends=True)
+    kept = [row for row in rows if not SUPERSEDED_BY.match(row)]
+    if len(kept) == len(rows):
+        return text
+    if kept and SUPERSEDED_BY.match(rows[-1]):
+        # Убрали последнюю строку — и перенос перед ней: его дописали вместе с ней.
+        kept[-1] = kept[-1].rstrip("\r\n")
+    return text[:start] + "".join(kept) + text[end:]
 
 
 def path_of(root: Path, note: Note) -> Path:

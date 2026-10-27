@@ -49,6 +49,7 @@
   color: var(--color-ink);
 }
 
+/* «цепочка: …» и «во frontmatter: superseded_by: …» — моноширинным, мелко. */
 .chain {
   font-family: var(--font-mono);
   font-size: var(--text-xs);

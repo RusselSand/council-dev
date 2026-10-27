@@ -55,6 +55,8 @@ export interface StatusChangeView {
   supersededBy: string | null;
   /** «цепочка: OQ-0012 → P41 → ADR-0010»; цепочки нет — пусто. */
   chain: string;
+  /** «во frontmatter: superseded_by: ADR-0010» — запись допишет это в файл решения; не допишет — null. */
+  frontmatter: string | null;
   note: string;
 }
 
@@ -99,6 +101,10 @@ const changeView = (change: StatusChange, t: Translate): StatusChangeView => ({
   to: t(`notes.status.${change.to}`),
   supersededBy: change.supersededBy,
   chain: change.chain.length ? t('notes.statusChange.chain', { chain: change.chain.join(' → ') }) : '',
+  frontmatter:
+    change.frontmatter && change.supersededBy
+      ? t('notes.statusChange.frontmatter', { id: change.supersededBy })
+      : null,
   note: change.note,
 });
 

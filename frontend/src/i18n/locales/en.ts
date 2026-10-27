@@ -420,6 +420,7 @@ export const en = translation({
   'notes.statusChange.arrow': '→',
   'notes.statusChange.by': 'replaced by',
   'notes.statusChange.chain': 'chain: {chain}',
+  'notes.statusChange.frontmatter': 'in frontmatter: superseded_by: {id}',
   'notes.status.active': 'active',
   'notes.status.under_review': 'under_review',
   'notes.status.superseded': 'superseded',

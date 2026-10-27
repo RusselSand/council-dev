@@ -1103,6 +1103,9 @@ class StatusShift(BaseModel):
     after: DecisionStatus
     superseded_by: str | None = None
     chain: list[str] = []
+    # Запись допишет в файл решения во frontmatter superseded_by — его там нет или он другой
+    # (notes.marked). Черновики прежней версии поле не дописывали — у них его нет.
+    frontmatter: bool = False
 
 
 class NotesDraft(BaseModel):

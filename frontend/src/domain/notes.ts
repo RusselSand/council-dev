@@ -57,6 +57,11 @@ export interface StatusChange {
   chain: string[];
   /** Что это значит для следующих советов — пишет сервер. */
   note: string;
+  /**
+   * Запись допишет во frontmatter файла решения `superseded_by` с supersededBy (решение владельца к задаче «…заменённый
+   * ADR получает superseded_by во frontmatter»); поле там уже то же или решение не заменяется — false.
+   */
+  frontmatter: boolean;
 }
 
 /** Выгрузка потока в заметки: каталог, заметки и решения проекта, статус которых она меняет. */
