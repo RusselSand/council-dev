@@ -24,7 +24,7 @@ from collections.abc import Callable, Collection, Iterable, Mapping
 from itertools import accumulate, count
 from typing import NamedTuple
 
-from .export import blocks_of, numbering_problem, translations, visible_of
+from .export import blocks_of, in_prose, numbering_problem, translations, visible_of
 from .slicing import BadAnswer
 
 # Метка связки в тексте для судьи: «⟦now⟧».
@@ -60,12 +60,13 @@ def labels_of(text: str, kind: str, note_id: str,
               words: Mapping[str, str]) -> list[tuple[int, int, str]]:
     """Где в тексте связки, которые совет написал словами words (языка работы): начало, конец и
     метка — по порядку. У решения — «потому что» между решением и «почему» (export.because) и
-    подпись строки замен в конце (export.replacing): первое — другие уже слова самого текста. У
-    файла задачи — заголовки разделов и строка о номере для коммита (последняя такая,
-    tasks_export.issue_text), вне блоков кода: пример кода в задаче — как есть."""
+    подпись строки замен в конце (export.replacing): первое в прозе — в коде («`", потому что "`»)
+    это не связка, а другие — уже слова самого текста. У файла задачи — заголовки разделов и
+    строка о номере для коммита (последняя такая, tasks_export.issue_text), вне блоков кода:
+    пример кода в задаче — как есть."""
     if kind == "adr":
         found = []
-        because = text.find(f", {words['because']} ")
+        because = prose_find(text, f", {words['because']} ")
         if because >= 0:
             found.append((because + 2, because + 2 + len(words["because"]), "because"))
         replaces = re.search(
@@ -86,6 +87,24 @@ def labels_of(text: str, kind: str, note_id: str,
             else (starts[n] + len("## "), starts[n] + len(row), heads[row])
             for n, row in enumerate(rows)
             if n not in code and (n == closing or row in heads)]
+
+
+def prose_find(text: str, piece: str) -> int:
+    """Где в тексте первое piece в прозе: в коде, адресе и теге (export.in_prose) — не оно. Нет
+    такого — -1."""
+    seen = False
+
+    def spot(part: str) -> str:
+        nonlocal seen
+        if seen or piece not in part:
+            return part
+        seen = True
+        # Тех же размеров, но другими знаками: где текст стал другим — там piece.
+        return part.replace(piece, "\0" * len(piece), 1)
+
+    shown = in_prose(text, spot)
+    return next((n for n, (was, now) in enumerate(zip(text, shown, strict=False)) if was != now),
+                -1)
 
 
 def templated(text: str, kind: str, note_id: str, words: Mapping[str, str]) -> Template:
@@ -150,7 +169,8 @@ def folded(text: str) -> str:
 
 
 def said(text: str) -> str:
-    """Фраза в кавычках для сравнения (folded) — без знака в конце: его пишут и внутри кавычек."""
+    """Фраза глоссария и фраза в кавычках для сравнения (folded) — без знака в конце: его пишут
+    и внутри кавычек («Unassigned,» — по-английски, «Не удалось.» — сообщение целиком)."""
     return folded(text).rstrip(STOPS)
 
 
@@ -166,22 +186,22 @@ def quoted(text: str) -> list[str]:
 
 
 def merged(*glossaries: Mapping[str, str]) -> Glossary:
-    """Глоссарии одним: фраза — с переводом из первого, где она есть."""
+    """Глоссарии одним: фраза (said) — с переводом из первого, где она есть."""
     found: Glossary = {}
     seen: set[str] = set()
     for glossary in glossaries:
         for source, translation in glossary.items():
-            if folded(source) not in seen:
-                seen.add(folded(source))
+            if said(source) not in seen:
+                seen.add(said(source))
                 found[source] = translation
     return found
 
 
 def relevant(glossary: Mapping[str, str], texts: Iterable[str]) -> list[dict[str, str]]:
-    """Что из глоссария видеть судье: фразы, которые есть в переводимых текстах."""
+    """Что из глоссария видеть судье: фразы (said), которые есть в переводимых текстах."""
     within = "\n".join(folded(text) for text in texts)
     return [{"source": source, "translation": translation}
-            for source, translation in glossary.items() if folded(source) in within]
+            for source, translation in glossary.items() if said(source) in within]
 
 
 def offered(data: dict, sources: Mapping[str, str], texts: Mapping[str, str],
@@ -194,16 +214,16 @@ def offered(data: dict, sources: Mapping[str, str], texts: Mapping[str, str],
         return {}
     was = "\n".join(folded(text) for text in sources.values())
     now = "\n".join(folded(text) for text in texts.values())
-    taken = {folded(source) for source in known}
+    taken = {said(source) for source in known}
     found: Glossary = {}
     for item in items:
         if not isinstance(item, dict) or not isinstance(item.get("source"), str) \
                 or not isinstance(item.get("translation"), str):
             continue
         source, translation = phrase(item["source"]), phrase(item["translation"])
-        key = folded(source)
-        if (key and folded(translation) and key != folded(translation) and key not in taken
-                and key in was and folded(translation) in now):
+        key = said(source)
+        if (key and said(translation) and key != said(translation) and key not in taken
+                and key in was and said(translation) in now):
             taken.add(key)
             found[source] = translation
     return found
@@ -213,12 +233,14 @@ def glossary_problem(source: str, text: str, glossary: Mapping[str, str]) -> str
     """Фраза в кавычках из глоссария, которую перевод (text) передал не так, как в глоссарии.
     Каждая: сколько раз фраза в кавычках в исходнике, столько раз и её перевод из глоссария — в
     кавычках в переводе; встретилась дважды, а перевод в кавычках один — второе место переведено
-    иначе."""
-    terms = {folded(found): translation for found, translation in glossary.items()}
+    иначе. Фразы — без знака в конце (said): и в исходнике, и в глоссарии."""
+    terms: dict[str, str] = {}
+    for found, translation in glossary.items():
+        terms.setdefault(said(found), translation)
     shown = Counter(said(found) for found in quoted(text))
     wanted: Counter[str] = Counter()
     for found in quoted(source):
-        translation = terms.get(folded(found))
+        translation = terms.get(said(found)) if said(found) else None
         if translation is None:
             continue
         wanted[said(translation)] += 1

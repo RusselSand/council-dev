@@ -47,6 +47,17 @@ def test_a_decision_shows_the_judge_markers_instead_of_the_councils_labels():
         Template("Вопрос, потому что важно.")
 
 
+def test_a_because_in_the_decisions_code_is_not_the_councils_label():
+    text = decision('Сохранить строку `", потому что "`', "так пишут в логах")
+    source = templated(text, "adr", "ADR-0007", RU)
+    assert source == Template('Сохранить строку `", потому что "`, ⟦because⟧ так пишут в логах')
+    # Код — как есть, связка — на своём месте.
+    assert filled(source.text, EN, "ADR-0007") == \
+        'Сохранить строку `", потому что "`, because так пишут в логах'
+    plain = decision('Сохранить строку `", потому что "`', "")
+    assert templated(plain, "adr", "ADR-0007", RU) == Template(plain)
+
+
 def test_an_issue_shows_the_judge_its_headings_and_commit_line_as_markers():
     issue = Issue(id="I1", title="Индекс", user_story="Чтобы искать.", outcome_id="C-O1",
                   main_entry_points=["app.py"], current_state="Индекса нет.\n\n```\n## Риски\n```",
@@ -170,6 +181,31 @@ def test_a_phrase_in_quotes_reads_as_the_glossary_says():
     # Без кавычек и в коде — подсказка судье, а не проверка.
     assert glossary_problem("Они не распределены. `\"Не распределены\"`", "Not distributed.",
                             glossary) is None
+
+
+def test_a_stop_inside_the_quotes_does_not_hide_a_phrase_from_the_glossary():
+    # Знак в конце внутри кавычек — и в исходнике, и во фразе глоссария.
+    assert glossary_problem("Click “Unassigned,” then continue.",
+                            "Нажмите «Не назначено», затем продолжите.",
+                            {"Unassigned": "Не распределены"}) == \
+        "«Unassigned,» переведено не так, как в глоссарии: «Не распределены»"
+    glossary = {"Не удалось сгруппировать эндпойнты.": "Failed to group endpoints."}
+    assert glossary_problem("Пишет «Не удалось сгруппировать эндпойнты».",
+                            "It says “Could not group endpoints”.", glossary) == \
+        ("«Не удалось сгруппировать эндпойнты» переведено не так, как в глоссарии: «Failed to "
+         "group endpoints.»")
+    assert glossary_problem("Пишет «Не удалось сгруппировать эндпойнты».",
+                            "It says “Failed to group endpoints”.", glossary) is None
+    # Та же фраза со знаком в конце — та же запись глоссария.
+    assert merged(glossary, {"не удалось сгруппировать эндпойнты": "Could not group endpoints"}) \
+        == glossary
+    assert relevant(glossary, ["Пишет «Не удалось сгруппировать эндпойнты»"]) == [
+        {"source": "Не удалось сгруппировать эндпойнты.",
+         "translation": "Failed to group endpoints."}]
+    assert offered({"glossary": [{"source": "Не удалось сгруппировать эндпойнты",
+                                  "translation": "Could not group endpoints"}]},
+                   {"n1": "Пишет «Не удалось сгруппировать эндпойнты»."},
+                   {"n1": "It says “Could not group endpoints”."}, glossary) == {}
 
 
 def test_a_translation_against_the_glossary_is_rejected():
