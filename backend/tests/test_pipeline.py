@@ -210,7 +210,7 @@ def test_a_fixed_judge_answer_keeps_the_rejected_one_for_a_retry():
 
 def test_a_retry_takes_the_fixed_judge_answer_without_showing_the_judge_working():
     """Повтор хода, где судья уже ответил, исправив ответ: вся цепочка — из лотка, с теми же
-    ключами, а судья так и остаётся готовым."""
+    ключами, а судья так и остаётся готовым — с номером попытки, на которой ответ приняли."""
     invented = {"status": "ok", "fragments": ["Хочу воркер", TEXT[12:]]}
     good = {"status": "ok", "fragments": PARTS, "decisions": []}
     replies = {**AGREED, ("slice", "fable"): sliced([TEXT]),
@@ -226,6 +226,9 @@ def test_a_retry_takes_the_fixed_judge_answer_without_showing_the_judge_working(
     assert not [report for report in reports for step in report.steps
                 if step.name == StepName.slice_judge and step.runs
                 and step.runs[0].state == "running"]
+    [judge] = result.steps[1].runs
+    assert (judge.state, judge.attempt) == ("done", 2)
+    assert [one.attempt for one in judge.rejected] == [1]
 
 
 def test_an_honest_refusal_of_the_judge_is_not_fixed():

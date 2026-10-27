@@ -642,7 +642,9 @@ class CouncilRun[S: (Slicing, Structure, IdeaDiscovery, RepositoryScan, DesignSc
                 if isinstance(exc, BadAnswer) and attempt <= fixes:
                     asked = render("answer_fix", task=prompt, answer=reply, reason=str(exc))
                     attempt += 1
-                    if not replaying:
+                    if replaying:
+                        self._set_attempt(step, model, attempt)
+                    else:
                         self._set_run(step, model, "running", attempt=attempt)
                     continue
                 # Исправить не вышло — из лотка их вон: иначе повтор взял бы те же ответы даром
@@ -711,6 +713,13 @@ class CouncilRun[S: (Slicing, Structure, IdeaDiscovery, RepositoryScan, DesignSc
                 run.identity = identity
             if attempt is not None:
                 run.attempt = attempt
+            self._publish()
+
+    def _set_attempt(self, name: StepName, model: str, attempt: int) -> None:
+        """Повтор хода проходит исправления из лотка: модель так и остаётся готовой, а номер
+        попытки — как у ответа, который приняли, а не 1 нового хода."""
+        with self._lock:
+            self._run(name, model).attempt = attempt
             self._publish()
 
     def _reject(self, name: StepName, model: str, attempt: int, reason: str, text: str) -> None:
