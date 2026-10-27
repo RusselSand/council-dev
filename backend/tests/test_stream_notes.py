@@ -13,7 +13,7 @@ from spec_council import stream_notes
 from spec_council.app import app
 from spec_council.deps import get_agents, get_launcher, get_projects, get_repositories, get_store
 from spec_council.models import ExportedNote, NotePlan, NotesDraft, NotesExport, ProjectDraft
-from spec_council.notes import Catalog, Note, path_of, rendered
+from spec_council.notes import Catalog, Note, marked, path_of, rendered
 from spec_council.pipeline import ModelFailed
 from spec_council.projects import Projects
 from spec_council.store import InMemoryStore
@@ -609,7 +609,8 @@ def test_a_decision_another_stream_superseded_is_not_a_hand_edit_of_its_own_stre
     record = stored(store, first).notes
     put(store, first, notes=record.model_copy(update={"outcomes": ""}))
     assert {note["change"] for note in export_of(first)["notes"]} == {"kept"}
-    # Файл решения с тех пор другой, а правок руками нет — перепишется, и поле останется.
+    # Файл решения с тех пор другой, а правок руками нет — перепишется, и поле останется. Запись
+    # о выгрузке — как у прежней версии: отпечаток файла как есть, с полем.
     adr.write_text(rendered(Note("ADR-0001", "adr", "Старое решение.", ("PRO-0001",),
                                  superseded_by=by)), encoding="utf-8")
     digest = hashlib.sha256(adr.read_bytes()).hexdigest()
@@ -622,6 +623,16 @@ def test_a_decision_another_stream_superseded_is_not_a_hand_edit_of_its_own_stre
     written = Catalog.load(docs).notes["ADR-0001"]
     assert written.body.startswith("Искать по заголовкам тредов")
     assert written.superseded_by == by
+    # Поток записал решение, когда поле в файле уже было, а потом совет заменил решение снова,
+    # другим, — поле поменялось на месте. И это не правка руками.
+    adr.write_bytes(marked(adr.read_bytes().decode("utf-8"), "ADR-0009").encode("utf-8"))
+    put(store, first, notes=stored(store, first).notes.model_copy(update={"outcomes": ""}))
+    assert {note["id"]: note["change"] for note in export_of(first)["notes"]}["ADR-0001"] == \
+        "kept"
+    # А правку текста руками видно и в файле с полем.
+    adr.write_bytes(adr.read_bytes() + "Дописали руками.\n".encode())
+    assert {note["id"]: note["change"] for note in export_of(first)["notes"]}["ADR-0001"] == \
+        "manual"
 
 
 # --- выгрузку не собрать

@@ -18,7 +18,8 @@
 выгрузки, совет не трогает. Исчезнувшее само не удаляется. Итоги, что выгружали раньше, потоку
 больше не принадлежат: их совет не читает и не пишет. Решениям каталога, которые запись делает
 заменёнными, она дописывает во frontmatter superseded_by — и только это (notes.marked); такое
-поле в файле прежней выгрузки — правка совета, а не человека (written_as).
+поле в файле прежней выгрузки — правка совета, а не человека: запись о выгрузке помнит файл без
+него (unmarked_digest, written_as).
 
 Тексты потока называют его части его же номерами: «по Q1», «(F3)». В заметки они ложатся
 номерами заметок, а у чего заметки нет — без номера (renumbered).
@@ -1029,19 +1030,25 @@ def digest_of(path: Path) -> str:
         return ""
 
 
-def written_as(path: Path, digest: str, kind: str) -> bool:
-    """Файл — тот, что выгрузили (digest): и тогда, когда выгрузка другого потока с тех пор
-    дописала во frontmatter заметки, каким решением она заменена (notes.marked), — это правит
-    совет, а не человек."""
-    if digest_of(path) == digest:
-        return True
+def unmarked_digest(path: Path, kind: str) -> str:
+    """Отпечаток выгруженного файла: заметки — без superseded_by во frontmatter (notes.unmarked).
+    Его дописывает и меняет выгрузка другого потока (notes.marked) — это правит совет, а не
+    человек, и отпечаток от этого не меняется. Файл задачи — как есть."""
     if kind == "issue":
-        return False
+        return digest_of(path)
     try:
         text = path.read_bytes().decode("utf-8")
     except (OSError, UnicodeError):
-        return False
-    return hashlib.sha256(unmarked(text).encode("utf-8")).hexdigest() == digest
+        return digest_of(path)
+    return hashlib.sha256(unmarked(text).encode("utf-8")).hexdigest()
+
+
+def written_as(path: Path, digest: str, kind: str) -> bool:
+    """Файл — тот, что выгрузили (digest): и тогда, когда выгрузка другого потока с тех пор
+    дописала или поменяла во frontmatter заметки, каким решением она заменена (unmarked_digest).
+    Запись прежней версии помнит отпечаток файла как есть (digest_of) — с полем, если оно в файле
+    тогда уже было."""
+    return digest in (digest_of(path), unmarked_digest(path, kind))
 
 
 def drafted(stream: Stream, fragments: Mapping[int, LabeledFragment], shelf: Shelf,
@@ -1233,7 +1240,8 @@ def written(notes: Sequence[NotePlan], vanished: Sequence[VanishedNote],
             exported.append(ExportedNote(key=plan.key, id=plan.id, type=plan.type,
                                          generated=plan.generated, written=texts[plan.key],
                                          links=plan.links,
-                                         digest=digest_of(where(plan.id, plan.type)),
+                                         digest=unmarked_digest(where(plan.id, plan.type),
+                                                                plan.type),
                                          note_numbers=True, references=references))
         exported += [old.model_copy(update={"kept": True}) for old in before.values()
                      if old.id in gone and old.id not in delete]
