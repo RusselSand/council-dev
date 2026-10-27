@@ -1305,9 +1305,9 @@ def task(id_, title, outcome="A-O1", **extra):
             **extra}
 
 
-def plans(replies, sources=PROJECT, copy=None):
+def plans(replies, sources=PROJECT, copy=None, inputs=PLAN_INPUTS):
     runner, reports = FakeRunner(replies), []
-    result = TaskRun("c1", ["sol", "fable"], "fable", runner, reports.append, PLAN_INPUTS,
+    result = TaskRun("c1", ["sol", "fable"], "fable", runner, reports.append, inputs,
                      sources=sources, repository="КАРТА РЕПОЗИТОРИЯ",
                      copy=copy or copy_as("снимок-1")).run()
     return result, runner
@@ -1460,6 +1460,66 @@ def test_a_judge_naming_a_task_not_in_its_plan_stops_the_plan_and_is_asked_again
     # Ответ судьи — из лотка вон: повтор спросит его заново.
     assert [key for key in runner.keys if "-task_plan_judge-" in key] == [
         key for key in runner.forgotten if "-task_plan_judge-" in key]
+
+
+# Задача ISS-0052 совета 04d60eed и решение ADR-0064, на котором она стоит: список правок в нём
+# закрытый.
+EDITS = ("The user can rename a resource; move an endpoint to another resource of the same "
+         "version, from the \"unassigned\" list to a resource of the same version, or from the "
+         "\"no version\" list to a resource of any version; and add a new resource. Endpoints "
+         "cannot be moved between versions, because in the target Python SDK a resource is a "
+         "package inside a version (services/<service>/<version>/<resource>), so an endpoint must "
+         "not leave its version.")
+EDITS_INPUTS = Inputs(
+    values={"ideas": "A. Группировка эндпойнтов: ресурсы пакетами Python SDK",
+            "outcomes": "[ИТОГИ]", "constraints_and_risks": "[]",
+            "decisions": json.dumps([{"id": "ADR-0064", "question": "Which grouping edits can the "
+                                      "user make?", "decision": EDITS}])},
+    context=Context(outcomes={"A-O1": Allowed(adrs=frozenset({"ADR-0064"}),
+                                              constraints=frozenset(), risks=frozenset())}),
+    outcomes=["A-O1"], basis={"A": "o1:n1"})
+EDITS_SCOPE = ["Add server operations to rename a resource, add a resource and move an endpoint "
+               "(ADR-0064).", "There are no other edits."]
+EMPTIED = "Can a resource that became empty after moves be deleted?"
+BACK = "Can an endpoint be returned from a resource to \"unassigned\"?"
+PATHS = "Which paths, request bodies and HTTP statuses should the edits use?"
+ANSWER = ("Deleting a resource and moving an endpoint back to \"unassigned\" are not allowed "
+          "(ADR-0064).")
+
+
+def edits_task(scope, open_questions):
+    return task("I1", "Server-side grouping edits: rename, move, add a resource",
+                adr_ids=["ADR-0064"], constraint_ids=[], scope=scope,
+                open_questions=open_questions)
+
+
+def test_a_judge_answers_an_open_question_an_accepted_decision_settles():
+    """Открытый вопрос задачи, на который отвечает принятое решение, судья плана убирает, а ответ
+    пишет в «Что сделать» со ссылкой на решение; не отвечает сам — только на вопросы, на которые
+    не отвечает ни одно решение (решение владельца к задаче «Бекенд · Задачи: открытые вопросы
+    сверяются с принятыми ADR»). Судья видит решения и вопросы планов, а его план — таким и
+    остаётся."""
+    asked = [edits_task(EDITS_SCOPE, [EMPTIED, BACK, PATHS])]
+    judge = {"issues": [edits_task([*EDITS_SCOPE, ANSWER], [PATHS])]}
+    result, runner = plans({("task_plan", "sol"): {"issues": asked},
+                            ("task_plan", "fable"): {"issues": [edits_task(EDITS_SCOPE, [BACK])]},
+                            ("task_plan_judge", "fable"): judge}, inputs=EDITS_INPUTS)
+    assert result.state == "done", result.error
+    [issue] = result.issues
+    assert (issue.scope, issue.open_questions, issue.adr_ids) == (
+        [*EDITS_SCOPE, ANSWER], [PATHS], ["ADR-0064"])
+    prompt = runner.asked["task_plan_judge", "fable"]
+    assert '"ADR-0064"' in section(prompt, "ACCEPTED DECISIONS")
+    assert EMPTIED in section(prompt, "PLANS")
+    rule = " ".join(section(prompt, "3. Open questions").split())
+    assert "Check every open question of every ISSUE against the accepted decisions" in rule
+    assert "remove the question from `open_questions` and write the answer into `scope`" in rule
+    assert "only what is unclear about how to implement the ISSUE and no accepted decision " \
+           "answers" in rule
+    assert "Deleting a resource and moving an endpoint back to \"unassigned\" are not allowed " \
+           "(ADR-0064)." in rule
+    assert "no open question is one an accepted decision answers" in " ".join(
+        section(prompt, "Final check").split())
 
 
 def test_a_task_refers_only_to_what_its_own_outcome_has():
