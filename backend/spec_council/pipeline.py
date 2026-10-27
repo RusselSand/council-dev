@@ -100,7 +100,7 @@ from .design import as_prompt as design_prompt
 from .design import context_prompt as design_context
 from .design import judged_design
 from .design import map_of as design_map_of
-from .export import Shelf, portions, previous_of, settled, translations
+from .export import Shelf, knows_words, portions, previous_of, settled, words_for
 from .figma import Fetcher, FigmaError, Link
 from .figma import snapshot as figma_snapshot
 from .grouping import StructureOption, judged_structure, structure_options
@@ -218,6 +218,7 @@ from .slicing import (
 from .tasks import Inputs as TaskInputs
 from .tasks import plan_of, plan_prompt, same_plan
 from .tasks_export import aligned
+from .translation import Template, filled, legend, relevant, templated, translated
 
 log = logging.getLogger(__name__)
 
@@ -1669,29 +1670,61 @@ class NotesRun(CouncilRun[NotesDraft | TasksDraft]):
     """Перевод черновика выгрузки на язык документации (COUNCIL_NOTES_LANGUAGE): ходы судьи
     по очереди — новые тексты заметок разом, файл задачи — каждый своим ходом (portions). Ход
     упал — шаг упал, а ответы готовых ходов остаются в лотке: повтор возьмёт их даром. Номера
-    заметок и задач в переводе — те же, иначе ответ негодный. Задачу во всех файлах зовут так,
-    как перевели её собственный файл (aligned). После перевода совет заново смотрит, что с
-    каждой заметкой будет при записи."""
+    заметок и задач в переводе — те же, иначе ответ негодный. Связки, которые совет написал
+    словами words (языка работы), судья видит метками, а в переводе на их месте — связки языка
+    заметок; фразы переводятся по глоссарию черновика, и судья его пополняет; references — как
+    в каталоге лежат заметки, на которых стоит файл задачи (translation.py). Задачу во всех
+    файлах зовут так, как перевели её собственный файл (aligned). После перевода совет заново
+    смотрит, что с каждой заметкой будет при записи."""
 
     what = "перевод заметок"
 
     def __init__(self, council_id: str, draft: NotesDraft | TasksDraft,
                  previous: NotesExport | TasksExport | None,
                  shelf: Shelf, judge: str, runner: Runner,
-                 report: Callable[[NotesDraft | TasksDraft], None]) -> None:
+                 report: Callable[[NotesDraft | TasksDraft], None], *,
+                 words: Mapping[str, str],
+                 references: Mapping[str, Sequence[Mapping[str, str]]] | None = None) -> None:
         super().__init__(council_id, [], judge, runner, report, draft)
         self.previous = {note.key: note for note in previous.notes} if previous else {}
         self.shelf = shelf
+        self.words = words
+        self.references = references or {}
 
     def work(self) -> dict[str, Any]:
         parts = portions(self.state.notes)
+        notes = {note.key: note for note in self.state.notes}
+        # Связок языка заметок совет не знает — меток нет: связки переводит судья.
+        target = words_for(self.state.language) if knows_words(self.state.language) else None
+        glossary = dict(self.state.glossary)
         found: dict[str, str] = {}
+        # Метки, что стоят в самом тексте заметки (пример кода), — по заметке: их не трогают.
+        kept: dict[str, frozenset[int]] = {}
+
+        def source(key: str, text: str) -> Template:
+            note = notes[key]
+            return templated(text, note.type, note.id, self.words) if target else Template(text)
+
+        def fill(key: str, text: str) -> str:
+            return filled(text, target, notes[key].id, kept[key]) if target else text
+
         for part in parts:
+            templates = {key: source(key, text) for key, text in part.items()}
+            kept |= {key: template.kept for key, template in templates.items()}
+            sources = {key: template.text for key, template in templates.items()}
+            cited = {item["id"]: dict(item) for key in part
+                     for item in self.references.get(key, ())}
             prompt = render("notes_translation", language=self.state.language,
+                            markers=legend(templates.values(), target) if target else "(none)",
+                            glossary=as_json(relevant(glossary, sources.values())),
+                            references=as_json(list(cited.values())),
                             notes=as_json([{"key": key, "text": text}
-                                           for key, text in part.items()]))
-            found |= self._ask_judge(StepName.notes_translation, prompt,
-                                     partial(translations, sources=part))
+                                           for key, text in sources.items()]))
+            texts, glossary = self._ask_judge(
+                StepName.notes_translation, prompt,
+                partial(translated, sources=sources, known=glossary, fill=fill,
+                        names={key: notes[key].id for key in sources}))
+            found |= texts
         if not parts:
             self._skip(StepName.notes_translation)
         texts = {note.key: found.get(note.key, note.text) for note in self.state.notes}
@@ -1699,10 +1732,10 @@ class NotesRun(CouncilRun[NotesDraft | TasksDraft]):
             # Каждый файл задачи переводили своим ходом: задачу, после которой делать эту,
             # зовут так, как перевели её собственный файл.
             texts |= aligned(self.state.notes, texts, found.keys())
-        notes = [settled(note.model_copy(update={"text": texts[note.key]}),
-                         previous_of(note, self.previous), self.shelf)
-                 for note in self.state.notes]
-        return {"notes": notes}
+        planned = [settled(note.model_copy(update={"text": texts[note.key]}),
+                           previous_of(note, self.previous), self.shelf)
+                   for note in self.state.notes]
+        return {"notes": planned, "glossary": glossary}
 
 
 class DecisionsRun(CouncilRun[DecisionsSearch]):

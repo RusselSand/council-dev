@@ -13,7 +13,9 @@ Stream.notes_draft, черновик с ходом судьи (pipeline.NotesRun
 остановился, шаг не ждёт вас (standing.translation). Перевод — к каталогу, каким он был, когда
 переводили. Каталог с тех пор поменялся — например, в него записали другой поток, и номера новых
 заметок сдвинулись, — перевод переходит на нынешний черновик (carried), а то, к чему он уже не
-подходит, судья на «Записать в каталог» переводит заново.
+подходит, судья на «Записать в каталог» переводит заново. Связки судья не переводит — они из
+словаря языка заметок, — а фразы переводит по глоссарию: повторная выгрузка начинает с глоссария
+прошлой (решение владельца к задаче «Бекенд · Перевод заметок и задач…», translation.py).
 
 Записанный черновик ложится в поток (Stream.notes_draft, с номером выгрузки): после записи шаг
 показывает его — с теми же метками и сменами статуса решений проекта, что были до записи. Решение
@@ -60,6 +62,7 @@ from .pipeline import NotesRun, Runner, translating
 from .prompts import language, notes_language
 from .standing import translation
 from .store import Store
+from .translation import merged
 
 
 def draft_of(council: Council, stream: Stream, root: Path,
@@ -81,7 +84,14 @@ def draft_of(council: Council, stream: Stream, root: Path,
         state="done", run=uuid4().hex[:8], outcomes=stream.outcomes.run if stream.outcomes else "",
         language=notes_language(), root=str(root), notes=notes, vanished=vanished, refs=refs,
         cited=cited_in(view, fragments, shelf.catalog.notes, previous.cited if previous else ()),
-        shifts=shifts_of(shelf.catalog, notes, own)), shelf
+        shifts=shifts_of(shelf.catalog, notes, own),
+        glossary=glossary_of(previous, notes_language())), shelf
+
+
+def glossary_of(export: NotesExport | TasksExport | None, language: str) -> dict[str, str]:
+    """Глоссарий записанного перевода — если записали на этом языке: с него начинает перевод
+    (translation.py)."""
+    return dict(export.glossary) if export is not None and export.language == language else {}
 
 
 def reserved(councils: Iterable[Council], council_id: str, group: str, root: Path) -> set[str]:
@@ -104,7 +114,8 @@ def written(stream: Stream, draft: NotesDraft, shelf: Shelf,
 
     def keep(exported: list[ExportedNote]) -> None:
         record = NotesExport(run=draft.run, outcomes=draft.outcomes, language=draft.language,
-                             root=draft.root, notes=exported, refs=draft.refs, cited=draft.cited)
+                             root=draft.root, notes=exported, refs=draft.refs, cited=draft.cited,
+                             glossary=draft.glossary)
         save(stream.model_copy(update={"notes": record, "notes_draft": draft}))
 
     written_notes(draft.notes, draft.vanished, {}, [], shelf, previous, keep,
@@ -146,9 +157,10 @@ def carried[D: (NotesDraft, TasksDraft)](
         previous: NotesExport | TasksExport | None) -> tuple[D, list[str]]:
     """Черновик с переводом судьи (before): заметка, которую совет написал заново, берёт перевод
     того же текста — и тогда, когда номера заметок потока с тех пор сдвинулись (в каталог записали
-    другой поток): перевод сохраняет номера, и они сдвигаются так же. Ответ — черновик и ключи
-    заметок, к которым перевода нет: судья их не переводил, текст с тех пор другой, перевод не
-    готов или на другом языке. Так же — у файлов задач на «Задачах» (council_tasks.py): номер
+    другой поток): перевод сохраняет номера, и они сдвигаются так же. И глоссарий этого перевода —
+    к глоссарию черновика (с какого начинают сейчас — его перевод фразы главнее). Ответ — черновик и
+    ключи заметок, к которым перевода нет: судья их не переводил, текст с тех пор другой, перевод
+    не готов или на другом языке. Так же — у файлов задач на «Задачах» (council_tasks.py): номер
     задачи сдвинулся — перевод сдвигает его так же."""
     sources = untranslated(draft.notes)
     if not sources:
@@ -173,7 +185,8 @@ def carried[D: (NotesDraft, TasksDraft)](
                                  previous_of(note, olds), shelf))
     # Ход перевода — тот, что перевёл: он и остаётся ходом шага, когда черновик запишут.
     return draft.model_copy(update={"notes": notes, "steps": before.steps,
-                                    "launch": before.launch, "reused": before.reused}), missing
+                                    "launch": before.launch, "reused": before.reused,
+                                    "glossary": merged(draft.glossary, before.glossary)}), missing
 
 
 def renamed(text: str, moved: Mapping[str, str]) -> str:
@@ -228,7 +241,7 @@ def launch_of(council: Council, stream: Stream, draft: NotesDraft, shelf: Shelf,
         "launch": before.launch + 1 if before is not None else 1})
     state.reused = resumed(state, before if again else None, datetime.now(UTC), runner.identity)
     pipeline = NotesRun(council.id, state, export_in(stream.notes, shelf.root), shelf,
-                        council.judge, runner, report)
+                        council.judge, runner, report, words=words_for(language()))
     pipeline.replayed = {(part.name, run.model) for part in state.steps for run in part.runs
                          if run.state == "done"}
     return Launch(stream.model_copy(update={"notes_draft": state.model_copy(deep=True)}),

@@ -74,8 +74,8 @@ from .questions import same_question
 from .repository import context_prompt
 from .slicing import BadAnswer
 
-# Связки в тексте заметок и файлов задач — на языке работы; перевод, если нужен, — потом,
-# целиком.
+# Связки в тексте заметок и файлов задач — на языке работы; перевод, если нужен, — потом. В
+# переводе — связки языка заметок, дословно: их судья не переводит (translation.py).
 WORDS = {
     "russian": {"because": "потому что", "criteria": "Критерии готовности",
                 "entry": "Где менять", "now": "Что там сейчас", "scope": "Что сделать",
@@ -1306,22 +1306,25 @@ def portions(notes: Sequence[NotePlan]) -> list[dict[str, str]]:
     return [part for part in (together, *apart) if part]
 
 
-def translations(data: dict, sources: Mapping[str, str]) -> dict[str, str]:
+def translations(data: dict, sources: Mapping[str, str],
+                 names: Mapping[str, str] | None = None) -> dict[str, str]:
     """Перевод заметок из ответа: каждая — и ровно с теми же номерами заметок и задач внутри.
-    Лишний номер тоже негоден: ISS-… в тексте занимает номер задачи (tasks_export.numbered)."""
+    Лишний номер тоже негоден: ISS-… в тексте занимает номер задачи (tasks_export.numbered).
+    names — как назвать заметку в причине (номером), а не ключом."""
     items = data.get("notes")
     if not isinstance(items, list):
         raise BadAnswer("нет списка notes")
+    names = names or {}
     found = {item["key"]: item["text"].strip() for item in items
              if isinstance(item, dict) and item.get("key") in sources
              and isinstance(item.get("text"), str) and item["text"].strip()}
-    missing = [key for key in sources if key not in found]
+    missing = [names.get(key, key) for key in sources if key not in found]
     if missing:
         raise BadAnswer(f"нет перевода заметок: {', '.join(missing[:5])}")
     for key, text in found.items():
         problem = numbering_problem(sources[key], text)
         if problem is not None:
-            raise BadAnswer(f"в переводе {key} {problem}")
+            raise BadAnswer(f"в переводе {names.get(key, key)} {problem}")
     return found
 
 

@@ -20,7 +20,7 @@ from spec_council.groups import marked
 from spec_council.issue_files import rendered as issue_rendered
 from spec_council.models import CouncilStatus, ProjectDraft, Slicing, Structure, StructureProposal
 from spec_council.models import LabeledFragment as Fragment
-from spec_council.notes import Note, path_of, rendered
+from spec_council.notes import Catalog, Note, path_of, rendered
 from spec_council.pipeline import ModelFailed
 from spec_council.repository import STALE_MAP
 from spec_council.store import council_lock
@@ -948,6 +948,89 @@ def test_a_stopped_translation_is_run_again(english, base):
         assert tasks_of(council_id)["stages"]["tasks"] == "waiting"
         assert council(council_id).tasks_draft.launch == 2
         assert writes(council_id).json()["council"]["stages"]["tasks"] == "done"
+    finally:
+        app.dependency_overrides.pop(get_agents)
+        app.dependency_overrides.pop(get_launcher)
+
+
+# --- связки и единые термины (решение владельца к задаче «Бекенд · Перевод заметок и задач:
+# заголовки из словаря, единые термины»)
+
+class Glossed(Agents):
+    """Судья переводит «Мерило» в заметках потока как Yardstick и вносит это в глоссарий, а в
+    файлах задач — как велит measure. briefs — что он видел, переводя файлы задач."""
+
+    def __init__(self):
+        super().__init__()
+        self.measure = "Measure"
+        self.briefs: list[str] = []
+
+    def ask(self, model, prompt, key, workspace=None, stop=None):
+        if "-notes_translation-" not in key:
+            return super().ask(model, prompt, key, workspace)
+        notes = json.loads(prompt.split("## NOTES\n")[1])
+        tasks = any(note["key"][:2] in ("i:", "o:") for note in notes)
+        word = self.measure if tasks else "Yardstick"
+        if tasks:
+            self.briefs.append(prompt)
+        return json.dumps({
+            "notes": [{"key": note["key"], "text": note["text"].replace("Мерило", word)
+                       .replace("мерило", word.lower())} for note in notes],
+            "glossary": [] if tasks else [{"source": "Мерило", "translation": "Yardstick"}]})
+
+
+def quoting_plan(prompt):
+    """План, как у Agents, — а задача называет итог в кавычках: «Мерило»."""
+    plan = Agents.task_plan(prompt)
+    return {"issues": [issue | {"scope": ["Подписать итог «Мерило» в отчёте."]}
+                       for issue in plan["issues"]]}
+
+
+def test_tasks_are_translated_with_the_words_of_the_streams_notes(english, base):
+    """Задачи переводятся так же, как те же фразы уже переведены в заметках: судья видит глоссарий
+    выгрузок потоков и решения, на которых стоит задача, как они лежат в каталоге. Фраза в
+    кавычках из глоссария переведена иначе — перевод задач остановился, «Запустить снова»
+    спрашивает судью заново. Заголовки и строка о коммите — из словаря языка заметок."""
+    fake = Glossed()
+    fake.task_plan = quoting_plan
+    app.dependency_overrides[get_agents] = lambda: fake
+    app.dependency_overrides[get_launcher] = lambda: lambda job: job()
+    try:
+        council_id = ready()
+        [stream] = council(council_id).streams
+        assert stream.notes.glossary == {"Мерило": "Yardstick"}
+        catalog = Catalog.load(base / "notes")
+        assert catalog.notes["ADR-0001"].body.endswith(", because yardstick видно без опросов.")
+
+        [prompt] = fake.briefs                          # файл I1 — первым, и на нём встал
+        [task] = json.loads(prompt.split("## NOTES\n")[1])
+        assert "## ⟦entry⟧\n- app.py" in task["text"] and task["text"].endswith("⟦commit⟧")
+        assert "Где менять" not in task["text"] and "В финальном коммите" not in task["text"]
+        assert "- ⟦entry⟧ — “Where to change”" in section(prompt, "Fixed labels")
+        assert json.loads(section(prompt, "GLOSSARY").split("\n\n")[-1]) == [
+            {"source": "Мерило", "translation": "Yardstick"}]
+        references = json.loads(section(prompt, "TRANSLATED NOTES").split("\n\n")[-1])
+        assert [(item["id"], item["translation"]) for item in references] == [
+            (adr, catalog.notes[adr].body) for adr in ("ADR-0001", "ADR-0002")]
+        assert "потому что мерило видно без опросов" in references[0]["source"]
+
+        assert tasks_of(council_id)["stages"]["tasks"] == "failed"
+        assert plan_of(council_id)["error"] == (
+            "fable не справилась: негодный ответ: в переводе ISS-0001 «Мерило» переведено не так, "
+            "как в глоссарии: «Yardstick».")
+        assert error_of(writes(council_id)) == (409, "tasks_not_ready")
+
+        fake.measure = "Yardstick"
+        assert retries(council_id).status_code == 200
+        assert tasks_of(council_id)["stages"]["tasks"] == "waiting"
+        assert writes(council_id).json()["council"]["stages"]["tasks"] == "done"
+        task = (base / "issues" / "ISS-0001.md").read_text(encoding="utf-8")
+        assert "- Подписать итог «Yardstick» в отчёте." in task
+        assert "\n## Where to change\n- app.py\n" in task and "\n## What is there now\n" in task
+        assert task.endswith("\nPut the issue number ISS-0001 into the final commit.\n")
+        parent = (base / "issues" / "ISS-0002.md").read_text(encoding="utf-8")
+        assert "\n## Acceptance criteria\n" in parent
+        assert council(council_id).tasks_export.glossary == {"Мерило": "Yardstick"}
     finally:
         app.dependency_overrides.pop(get_agents)
         app.dependency_overrides.pop(get_launcher)

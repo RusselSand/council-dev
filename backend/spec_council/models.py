@@ -1138,6 +1138,9 @@ class NotesDraft(BaseModel):
     # Решения проекта, чей статус меняет выгрузка, — какими они были до записи: после неё
     # каталог их уже не помнит. У черновиков прежней версии их нет.
     shifts: list[StatusShift] = []
+    # Как фразы потока переведены на язык заметок, «фраза → перевод» (translation.py): с этого
+    # начинает перевод, и его пополняет судья. У черновиков прежней версии его нет.
+    glossary: dict[str, str] = {}
     error: str | None = None
 
 
@@ -1186,6 +1189,9 @@ class NotesExport(BaseModel):
     # Номера заметок каталога, что называли исходные тексты потока, когда выгружали (cited_in):
     # в них это ссылки, а не слова, даже если заметку потом удалили.
     cited: list[str] = []
+    # Глоссарий записанного перевода (NotesDraft.glossary): с него начинают повторная выгрузка
+    # потока и перевод задач совета. У записи прежней версии его нет.
+    glossary: dict[str, str] = {}
 
 
 class Research(BaseModel):
@@ -1352,6 +1358,9 @@ class TasksDraft(BaseModel):
     notes: list[NotePlan] = []
     vanished: list[VanishedNote] = []
     numbers: list[IssueNumber] = []
+    # Глоссарий перевода задач, как у перевода заметок (NotesDraft.glossary). У черновиков прежней
+    # версии его нет.
+    glossary: dict[str, str] = {}
     error: str | None = None
 
 
@@ -1364,6 +1373,8 @@ class TasksExport(BaseModel):
     root: str = ""
     notes: list[ExportedNote] = []
     numbers: list[IssueNumber] = []
+    # Глоссарий записанного перевода задач. У записи прежней версии его нет.
+    glossary: dict[str, str] = {}
 
 
 class Council(BaseModel):
