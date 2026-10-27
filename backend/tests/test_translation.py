@@ -10,6 +10,7 @@ from spec_council.models import Issue, Outcome
 from spec_council.slicing import BadAnswer
 from spec_council.tasks_export import issue_text, parent_text
 from spec_council.translation import (
+    Template,
     filled,
     glossary_problem,
     legend,
@@ -34,15 +35,16 @@ def test_a_decision_shows_the_judge_markers_instead_of_the_councils_labels():
                     "ADR-0003", "ADR-0005")
     source = templated(text, "adr", "ADR-0007", RU)
     # «Потому что» в самом «почему» — уже слова текста: их переводит судья.
-    assert source == ("Искать по заголовкам, ⟦because⟧ так советует опрос, потому что он свежий."
-                      "\n\n⟦replaces⟧: ADR-0003, ADR-0005.")
-    assert filled(source, EN, "ADR-0007") == (
+    assert source == Template("Искать по заголовкам, ⟦because⟧ так советует опрос, потому что он "
+                              "свежий.\n\n⟦replaces⟧: ADR-0003, ADR-0005.")
+    assert filled(source.text, EN, "ADR-0007") == (
         "Искать по заголовкам, because так советует опрос, потому что он свежий.\n\n"
         "Supersedes: ADR-0003, ADR-0005.")
     # Решение без «почему» и замен — как есть; у идеи, вопроса и варианта связок нет.
-    assert templated("Искать по заголовкам", "adr", "ADR-0007", RU) == "Искать по заголовкам"
+    assert templated("Искать по заголовкам", "adr", "ADR-0007", RU) == \
+        Template("Искать по заголовкам")
     assert templated("Вопрос, потому что важно.", "open_question", "OQ-0001", RU) == \
-        "Вопрос, потому что важно."
+        Template("Вопрос, потому что важно.")
 
 
 def test_an_issue_shows_the_judge_its_headings_and_commit_line_as_markers():
@@ -51,12 +53,12 @@ def test_an_issue_shows_the_judge_its_headings_and_commit_line_as_markers():
                   scope=["Собрать индекс."], open_questions=["Где хранить?"])
     text = issue_text(issue, "ISS-0008", [("ISS-0007", "Схема")], [], ["Медленно."], RU)
     source = templated(text, "issue", "ISS-0008", RU)
-    assert source == ("# Индекс\n\nЧтобы искать.\n\n## ⟦entry⟧\n- app.py\n\n## ⟦now⟧\n"
-                      "Индекса нет.\n\n```\n## Риски\n```\n\n## ⟦scope⟧\n- Собрать индекс.\n\n"
-                      "## ⟦risks⟧\n- Медленно.\n\n## ⟦open⟧\n- Где хранить?\n\n## ⟦after⟧\n"
-                      "- ISS-0007: Схема\n\n⟦commit⟧")
+    assert source == Template("# Индекс\n\nЧтобы искать.\n\n## ⟦entry⟧\n- app.py\n\n## ⟦now⟧\n"
+                              "Индекса нет.\n\n```\n## Риски\n```\n\n## ⟦scope⟧\n- Собрать "
+                              "индекс.\n\n## ⟦risks⟧\n- Медленно.\n\n## ⟦open⟧\n- Где хранить?\n\n"
+                              "## ⟦after⟧\n- ISS-0007: Схема\n\n⟦commit⟧")
     # На месте меток — связки языка заметок, дословно; пример кода в задаче — как есть.
-    assert filled(source, EN, "ISS-0008") == (
+    assert filled(source.text, EN, "ISS-0008") == (
         "# Индекс\n\nЧтобы искать.\n\n## Where to change\n- app.py\n\n## What is there now\n"
         "Индекса нет.\n\n```\n## Риски\n```\n\n## To do\n- Собрать индекс.\n\n## Risks\n"
         "- Медленно.\n\n## Open questions\n- Где хранить?\n\n## After the issues\n"
@@ -64,15 +66,40 @@ def test_an_issue_shows_the_judge_its_headings_and_commit_line_as_markers():
     parent = parent_text(Outcome(id="O1", title="Мерило", behavior="Видно.",
                                  acceptance_criteria=["Считается."]), RU)
     assert templated(parent, "issue", "ISS-0009", RU) == \
-        "# Мерило\n\nВидно.\n\n## ⟦criteria⟧\n- Считается."
+        Template("# Мерило\n\nВидно.\n\n## ⟦criteria⟧\n- Считается.")
+
+
+def test_a_marker_the_text_itself_has_stays_as_it_is():
+    issue = Issue(id="I1", title="Метки", user_story="Чтобы видеть ⟦now⟧.", outcome_id="C-O1",
+                  current_state="Пример:\n\n```\nprint(\"⟦now⟧\")\n```", scope=["Метка ⟦commit⟧."])
+    text = issue_text(issue, "ISS-0008", [], [], [], RU)
+    source = templated(text, "issue", "ISS-0008", RU)
+    assert source == Template("# Метки\n\nЧтобы видеть ⟦now⟧.\n\n## ⟦now⟧\nПример:\n\n```\n"
+                              "print(\"⟦now⟧\")\n```\n\n## ⟦scope⟧\n- Метка ⟦commit⟧.\n\n⟦commit⟧",
+                              frozenset({0, 2, 4}))
+    # Судья держит метки самого текста, как и связки, — а на их место связки не встают.
+    assert filled(source.text, EN, "ISS-0008", source.kept) == (
+        "# Метки\n\nЧтобы видеть ⟦now⟧.\n\n## What is there now\nПример:\n\n```\n"
+        "print(\"⟦now⟧\")\n```\n\n## To do\n- Метка ⟦commit⟧.\n\n"
+        "Put the issue number ISS-0008 into the final commit.")
+    texts, _ = translated(answer(source.text.replace("Пример", "Example")), {"n1": source.text},
+                          {}, lambda key, text: filled(text, EN, "ISS-0008", source.kept))
+    assert 'print("⟦now⟧")' in texts["n1"] and "## What is there now\nExample:" in texts["n1"]
+    adr = templated("Писать ⟦because⟧, потому что так в коде.", "adr", "ADR-0007", RU)
+    assert adr == Template("Писать ⟦because⟧, ⟦because⟧ так в коде.", frozenset({0}))
+    assert filled(adr.text, EN, "ADR-0007", adr.kept) == "Писать ⟦because⟧, because так в коде."
+    # Что за метками, судье сказано только про связки.
+    assert legend([source], EN) == ("- ⟦now⟧ — “What is there now”\n- ⟦scope⟧ — “To do”\n"
+                                    "- ⟦commit⟧ — “Put the issue number <its issue number> into "
+                                    "the final commit.”")
 
 
 def test_the_judge_is_told_what_stands_behind_the_markers():
-    sources = ["## ⟦now⟧\nТекст", "А, ⟦because⟧ Б\n\n⟦commit⟧"]
+    sources = [Template("## ⟦now⟧\nТекст"), Template("А, ⟦because⟧ Б\n\n⟦commit⟧")]
     assert legend(sources, EN) == ("- ⟦now⟧ — “What is there now”\n- ⟦because⟧ — “because”\n"
                                    "- ⟦commit⟧ — “Put the issue number <its issue number> into "
                                    "the final commit.”")
-    assert legend(["Текст"], EN) == "(none)"
+    assert legend([Template("Текст")], EN) == "(none)"
 
 
 def fill(key: str, text: str) -> str:
@@ -130,6 +157,16 @@ def test_a_phrase_in_quotes_reads_as_the_glossary_says():
                             glossary) is None
     assert glossary_problem(source, "The “not distributed” list is empty.", glossary) == \
         "«не распределены» переведено не так, как в глоссарии: «Unassigned»"
+    # Каждое место: перевод из глоссария где-то в тексте не прикрывает другое место, где иначе.
+    assert glossary_problem(source, "The “Unassigned” list is empty; “Not distributed” labels it.",
+                            glossary) == \
+        "«Не распределены» переведено не так, как в глоссарии: «Unassigned»"
+    assert glossary_problem(source, "Unassigned items: the “Not distributed” list is empty; "
+                            "“Unassigned” labels it.", glossary) == \
+        "«Не распределены» переведено не так, как в глоссарии: «Unassigned»"
+    # Знак в конце фразы внутри кавычек — так пишут по-английски.
+    assert glossary_problem(source, "The “Unassigned,” list is empty; it reads “Unassigned.”",
+                            glossary) is None
     # Без кавычек и в коде — подсказка судье, а не проверка.
     assert glossary_problem("Они не распределены. `\"Не распределены\"`", "Not distributed.",
                             glossary) is None

@@ -218,7 +218,7 @@ from .slicing import (
 from .tasks import Inputs as TaskInputs
 from .tasks import plan_of, plan_prompt, same_plan
 from .tasks_export import aligned
-from .translation import filled, legend, relevant, templated, translated
+from .translation import Template, filled, legend, relevant, templated, translated
 
 log = logging.getLogger(__name__)
 
@@ -1698,20 +1698,24 @@ class NotesRun(CouncilRun[NotesDraft | TasksDraft]):
         target = words_for(self.state.language) if knows_words(self.state.language) else None
         glossary = dict(self.state.glossary)
         found: dict[str, str] = {}
+        # Метки, что стоят в самом тексте заметки (пример кода), — по заметке: их не трогают.
+        kept: dict[str, frozenset[int]] = {}
 
-        def source(key: str, text: str) -> str:
+        def source(key: str, text: str) -> Template:
             note = notes[key]
-            return templated(text, note.type, note.id, self.words) if target else text
+            return templated(text, note.type, note.id, self.words) if target else Template(text)
 
         def fill(key: str, text: str) -> str:
-            return filled(text, target, notes[key].id) if target else text
+            return filled(text, target, notes[key].id, kept[key]) if target else text
 
         for part in parts:
-            sources = {key: source(key, text) for key, text in part.items()}
+            templates = {key: source(key, text) for key, text in part.items()}
+            kept |= {key: template.kept for key, template in templates.items()}
+            sources = {key: template.text for key, template in templates.items()}
             cited = {item["id"]: dict(item) for key in part
                      for item in self.references.get(key, ())}
             prompt = render("notes_translation", language=self.state.language,
-                            markers=legend(sources.values(), target) if target else "(none)",
+                            markers=legend(templates.values(), target) if target else "(none)",
                             glossary=as_json(relevant(glossary, sources.values())),
                             references=as_json(list(cited.values())),
                             notes=as_json([{"key": key, "text": text}

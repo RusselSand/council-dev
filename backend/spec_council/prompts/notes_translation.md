@@ -41,7 +41,8 @@ Translate the text around a marker as if its label stood there:
 ## GLOSSARY
 
 How phrases of this log are already translated into {{language}}. Wherever such a phrase occurs,
-translate it exactly so; a phrase in quotes must read exactly as here:
+translate it exactly so; a phrase in quotes keeps its quotes and reads exactly as here, every time
+it occurs:
 
 {{glossary}}
 

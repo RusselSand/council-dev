@@ -5,20 +5,24 @@ q-008 бекенда), по решению владельца к задаче «
 Связки, которые совет пишет сам (export.WORDS: заголовки разделов задачи, строка о номере для
 коммита, «потому что», подпись строки замен), судья не переводит. В тексте, который он получает,
 они — метками («## ⟦now⟧»), а в переводе на место меток встают связки языка заметок, дословно
-(templated, filled). Метку потеряли, добавили или переставили — ответ негодный. Связок языка
-заметок совет не знает (export.knows_words) — меток нет: связки переводит судья, как остальной
-текст, как и раньше.
+(templated, filled); метка, что стоит в самом тексте (пример кода), — как есть. Метку потеряли,
+добавили или переставили — ответ негодный. Связок языка заметок совет не знает
+(export.knows_words) — меток нет: связки переводит судья, как остальной текст, как и раньше.
 
 Одна и та же фраза переводится одинаково — глоссарий выгрузки «фраза → перевод». Судья получает из
 него то, что есть в переводимом тексте (relevant), и пополняет его тем, что перевёл сам (offered).
-Фраза в кавычках из глоссария переведена иначе — ответ негодный (glossary_problem), как и с
-номерами. Глоссарий заметок потока помнит его выгрузка: повторная начинает с него. Задачи совета
+Фраза в кавычках из глоссария переведена иначе хоть в одном месте — ответ негодный
+(glossary_problem), как и с номерами. Глоссарий заметок потока помнит его выгрузка: повторная
+начинает с него. Задачи совета
 начинают с глоссариев выгрузок потоков — их фразы переводятся так, как уже переведены в заметках, —
 и видят, как в каталоге лежат решения, на которых стоит задача (council_tasks.references_of).
 """
 
 import re
-from collections.abc import Callable, Iterable, Mapping
+from collections import Counter
+from collections.abc import Callable, Collection, Iterable, Mapping
+from itertools import accumulate, count
+from typing import NamedTuple
 
 from .export import blocks_of, numbering_problem, translations, visible_of
 from .slicing import BadAnswer
@@ -32,51 +36,100 @@ MARKED = frozenset((*SECTIONS, "because", "replaces", "commit"))
 # Фраза в кавычках: «…», “…”, „…“ и "…".
 QUOTED = re.compile(r"«([^«»\n]+)»|“([^“”\n]+)”|„([^„“”\n]+)[“”]|\"([^\"\n]+)\"")
 QUOTES = "«»“”„\""
+# Знаки в конце фразы в кавычках, что в переводе бывают внутри кавычек: “Unassigned,” — так
+# пишут по-английски.
+STOPS = ".,;:!?…"
 
 Glossary = dict[str, str]
+
+
+class Template(NamedTuple):
+    """Текст для судьи (templated): связки совета — метками."""
+
+    text: str
+    # Номера (по порядку, с нуля) меток, что стоят в самом тексте — как в примере кода, а не на
+    # месте связок: их не трогают (filled).
+    kept: frozenset[int] = frozenset()
 
 
 def marker(word: str) -> str:
     return f"⟦{word}⟧"
 
 
-def templated(text: str, kind: str, note_id: str, words: Mapping[str, str]) -> str:
-    """Текст для судьи: связки, которые совет написал словами words (языка работы), — метками. У
-    решения — подпись строки замен в конце (export.replacing) и «потому что» между решением и
-    «почему» (export.because): первое — другие уже слова самого текста. У файла задачи —
-    заголовки разделов и строка о номере для коммита (последняя такая, tasks_export.issue_text),
-    вне блоков кода: пример кода в задаче — как есть."""
+def labels_of(text: str, kind: str, note_id: str,
+              words: Mapping[str, str]) -> list[tuple[int, int, str]]:
+    """Где в тексте связки, которые совет написал словами words (языка работы): начало, конец и
+    метка — по порядку. У решения — «потому что» между решением и «почему» (export.because) и
+    подпись строки замен в конце (export.replacing): первое — другие уже слова самого текста. У
+    файла задачи — заголовки разделов и строка о номере для коммита (последняя такая,
+    tasks_export.issue_text), вне блоков кода: пример кода в задаче — как есть."""
     if kind == "adr":
-        text = re.sub(rf"\n\n{re.escape(words['replaces'])}:(?= ADR-\d+(?:, ADR-\d+)*\.\Z)",
-                      f"\n\n{marker('replaces')}:", text)
-        return text.replace(f", {words['because']} ", f", {marker('because')} ", 1)
+        found = []
+        because = text.find(f", {words['because']} ")
+        if because >= 0:
+            found.append((because + 2, because + 2 + len(words["because"]), "because"))
+        replaces = re.search(
+            rf"\n\n({re.escape(words['replaces'])}):(?= ADR-\d+(?:, ADR-\d+)*\.\Z)", text)
+        if replaces is not None:
+            found.append((*replaces.span(1), "replaces"))
+        return sorted(found)
     if kind != "issue":
-        return text
+        return []
     code = blocks_of(text).code
-    heads = {f"## {words[word]}": f"## {marker(word)}" for word in SECTIONS}
+    heads = {f"## {words[word]}": word for word in SECTIONS}
     commit = words["commit"].format(id=note_id)
     rows = text.split("\n")
+    starts = list(accumulate((len(row) + 1 for row in rows), initial=0))
     closing = next((n for n in range(len(rows) - 1, -1, -1)
                     if n not in code and rows[n] == commit), None)
-    return "\n".join(row if n in code else marker("commit") if n == closing
-                     else heads.get(row, row) for n, row in enumerate(rows))
+    return [(starts[n], starts[n] + len(row), "commit") if n == closing
+            else (starts[n] + len("## "), starts[n] + len(row), heads[row])
+            for n, row in enumerate(rows)
+            if n not in code and (n == closing or row in heads)]
 
 
-def filled(text: str, words: Mapping[str, str], note_id: str) -> str:
-    """Перевод с метками — со связками words (языка заметок) на их местах."""
+def templated(text: str, kind: str, note_id: str, words: Mapping[str, str]) -> Template:
+    """Текст для судьи: связки, которые совет написал словами words (labels_of), — метками. Метка,
+    что уже стоит в самом тексте, — в kept: на её место связка не встанет."""
+    pieces: list[str] = []
+    own: set[int] = set()
+    last = size = 0
+    for start, end, name in labels_of(text, kind, note_id, words):
+        pieces.append(text[last:start])
+        size += start - last
+        own.add(size)
+        pieces.append(marker(name))
+        size += len(marker(name))
+        last = end
+    pieces.append(text[last:])
+    shown = "".join(pieces)
+    return Template(shown, frozenset(n for n, found in enumerate(MARKER.finditer(shown))
+                                     if found.start() not in own))
+
+
+def filled(text: str, words: Mapping[str, str], note_id: str,
+           kept: Collection[int] = frozenset()) -> str:
+    """Перевод с метками — со связками words (языка заметок) на их местах. Метки, что стоят в
+    самом тексте (kept — их номера по порядку, Template), — как есть."""
+    order = count()
+
     def word(found: re.Match[str]) -> str:
         name = found.group(1)
+        if next(order) in kept or name not in MARKED:
+            return found.group(0)
         if name == "commit":
             return words["commit"].format(id=note_id)
-        return words[name] if name in MARKED else found.group(0)
+        return words[name]
 
     return MARKER.sub(word, text)
 
 
-def legend(sources: Iterable[str], words: Mapping[str, str]) -> str:
+def legend(sources: Iterable[Template], words: Mapping[str, str]) -> str:
     """Что за метками в текстах порции — связки языка заметок: судья их не пишет, но видит, что
-    там будет."""
-    names = dict.fromkeys(name for text in sources for name in MARKER.findall(text))
+    там будет. Метки, что стоят в самом тексте, — не связки."""
+    names = dict.fromkeys(found.group(1) for source in sources
+                          for n, found in enumerate(MARKER.finditer(source.text))
+                          if n not in source.kept)
     shown = {name: words["commit"].format(id="<its issue number>") if name == "commit"
              else words.get(name, "") for name in names}
     return "\n".join(f"- {marker(name)} — “{label}”" for name, label in shown.items()) or "(none)"
@@ -94,6 +147,11 @@ def marking_problem(source: str, text: str) -> str | None:
 def folded(text: str) -> str:
     """Фраза для сравнения: регистр и пробелы не важны."""
     return " ".join(text.split()).casefold()
+
+
+def said(text: str) -> str:
+    """Фраза в кавычках для сравнения (folded) — без знака в конце: его пишут и внутри кавычек."""
+    return folded(text).rstrip(STOPS)
 
 
 def phrase(text: str) -> str:
@@ -152,12 +210,19 @@ def offered(data: dict, sources: Mapping[str, str], texts: Mapping[str, str],
 
 
 def glossary_problem(source: str, text: str, glossary: Mapping[str, str]) -> str | None:
-    """Фраза в кавычках из глоссария, которую перевод (text) передал не так, как в глоссарии."""
+    """Фраза в кавычках из глоссария, которую перевод (text) передал не так, как в глоссарии.
+    Каждая: сколько раз фраза в кавычках в исходнике, столько раз и её перевод из глоссария — в
+    кавычках в переводе; встретилась дважды, а перевод в кавычках один — второе место переведено
+    иначе."""
     terms = {folded(found): translation for found, translation in glossary.items()}
-    shown = folded(text)
+    shown = Counter(said(found) for found in quoted(text))
+    wanted: Counter[str] = Counter()
     for found in quoted(source):
         translation = terms.get(folded(found))
-        if translation is not None and folded(translation) not in shown:
+        if translation is None:
+            continue
+        wanted[said(translation)] += 1
+        if wanted[said(translation)] > shown[said(translation)]:
             return f"«{found}» переведено не так, как в глоссарии: «{translation}»"
     return None
 
