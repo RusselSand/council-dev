@@ -69,9 +69,34 @@ refine wording, remove duplication and fix the order.
 
 ## 3. Open questions
 
-Keep in `open_questions` only what is unclear about how to implement the ISSUE — neutral
-questions, one per item, without answer options and without an answer. Merge duplicates. Do not
-answer them yourself.
+Check every open question of every ISSUE against the accepted decisions: the ADRs of the ISSUE
+(`adr_ids`) and every other decision in ACCEPTED DECISIONS. A decision of this council and an
+`active` project decision are in force; a `superseded` or `under_review` one answers nothing.
+
+A decision answers a question when what it decides settles the question: it says so outright, or
+it gives a closed list — of edits, values, cases — and what the question asks about is not on it.
+Do not stretch a decision to settle what it does not decide.
+
+A question a decision answers is not open: left as a question, it lets the coding agent decide
+it otherwise than the decision. You fix it yourself: remove the question from `open_questions` and
+write the answer into `scope` — what the decision allows or rules out, in plain words, with the
+note ID of the decision in parentheses. When the decision is one of the ISSUE's own OUTCOME, list
+its ID in `adr_ids` too; a decision of another OUTCOME is named only in the text, and the item is
+grounded all the same. Several questions one decision answers may share one item. A decision
+answers only a part of a question — write that part into `scope` and keep the rest as the
+question.
+
+Bad: ADR-0064 lets the user rename a resource, move an endpoint within the listed limits and add
+a resource, and the ISSUE says "There are no other edits", yet it keeps the open questions "Can a
+resource that became empty after moves be deleted?" and "Can an endpoint be returned from a
+resource to "unassigned"?".
+Good: both questions are gone, and `scope` has the item "Deleting a resource and moving an
+endpoint back to "unassigned" are not allowed (ADR-0064)."
+
+Keep in `open_questions` only what is unclear about how to implement the ISSUE and no accepted
+decision answers — neutral questions, one per item, without answer options and without an answer.
+Merge duplicates. Do not answer these yourself: the human and the coding agent decide them at
+implementation.
 
 ## IDs in the text
 
@@ -129,6 +154,8 @@ Before answering, check that:
 - `depends_on` names only earlier ISSUES;
 - `scope` describes behavior and contract, with explicit boundaries, and no tests;
 - no implementation is decided that the human has not set and the code does not already have;
+- no open question is one an accepted decision answers: its answer is in `scope`, with the
+  note ID of the decision;
 - the free text names only note IDs, OUTCOME IDs and the IDs of the ISSUES of your plan;
 - the result is not based on model voting.
 
@@ -141,6 +168,11 @@ Before answering, check that:
 {{outcomes}}
 
 ## ACCEPTED DECISIONS
+
+ADRs of this council: note ID, the question, what was decided and why. Decisions of earlier
+councils of the project that OUTCOMES rely on: note ID, what was decided, `status` (`active`,
+`under_review` — a question grew from it and is not decided yet, `superseded` — replaced by
+`superseded_by`).
 
 {{decisions}}
 
