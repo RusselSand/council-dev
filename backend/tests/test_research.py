@@ -30,6 +30,7 @@ from spec_council.models import (
     LabeledFragment,
     ModelRun,
     ProjectDraft,
+    RejectedAnswer,
     RepositoryScan,
     RepositoryStep,
     Research,
@@ -46,6 +47,12 @@ from spec_council.store import InMemoryStore
 from tests.figma_fake import LINK, FakeFigma, http_error
 
 client = TestClient(app)
+
+
+def doing(model: str, state: str, text: str, rejected=()) -> dict:
+    """Строка модели в идущем исследовании: что она делает и её ответы, что не прошли проверку."""
+    return {"model": model, "state": state, "text": text, "rejected": list(rejected)}
+
 
 TEXTS = {1: "Заявка копится на телефоне и уходит сама, когда сеть вернётся.",
          2: "Мастера на объектах часто без связи.",
@@ -334,8 +341,8 @@ def test_code_research_reads_the_chosen_copies_in_the_background(store, projects
     assert code == {
         "state": "running", "repos": [{"name": "api", "selected": True},
                                       {"name": "front", "selected": False}],
-        "runs": [{"model": "sol", "state": "waiting", "text": "проход 1 · ждёт снимка кода"},
-                 {"model": "fable", "state": "waiting", "text": "проход 1 · ждёт снимка кода"}],
+        "runs": [doing("sol", "waiting", "проход 1 · ждёт снимка кода"),
+                 doing("fable", "waiting", "проход 1 · ждёт снимка кода")],
         "minutes": 2, "scanned": [], "rounds": 0, "stopReason": None}
     council = listed(council_id)
     assert (council["stage"], council["state"]) == ("research", "running")
@@ -486,27 +493,40 @@ def test_the_copies_are_read_with_the_project_as_it_is_when_the_research_gets_to
 def test_the_research_shows_what_each_model_is_doing(store, projects):
     """Судья — он же участник: одной строкой, тем, что делает сейчас; пока участники читают код,
     он с ними."""
-    def scan(discovery, judging, rounds=0):
+    def scan(discovery, judging, rounds=0, **judge):
         return RepositoryScan(state="running", run="r1", rounds=rounds, repositories=[
             {"path": "api", "files": 120}, {"path": "front", "files": 40}], steps=[
             Step(name=StepName.repository_discovery, state=discovery[0], runs=[
                 ModelRun(model="sol", state=discovery[1]),
                 ModelRun(model="fable", state=discovery[2])]),
             Step(name=StepName.repository_judge, state=judging,
-                 runs=[ModelRun(model="fable", state=judging)])])
+                 runs=[ModelRun(model="fable", state=judging, **judge)])])
 
     council_id = confirmed(store, projects, research=Research(
         scan=scan(("running", "running", "done"), "waiting")))
     code = research_of(council_id)["code"]
-    assert code["runs"] == [
-        {"model": "sol", "state": "running", "text": "проход 1 · читает api, front"},
-        {"model": "fable", "state": "done", "text": "проход 1 · находки — у судьи"}]
+    assert code["runs"] == [doing("sol", "running", "проход 1 · читает api, front"),
+                            doing("fable", "done", "проход 1 · находки — у судьи")]
     assert code["minutes"] == 4                         # 160 файлов
     store.update_council(council_id, {"research": Research(
         scan=scan(("done", "done", "done"), "running", rounds=1))})
     assert research_of(council_id)["code"]["runs"] == [
-        {"model": "sol", "state": "done", "text": "проход 2 · находки — у судьи"},
-        {"model": "fable", "state": "running", "text": "проход 2 · проверяет находки по коду"}]
+        doing("sol", "done", "проход 2 · находки — у судьи"),
+        doing("fable", "running", "проход 2 · проверяет находки по коду")]
+
+    # Ответ судьи не прошёл проверку — он его исправляет: видно, которая попытка и что не так.
+    rejected = RejectedAnswer(attempt=1, reason="нет списка findings", text='{"status": "ok"}')
+    store.update_council(council_id, {"research": Research(
+        scan=scan(("done", "done", "done"), "running", attempt=2, rejected=[rejected]))})
+    assert research_of(council_id)["code"]["runs"] == [
+        doing("sol", "done", "проход 1 · находки — у судьи"),
+        doing("fable", "running", "проход 1 · исправляет ответ · попытка 2",
+              [{"attempt": 1, "reason": "нет списка findings", "text": '{"status": "ok"}'}])]
+    # Судья — и участник: пока участники доисследуют, его прежний отказ — в той же строке.
+    store.update_council(council_id, {"research": Research(
+        scan=scan(("running", "running", "running"), "done", rounds=1, rejected=[rejected]))})
+    assert research_of(council_id)["code"]["runs"][1]["rejected"] == [
+        {"attempt": 1, "reason": "нет списка findings", "text": '{"status": "ok"}'}]
 
 
 # POST /api/councils/{id}/research/design/start
@@ -517,9 +537,8 @@ def test_design_research_reads_a_snapshot_of_the_figma_file(store, projects, age
     assert res.status_code == 200
     design = res.json()["research"]["design"]
     assert design == {"state": "running", "link": LINK, "minutes": 1, "frames": 0, "runs": [
-        {"model": "sol", "state": "waiting", "text": "проход 1 · ждёт снимка макета"},
-        {"model": "fable", "state": "waiting", "text": "проход 1 · ждёт снимка макета"}],
-        "stopReason": None}
+        doing("sol", "waiting", "проход 1 · ждёт снимка макета"),
+        doing("fable", "waiting", "проход 1 · ждёт снимка макета")], "stopReason": None}
     assert listed(council_id)["activity"] == [
         at_stage("research", "running", "sol и fable исследуют макет")]
     pool.run()

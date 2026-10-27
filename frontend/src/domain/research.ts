@@ -1,4 +1,4 @@
-import type { RunState } from './run';
+import type { RejectedAnswer, RunState } from './run';
 
 /** Два исследования этапа «Исследование»: кода и макета Figma. */
 export const RESEARCH_KINDS = ['code', 'design'] as const;
@@ -43,8 +43,10 @@ export interface RepoChoice {
 export interface ResearchRun {
   model: string;
   state: RunState;
-  /** «проход 1 · читает kromka-api». */
+  /** «проход 1 · читает kromka-api»; судья исправляет ответ — «проход 1 · исправляет ответ · попытка 2». */
   text: string;
+  /** Ответы судьи в этом исследовании, которые не прошли проверку; у моделей совета — пусто. */
+  rejected: RejectedAnswer[];
 }
 
 /** Исследованный репозиторий. */

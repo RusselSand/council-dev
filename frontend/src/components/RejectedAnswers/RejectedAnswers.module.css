@@ -1,0 +1,67 @@
+.list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-6);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.item {
+  min-width: 0;
+  border-radius: var(--radius-10);
+  background: var(--state-failed-bg);
+}
+
+/* Строка ответа — сама кнопка: нажали — раскрылась. Длинная причина переносится. */
+.head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--space-4) var(--space-8);
+  padding: var(--space-6) var(--space-10);
+  font-size: var(--text-sm);
+  line-height: var(--leading-normal);
+  color: var(--state-failed-ink);
+  cursor: pointer;
+  list-style: none;
+}
+
+.head::-webkit-details-marker {
+  display: none;
+}
+
+.head::before {
+  content: '▸';
+  flex: none;
+}
+
+.item[open] > .head::before {
+  content: '▾';
+}
+
+.title {
+  flex: none;
+  font-weight: var(--weight-semibold);
+}
+
+.reason {
+  flex: 1 1 0;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+/* Что написал судья — как есть: моноширинно, длинное прокручивается внутри. */
+.text {
+  max-height: var(--rejected-answer-max-height);
+  margin: 0;
+  padding: var(--space-8) var(--space-10);
+  overflow: auto;
+  border-top: var(--border-thin) solid var(--color-line);
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  line-height: var(--leading-normal);
+  color: var(--color-text-muted);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}

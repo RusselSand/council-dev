@@ -324,8 +324,8 @@ def test_the_models_search_past_decisions_by_the_button(store, projects, repos, 
     assert [(run["model"], run["state"]) for run in work["runs"]] == [
         ("sol", "running"), ("fable", "running")]
     assert all(run["startedAt"].endswith("Z") for run in work["runs"])
-    assert judge == {"phase": "project_decisions_judge",
-                     "runs": [{"model": "fable", "state": "waiting", "startedAt": None}]}
+    assert judge == {"phase": "project_decisions_judge", "runs": [
+        {"model": "fable", "state": "waiting", "attempt": 1, "rejected": [], "startedAt": None}]}
     # Модели ищут: прошлых решений ещё нет, каталог — сколько решений в папке.
     assert decisions_of(council_id, "B") == {"catalog": catalog(2), "decisions": [],
                                              "searched": True, "taken": []}
@@ -339,9 +339,9 @@ def test_the_models_search_past_decisions_by_the_button(store, projects, repos, 
     assert (project["state"], project["note"], project["text"]) == (
         "waiting", "найдено решений: 1", None)
     assert [phase["runs"] for phase in project["progress"]] == [
-        [{"model": "sol", "state": "done", "startedAt": None},
-         {"model": "fable", "state": "done", "startedAt": None}],
-        [{"model": "fable", "state": "skipped", "startedAt": None}]]
+        [{"model": "sol", "state": "done", "attempt": 1, "rejected": [], "startedAt": None},
+         {"model": "fable", "state": "done", "attempt": 1, "rejected": [], "startedAt": None}],
+        [{"model": "fable", "state": "skipped", "attempt": 1, "rejected": [], "startedAt": None}]]
     found = decisions_of(council_id, "B")
     assert (found["catalog"], found["searched"], found["taken"]) == (catalog(2), True, [])
     assert [(d["id"], d["relation"], d["reason"], d["selected"]) for d in found["decisions"]] == [
@@ -691,7 +691,8 @@ def test_going_on_without_past_decisions_starts_the_questions(store, pool, agent
     assert [(run["model"], run["state"]) for run in work["runs"]] == [
         ("sol", "running"), ("fable", "running")]
     assert all(run["startedAt"].endswith("Z") for run in work["runs"])
-    assert judge["runs"] == [{"model": "fable", "state": "waiting", "startedAt": None}]
+    assert judge["runs"] == [
+        {"model": "fable", "state": "waiting", "attempt": 1, "rejected": [], "startedAt": None}]
     assert stored(store, council_id).project_decisions == []
     council = summary_of(council_id)
     assert council["streams"] == [{"id": "A", "step": "questions"}, {"id": "B", "step": "project"}]

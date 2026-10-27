@@ -523,8 +523,8 @@ def test_a_recheck_checks_only_its_question_and_holds_nothing_else(store, pool, 
     assert [(run["model"], run["state"]) for run in work["runs"]] == [
         ("sol", "running"), ("fable", "running")]
     assert all(run["startedAt"].endswith("Z") for run in work["runs"])
-    assert judge == {"phase": "decision_judge",
-                     "runs": [{"model": "fable", "state": "waiting", "startedAt": None}]}
+    assert judge == {"phase": "decision_judge", "runs": [
+        {"model": "fable", "state": "waiting", "attempt": 1, "rejected": [], "startedAt": None}]}
     shown = round_of(council_id)
     assert shown["run"] == 1 and [d["question"]["id"] for d in shown["decisions"]] == [
         "Q1", "Q2", "Q3"]
@@ -1502,8 +1502,8 @@ def test_fixed_decisions_go_on_and_the_outcomes_start(store, pool, agents):
     assert work["phase"] == "outcome_discovery"
     assert [(run["model"], run["state"]) for run in work["runs"]] == [
         ("sol", "running"), ("fable", "running")]
-    assert judge == {"phase": "outcome_judge",
-                     "runs": [{"model": "fable", "state": "waiting", "startedAt": None}]}
+    assert judge == {"phase": "outcome_judge", "runs": [
+        {"model": "fable", "state": "waiting", "attempt": 1, "rejected": [], "startedAt": None}]}
     # Открытое решение — открытый вопрос; черновик идёт с «почему» совета.
     assert [(d.question_id, d.proposal, d.rationale, d.rationale_by)
             for d in stored(store, council_id).decisions] == [

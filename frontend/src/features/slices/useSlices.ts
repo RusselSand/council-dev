@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { useCouncilSlicing, useFragmentLabels, useStartStructure, type ApiError } from '../../data';
 import type { CouncilSummary } from '../../domain/council';
-import { progressRows, type ProgressRow } from '../../domain/run';
+import { hasRejected, progressRows, type ProgressRow } from '../../domain/run';
 import { LABELS, type Fragment, type Label, type SlicingPhase } from '../../domain/slicing';
 import { useI18n, type Translate } from '../../i18n';
 import { navigate, routePath } from '../../router';
@@ -36,6 +36,8 @@ export interface SlicesScreen {
 
   /** Строки «Хода работы»: «Нарезка · sol · работает…». */
   progress: ProgressRow<SlicingPhase>[];
+  /** Нарезка остановилась, а у судьи есть ответы, которые не прошли проверку: «Ход работы» виден и под «Дальше». */
+  rejectedShown: boolean;
 
   /** «Фрагменты · 3». */
   title: string;
@@ -95,6 +97,7 @@ export function useSlices(council: CouncilSummary): SlicesScreen {
     reload: slicing.reload,
 
     progress: progressRows(data?.progress ?? []),
+    rejectedShown: council.stages.slices === 'failed' && hasRejected(data?.progress ?? []),
 
     title: t('slices.title', { count: fragments.length }),
     fragments: fragments.map((fragment) => {

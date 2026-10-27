@@ -236,6 +236,7 @@ export const en = translation({
   'stream.runs.state.failed': 'failure',
   'stream.runs.state.skipped': 'not needed',
   'stream.runs.thinking': '{model} · thinking {time}',
+  'stream.runs.fixing': '{model} · fixing the answer · attempt {attempt} · {time}',
   'stream.phase.project_decisions_discovery': 'Selecting past decisions',
   'stream.phase.project_decisions_judge': 'Selection judge',
   'stream.phase.question_discovery': 'Collecting questions',
@@ -499,6 +500,8 @@ export const en = translation({
   'run.done': 'done',
   'run.failed': 'failed',
   'run.skipped': 'not needed',
+  'run.fixing': 'fixing the answer · attempt {attempt}',
+  'rejected.title': 'Attempt {attempt} rejected',
 
   'project.none': 'No project',
   'project.newButton': '+ New project',

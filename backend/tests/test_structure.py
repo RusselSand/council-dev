@@ -206,7 +206,9 @@ def error_of(res) -> tuple[int, str]:
 
 
 def runs(*pairs: tuple[str, str]) -> list[dict]:
-    return [{"model": model, "state": state} for model, state in pairs]
+    """Работа моделей, как её видит экран: первая попытка, отклонённых ответов нет."""
+    return [{"model": model, "state": state, "attempt": 1, "rejected": []}
+            for model, state in pairs]
 
 
 def fragment(i, label=None):

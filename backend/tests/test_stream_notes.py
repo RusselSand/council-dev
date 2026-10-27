@@ -14,10 +14,11 @@ from spec_council.app import app
 from spec_council.deps import get_agents, get_launcher, get_projects, get_repositories, get_store
 from spec_council.models import ExportedNote, NotePlan, NotesDraft, NotesExport, ProjectDraft
 from spec_council.notes import Catalog, Note, marked, path_of, rendered
-from spec_council.pipeline import ModelFailed
+from spec_council.pipeline import FIXES, ModelFailed
 from spec_council.projects import Projects
 from spec_council.store import InMemoryStore
 from spec_council.web import notes as web_notes
+from tests.fixing import answer_of, fixing, reason_of, task_of
 from tests.test_stream_options import POLL
 from tests.test_stream_outcomes import Agents, approves, approves_one, assembled
 from tests.test_stream_questions import (
@@ -746,14 +747,17 @@ def test_an_export_to_another_folder_is_not_the_one_here(store, pool, projects, 
 class Translating(Agents):
     """Модели совета, как на «Итогах»; судья переводит заметки — каждый текст с пометкой EN
     (translate) и вносит в глоссарий glossary. failing — перевод не справляется; turns — какие
-    заметки судья переводил в каждом ходе, briefs — что он видел."""
+    заметки судья переводил в каждом ходе, briefs — что он видел; fixes — промпты, где его
+    просили исправить ответ, и тогда он переводит по fixed (None — так же, как в первый раз)."""
 
     def __init__(self):
         super().__init__()
         self.failing_translation = False
         self.turns: list[list[str]] = []
         self.briefs: list[str] = []
+        self.fixes: list[str] = []
         self.translate = lambda text: f"EN {text}"
+        self.fixed = None
         self.glossary: list[dict] = []
 
     def ask(self, model, prompt, key, workspace=None, stop=None):
@@ -761,10 +765,14 @@ class Translating(Agents):
             return super().ask(model, prompt, key, workspace, stop)
         if self.failing_translation:
             raise ModelFailed("превышено время молчания CLI (15 мин)")
-        notes = json.loads(prompt.split("## NOTES\n")[1])
-        self.turns.append([note["key"] for note in notes])
-        self.briefs.append(prompt)
-        return json.dumps({"notes": [{"key": note["key"], "text": self.translate(note["text"])}
+        notes = json.loads(task_of(prompt).split("## NOTES\n")[1])
+        if fixing(prompt):
+            self.fixes.append(prompt)
+        else:
+            self.turns.append([note["key"] for note in notes])
+            self.briefs.append(prompt)
+        translate = self.fixed if fixing(prompt) and self.fixed else self.translate
+        return json.dumps({"notes": [{"key": note["key"], "text": translate(note["text"])}
                                      for note in notes], "glossary": self.glossary})
 
 
@@ -1008,11 +1016,21 @@ def test_the_glossary_of_a_translation_stays_with_the_export(store, pool, projec
         "EN Искать по заголовкам тредов, because так подписан список «Unassigned».")
 
 
+MISTRANSLATED = ("в переводе ADR-0001 «Не распределены» переведено не так, как в глоссарии: "
+                 "«Unassigned»")
+
+
+def said(reply: str, phrase: str) -> bool:
+    """Судья в ответе reply написал phrase в переводе какой-то заметки."""
+    return any(phrase in note["text"] for note in json.loads(reply)["notes"])
+
+
 def test_a_new_export_translates_quoted_phrases_as_the_last_one_did(store, pool, projects, docs,
                                                                     translating):
     """Повторная выгрузка начинает с глоссария прошлой: судья видит из него то, что есть в
-    текстах, а фраза в кавычках, переведённая иначе, — негодный ответ: перевод остановился, и
-    «Запустить снова» спрашивает судью заново."""
+    текстах, а фраза в кавычках, переведённая иначе, — негодный ответ: судья его исправляет, а не
+    вышло и после FIXES правок — перевод остановился с последней причиной, и «Запустить снова»
+    спрашивает судью заново."""
     previous = NotesExport(run="n0", outcomes="old", language="English", root=str(docs),
                            glossary={"Не распределены": "Unassigned", "Канбан": "Kanban"})
     council_id = quoting(store, pool, projects, notes=previous)
@@ -1020,10 +1038,16 @@ def test_a_new_export_translates_quoted_phrases_as_the_last_one_did(store, pool,
     [prompt] = translating.briefs
     assert json.loads(section(prompt, "GLOSSARY").split("\n\n")[-1]) == [
         {"source": "Не распределены", "translation": "Unassigned"}]
+    assert len(translating.fixes) == FIXES
     notes = steps_of(stream_of(council_id))["notes"]
     assert notes["state"] == "failed"
-    assert notes["text"] == ("fable не справилась: негодный ответ: в переводе ADR-0001 «Не "
-                             "распределены» переведено не так, как в глоссарии: «Unassigned».")
+    assert notes["text"] == f"fable не справилась: негодный ответ: {MISTRANSLATED}."
+    # Что судья написал не так — у его работы, каждая попытка.
+    [judge] = notes["progress"][0]["runs"]
+    assert (judge["state"], judge["attempt"]) == ("failed", 1 + FIXES)
+    assert [(one["attempt"], one["reason"]) for one in judge["rejected"]] == [
+        (n, MISTRANSLATED) for n in range(1, 2 + FIXES)]
+    assert said(judge["rejected"][0]["text"], "«Не распределены»")
     assert error_of(writes(council_id)) == (409, "notes_not_ready")
     translating.translate = lambda text: f"EN {text}".replace("Не распределены", "Unassigned")
     assert retries(council_id).status_code == 200
@@ -1031,6 +1055,31 @@ def test_a_new_export_translates_quoted_phrases_as_the_last_one_did(store, pool,
     assert writes(council_id).status_code == 200
     assert "«Unassigned»" in Catalog.load(docs).notes["ADR-0001"].body
     assert stored(store, council_id).notes.glossary == previous.glossary
+
+
+def test_a_mistranslation_the_judge_fixes_goes_on_without_a_retry(store, pool, projects, docs,
+                                                                   translating):
+    """Решение владельца к задаче «Бекенд · Судья: ответ не прошёл проверку…»: судья видит тот
+    же промпт, свой ответ и причину отказа и исправляет перевод в том же ходе — шаг ждёт вас, как
+    после обычного перевода. Отклонённый ответ сохранён у его работы."""
+    previous = NotesExport(run="n0", outcomes="old", language="English", root=str(docs),
+                           glossary={"Не распределены": "Unassigned"})
+    translating.fixed = lambda text: f"EN {text}".replace("Не распределены", "Unassigned")
+    council_id = quoting(store, pool, projects, notes=previous)
+    pool.run()
+    [prompt] = translating.briefs
+    [fix] = translating.fixes
+    assert task_of(fix) == prompt
+    assert reason_of(fix) == MISTRANSLATED
+    assert said(answer_of(fix), "«Не распределены»")
+    notes = steps_of(stream_of(council_id))["notes"]
+    assert (notes["state"], notes["text"]) == ("waiting", None)
+    [judge] = notes["progress"][0]["runs"]
+    assert (judge["state"], judge["attempt"]) == ("done", 2)
+    assert [(one["attempt"], one["reason"], one["text"]) for one in judge["rejected"]] == [
+        (1, MISTRANSLATED, answer_of(fix))]
+    assert writes(council_id).status_code == 200
+    assert "«Unassigned»" in Catalog.load(docs).notes["ADR-0001"].body
 
 
 def test_a_stream_written_before_glossaries_opens_and_translates(store, pool, projects, docs,

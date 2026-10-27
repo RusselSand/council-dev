@@ -21,12 +21,13 @@ from spec_council.issue_files import rendered as issue_rendered
 from spec_council.models import CouncilStatus, ProjectDraft, Slicing, Structure, StructureProposal
 from spec_council.models import LabeledFragment as Fragment
 from spec_council.notes import Catalog, Note, path_of, rendered
-from spec_council.pipeline import ModelFailed
+from spec_council.pipeline import FIXES, ModelFailed
 from spec_council.repository import STALE_MAP
 from spec_council.store import council_lock
 from spec_council.web import notes as web_notes
 from spec_council.web import tasks as web_tasks
 from spec_council.web.councils import context_of
+from tests.fixing import answer_of, fixing, reason_of, task_of
 from tests.test_streams import (
     ALL_DECIDED,
     LABELS,
@@ -193,9 +194,11 @@ def test_the_last_stream_written_plans_the_tasks_and_they_are_written_to_the_tas
     assert shown == {
         "catalog": {"path": "issues", "language": "Russian"},
         "progress": [
-            {"phase": "task_plan", "runs": [{"model": "sol", "state": "done"},
-                                            {"model": "fable", "state": "done"}]},
-            {"phase": "task_plan_judge", "runs": [{"model": "fable", "state": "skipped"}]}],
+            {"phase": "task_plan", "runs": [
+                {"model": "sol", "state": "done", "attempt": 1, "rejected": []},
+                {"model": "fable", "state": "done", "attempt": 1, "rejected": []}]},
+            {"phase": "task_plan_judge", "runs": [
+                {"model": "fable", "state": "skipped", "attempt": 1, "rejected": []}]}],
         "parents": [PARENT_O1], "tasks": [TASK_I1], "vanished": [], "readyStreams": ["C"],
         "pendingStreams": [], "error": None}
     summary = tasks_of(council_id)
@@ -968,10 +971,10 @@ class Glossed(Agents):
     def ask(self, model, prompt, key, workspace=None, stop=None):
         if "-notes_translation-" not in key:
             return super().ask(model, prompt, key, workspace)
-        notes = json.loads(prompt.split("## NOTES\n")[1])
+        notes = json.loads(task_of(prompt).split("## NOTES\n")[1])
         tasks = any(note["key"][:2] in ("i:", "o:") for note in notes)
         word = self.measure if tasks else "Yardstick"
-        if tasks:
+        if tasks and not fixing(prompt):
             self.briefs.append(prompt)
         return json.dumps({
             "notes": [{"key": note["key"], "text": note["text"].replace("Мерило", word)
@@ -989,8 +992,9 @@ def quoting_plan(prompt):
 def test_tasks_are_translated_with_the_words_of_the_streams_notes(english, base):
     """Задачи переводятся так же, как те же фразы уже переведены в заметках: судья видит глоссарий
     выгрузок потоков и решения, на которых стоит задача, как они лежат в каталоге. Фраза в
-    кавычках из глоссария переведена иначе — перевод задач остановился, «Запустить снова»
-    спрашивает судью заново. Заголовки и строка о коммите — из словаря языка заметок."""
+    кавычках из глоссария переведена иначе, и судья не исправил её и после правок — перевод задач
+    остановился, «Запустить снова» спрашивает судью заново. Заголовки и строка о коммите — из
+    словаря языка заметок."""
     fake = Glossed()
     fake.task_plan = quoting_plan
     app.dependency_overrides[get_agents] = lambda: fake
@@ -1015,9 +1019,13 @@ def test_tasks_are_translated_with_the_words_of_the_streams_notes(english, base)
         assert "потому что мерило видно без опросов" in references[0]["source"]
 
         assert tasks_of(council_id)["stages"]["tasks"] == "failed"
-        assert plan_of(council_id)["error"] == (
-            "fable не справилась: негодный ответ: в переводе ISS-0001 «Мерило» переведено не так, "
-            "как в глоссарии: «Yardstick».")
+        reason = "в переводе ISS-0001 «Мерило» переведено не так, как в глоссарии: «Yardstick»"
+        shown = plan_of(council_id)
+        assert shown["error"] == f"fable не справилась: негодный ответ: {reason}."
+        [judge] = shown["progress"][-1]["runs"]
+        assert shown["progress"][-1]["phase"] == "task_translation"
+        assert [(one["attempt"], one["reason"]) for one in judge["rejected"]] == [
+            (n, reason) for n in range(1, 2 + FIXES)]
         assert error_of(writes(council_id)) == (409, "tasks_not_ready")
 
         fake.measure = "Yardstick"
@@ -1060,27 +1068,66 @@ class Judging(Agents):
         return reply
 
 
-def test_a_judge_naming_a_task_not_in_its_plan_stops_the_plan_and_answers_again(base):
+STRAY = "в тексте I2 — I3: таких задач в плане нет"
+
+
+def test_a_judge_naming_a_task_not_in_its_plan_answers_again_in_the_same_run(base):
     """Решение владельца к задаче «Бекенд · Задачи: номера задач в тексте»: I-номер, которого в
-    плане нет, — ответ судьи не принимается, судья отвечает заново; «Где менять» в файле задачи —
-    номерами задач в каталоге, как остальной текст."""
+    плане нет, — ответ судьи не принимается, судья отвечает заново — в том же ходе, исправляя свой
+    ответ по причине отказа (решение владельца к задаче «Бекенд · Судья: ответ не прошёл
+    проверку…»); «Где менять» в файле задачи — номерами задач в каталоге, как остальной текст."""
     fake = Judging()
     app.dependency_overrides[get_agents] = lambda: fake
     app.dependency_overrides[get_launcher] = lambda: lambda job: job()
     try:
         council_id = ready()
         shown = plan_of(council_id)
+        assert shown["error"] is None and tasks_of(council_id)["stages"]["tasks"] == "waiting"
+        [judge] = shown["progress"][1]["runs"]
+        assert (judge["state"], judge["attempt"]) == ("done", 2)
+        [rejected] = judge["rejected"]
+        assert (rejected["attempt"], rejected["reason"]) == (1, STRAY)
+        assert json.loads(rejected["text"])["issues"][1]["main_entry_points"] == [
+            "app.py: рядом с правкой из I3"]
+        fix = fake.prompts["task_plan_judge"]
+        assert fixing(fix) and reason_of(fix) == STRAY and answer_of(fix) == rejected["text"]
+        assert "\n## PLANS\n" in task_of(fix)         # тот же промпт судьи плана
+        # На экране — как написали модели, в файле задачи — номерами задач в каталоге.
+        assert [(task["id"], task["catalogId"], task["entries"]) for task in shown["tasks"]] == [
+            ("I1", "ISS-0001", ["app.py"]),
+            ("I2", "ISS-0002", ["app.py: рядом с правкой из I1"])]
+        assert writes(council_id).json()["council"]["stages"]["tasks"] == "done"
+        text = (base / "issues" / "ISS-0002.md").read_text(encoding="utf-8")
+        assert "- app.py: рядом с правкой из ISS-0001\n" in text and "I1" not in text
+    finally:
+        app.dependency_overrides.pop(get_agents)
+        app.dependency_overrides.pop(get_launcher)
+
+
+def test_a_judge_that_does_not_fix_its_answer_stops_the_plan_and_answers_again(base):
+    """Судья не исправил ответ и после FIXES правок — план остановился с последней причиной;
+    «Запустить снова» спрашивает судью заново."""
+    fake = Judging()
+    fake.stray = 1 + FIXES
+    app.dependency_overrides[get_agents] = lambda: fake
+    app.dependency_overrides[get_launcher] = lambda: lambda job: job()
+    try:
+        council_id = ready()
+        shown = plan_of(council_id)
         assert shown["tasks"] == []
-        assert shown["progress"][1] == {"phase": "task_plan_judge",
-                                        "runs": [{"model": "fable", "state": "failed"}]}
-        assert shown["error"] == ("fable не справилась: негодный ответ: в тексте I2 — I3: таких "
-                                  "задач в плане нет.")
+        [judge] = shown["progress"][1]["runs"]
+        assert (judge["state"], judge["attempt"]) == ("failed", 1 + FIXES)
+        assert [(one["attempt"], one["reason"]) for one in judge["rejected"]] == [
+            (n, STRAY) for n in range(1, 2 + FIXES)]
+        assert shown["error"] == f"fable не справилась: негодный ответ: {STRAY}."
         assert tasks_of(council_id)["stages"]["tasks"] == "failed"
         assert error_of(writes(council_id)) == (409, "tasks_not_ready")
 
         assert retries(council_id).status_code == 200
         shown = plan_of(council_id)
         assert shown["error"] is None and shown["progress"][1]["runs"][0]["state"] == "done"
+        # Новый ход — с первой попытки: прежние отказы остались у прежнего хода.
+        assert shown["progress"][1]["runs"][0]["rejected"] == []
         # На экране — как написали модели, в файле задачи — номерами задач в каталоге.
         assert [(task["id"], task["catalogId"], task["entries"]) for task in shown["tasks"]] == [
             ("I1", "ISS-0001", ["app.py"]),

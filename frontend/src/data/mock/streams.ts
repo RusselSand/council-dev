@@ -11,6 +11,7 @@ import {
   type Stream,
   type StreamStep,
 } from '../../domain/stream';
+import { modelRun } from './runs';
 
 /** Части шагов, где работают модели: у каждого такого шага — модели совета и судья. */
 const PHASES: Partial<Record<Step, [StepPhase, StepPhase]>> = {
@@ -25,7 +26,7 @@ const PHASES: Partial<Record<Step, [StepPhase, StepPhase]>> = {
 function progress(step: Step, participants: string[], judge: string, [models, judgeState]: [RunState[], RunState]) {
   const phases = PHASES[step];
   if (!phases) return [];
-  const run = (model: string, state: RunState) => ({ model, state, startedAt: null });
+  const run = (model: string, state: RunState) => ({ ...modelRun(model, state), startedAt: null });
   return [
     { phase: phases[0], runs: participants.map((model, i) => run(model, models[i] ?? 'waiting')) },
     { phase: phases[1], runs: [run(judge, judgeState)] },
@@ -561,7 +562,7 @@ const notesTranslating = (stream: Stream, judge: string, now: string): Stream =>
             state: 'running',
             note: RUNNING_NOTE.notes ?? '',
             text: workText('notes', [judge]),
-            progress: [{ phase: 'notes_translation', runs: [{ model: judge, state: 'running', startedAt: now }] }],
+            progress: [{ phase: 'notes_translation', runs: [{ ...modelRun(judge, 'running'), startedAt: now }] }],
           }
         : step,
   ),

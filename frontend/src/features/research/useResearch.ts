@@ -27,7 +27,7 @@ import {
   type ResearchState,
   type ResearchStop,
 } from '../../domain/research';
-import type { RunState } from '../../domain/run';
+import type { RejectedAnswer, RunState } from '../../domain/run';
 import { withoutIdea } from '../../domain/structure';
 import { useI18n, type Translate } from '../../i18n';
 import { councilRoute, navigate, routePath } from '../../router';
@@ -68,6 +68,8 @@ export interface RunView {
   state: RunState;
   /** «работает…». */
   stateLabel: string;
+  /** Ответы судьи, которые не прошли проверку. */
+  rejected: RejectedAnswer[];
 }
 
 /** Блок исследования: что общее у кода и макета. */
@@ -234,7 +236,13 @@ const EMPTY: Research = {
 };
 
 const runViews = (runs: ResearchRun[], t: Translate): RunView[] =>
-  runs.map((run) => ({ model: run.model, text: run.text, state: run.state, stateLabel: t(`run.${run.state}`) }));
+  runs.map((run) => ({
+    model: run.model,
+    text: run.text,
+    state: run.state,
+    stateLabel: t(`run.${run.state}`),
+    rejected: run.rejected,
+  }));
 
 /** Подпись решения на кнопке: «Прав код» — по тому, откуда находка; у пробела вопрос — «Вернуть вопрос». */
 function choiceLabel(finding: Finding, decision: Decision, t: Translate): string {

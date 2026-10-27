@@ -7,7 +7,7 @@ import {
   type ApiError,
 } from '../../data';
 import { cleanName, type CouncilSummary } from '../../domain/council';
-import { progressRows, type ProgressRow } from '../../domain/run';
+import { hasRejected, progressRows, type ProgressRow } from '../../domain/run';
 import { canSplit, type Group, type GroupLink, type StructurePhase } from '../../domain/structure';
 import { useI18n, type Translate } from '../../i18n';
 import { navigate, routePath } from '../../router';
@@ -71,6 +71,8 @@ export interface StructureScreen {
 
   /** Раскладка остановилась: красная плашка и «Запустить снова». */
   failed: boolean;
+  /** Остановилась, а у судьи есть ответы, которые не прошли проверку: под плашкой — «Ход работы». */
+  rejectedShown: boolean;
   /** Пояснение на плашке: почему остановилась и что повтор не платит второй раз. */
   failure: string;
   retry: () => void;
@@ -237,6 +239,7 @@ export function useStructure(council: CouncilSummary): StructureScreen {
     progress: progressRows(structure.data?.progress ?? []),
 
     failed: council.stages.structure === 'failed',
+    rejectedShown: council.stages.structure === 'failed' && hasRejected(structure.data?.progress ?? []),
     failure: failureReason
       ? t('structure.failed.text', { reason: failureReason })
       : t('structure.failed.retryNote'),

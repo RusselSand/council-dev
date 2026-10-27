@@ -71,6 +71,7 @@ from ..standing import structure_of as groups_stage
 from ..store import council_lock
 from .councils import CouncilAnswer, context_of, missing, shown
 from .errors import ApiError, ContractRoute, not_found
+from .runs import RejectedAnswer, rejected_of
 from .schema import Empty, Schema
 
 router = APIRouter(route_class=ContractRoute, tags=["research"])
@@ -98,6 +99,7 @@ class ResearchRun(Schema):
     model: str
     state: RunState
     text: str
+    rejected: list[RejectedAnswer]
 
 
 class ScannedRepo(Schema):
@@ -500,6 +502,8 @@ def runs_of(scan: RepositoryScan | DesignScan, kind: Kind) -> list[ResearchRun]:
         rows[run.model] = row(run, run.state, kind, "work", turn, repos)
     for run in judging.runs if judging else []:
         if run.model in rows and not judge_now:
+            # Судья и участник — одной строкой: его ответы, что не прошли проверку, — в ней.
+            rows[run.model].rejected = rejected_of(run)
             continue
         rows[run.model] = row(run, "waiting" if participants_now else run.state, kind, "judge",
                               turn, repos)
@@ -508,11 +512,14 @@ def runs_of(scan: RepositoryScan | DesignScan, kind: Kind) -> list[ResearchRun]:
 
 def row(run: ModelRun, state: RunState, kind: Kind, part: str, turn: int,
         repos: str) -> ResearchRun:
-    """«проход 1 · читает kromka-api»; не справилась — только проход: остальное скажет её
+    """«проход 1 · читает kromka-api»; судья исправляет ответ, который не прошёл проверку, —
+    «проход 1 · исправляет ответ · попытка 2»; не справилась — только проход: остальное скажет её
     состояние."""
     doing = DOING[(kind, part)].get(state)
+    if state == "running" and run.attempt > 1:
+        doing = f"исправляет ответ · попытка {run.attempt}"
     text = f"проход {turn}" + (f" · {doing.format(repos=repos)}" if doing else "")
-    return ResearchRun(model=run.model, state=state, text=text)
+    return ResearchRun(model=run.model, state=state, text=text, rejected=rejected_of(run))
 
 
 def code_minutes(scan: RepositoryScan) -> int:

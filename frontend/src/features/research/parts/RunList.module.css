@@ -9,6 +9,14 @@
   list-style: none;
 }
 
+/* Строка модели и под ней — ответы судьи, которые не прошли проверку. */
+.item {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-6);
+  min-width: 0;
+}
+
 .row {
   display: flex;
   align-items: center;

@@ -582,8 +582,8 @@ def test_the_approved_choice_goes_on_and_the_decisions_start(store, pool, agents
     assert work["phase"] == "decision_analysis"
     assert [(run["model"], run["state"]) for run in work["runs"]] == [
         ("sol", "running"), ("fable", "running")]
-    assert judge == {"phase": "decision_judge",
-                     "runs": [{"model": "fable", "state": "waiting", "startedAt": None}]}
+    assert judge == {"phase": "decision_judge", "runs": [
+        {"model": "fable", "state": "waiting", "attempt": 1, "rejected": [], "startedAt": None}]}
     # Вопрос без выбора идёт с первым вариантом; свой — с текстом, как его видят модели.
     chosen = stored(store, council_id).choices
     assert [(c.question_id, c.proposal, c.text, c.based_on) for c in chosen] == [
