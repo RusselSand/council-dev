@@ -141,6 +141,10 @@ def test_a_check_remembers_the_choice_of_the_questions_its_fixes_name():
     found = analysis_of_question(question(1), verdict,
                                  {"Q1": "Q1: P1", "Q2": "Q2: P2", "Q3": "Q3: -"})
     assert found.context == ["Q2: P2", "Q3: -"]                 # свой вопрос — не в счёт
+    # Выбор по другим вопросам проверка помнит весь, и по тем, на которые не опирается.
+    found = analysis_of_question(question(1), Analysis("validated", "P1"),
+                                 {"Q1": "Q1: P1", "Q2": "Q2: P2", "Q3": "Q3: -"})
+    assert (found.context, found.others) == ([], ["Q2: P2", "Q3: -"])
 
 
 def test_an_outcome_on_a_project_decision_no_longer_chosen_or_active_is_not_kept():

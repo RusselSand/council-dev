@@ -1195,6 +1195,145 @@ def test_an_unresolved_decision_that_rests_on_an_old_choice_is_fixed_as_usual(st
     assert decisions_of(council_id)["Q2"]["recheck"] is None
 
 
+# --- связанные вопросы перепроверяются в обе стороны
+
+def leaning_on(*questions) -> dict:
+    """Ответ судьи: выбор проверен без проблем, и проверка опирается на выбор questions."""
+    return {"status": "validated", "rationale": {"text": WHY, "source": "ai"},
+            "validation": {"depends_on_question_ids": list(questions)}}
+
+
+def test_decisions_the_new_check_rests_on_can_be_rechecked_too(store, pool, agents):
+    """Решение владельца: ответ на вопрос поменяли — перепроверяются и связанные с ним вопросы, в
+    обе стороны. Q1 пересчитали с F2, и его новая проверка опирается на Q3: проверка Q3 шла с
+    прежним выбором Q1 — у Q3 «Пересчитать» и видно почему, хоть сама она на Q1 не опирается.
+    Q3 сам не пересчитывается, его фиксируют; не связанный с Q1 Q2 — как был."""
+    council_id, own = checked(store, pool)
+    assert edits(council_id, "Q3", MINE, "fixed").status_code == 200
+    found = next(f for f in stored(store, council_id).analysis.analyses if f.question_id == "Q3")
+    # Проверка помнит выбор всех других вопросов — и тех, на которые не опирается.
+    assert (found.context, found.others) == ([], ["Q1: P1", "Q2: -"])
+    assert chooses(council_id, "Q1", "F2").status_code == 200
+    # Пока Q1 не пересчитали, утверждён прежний выбор: проверка Q3 шла с ним.
+    assert decisions_of(council_id)["Q3"]["recheck"] is None
+    agents.judged["Q1"] = leaning_on("Q3")
+    asked = len(agents.prompts["decision_analysis"])
+    assert rechecks(council_id, "Q1").status_code == 200
+    pool.run()
+    assert {json.loads(section(prompt, "OPEN QUESTION"))["id"]
+            for prompt in agents.prompts["decision_analysis"][asked:]} == {"Q1"}
+    shown = decisions_of(council_id)
+    assert (shown["Q1"]["context"], shown["Q1"]["recheck"], shown["Q1"]["stale"]) == (
+        [{"question": "Q3", "option": own, "text": OWN}], None, [])
+    q3 = shown["Q3"]
+    assert (q3["recheck"], q3["status"], q3["unchecked"], q3["context"]) == (
+        "ready", "fixed", False, [])
+    assert q3["stale"] == [{"question": "Q1", "checked": "P1", "checkedText": None,
+                            "chosen": "F2", "chosenText": None}]
+    assert (shown["Q2"]["recheck"], shown["Q2"]["stale"]) == (None, [])
+    assert edits(council_id, "Q3", MINE, "fixed").status_code == 200
+    # Пересчитали Q3 — его проверка шла с нынешним выбором Q1; «почему» человека остаётся.
+    assert rechecks(council_id, "Q3").json()["decision"]["recheck"] == "running"
+    pool.run()
+    q3 = decisions_of(council_id)["Q3"]
+    assert (q3["recheck"], q3["stale"], q3["rationale"], q3["rationaleBy"]) == (
+        None, [], MINE, "user")
+    found = next(f for f in stored(store, council_id).analysis.analyses if f.question_id == "Q3")
+    assert found.others == ["Q1: F2", "Q2: -"]
+    assert approves(council_id).status_code == 200
+
+
+def test_an_unresolved_decision_the_new_check_rests_on_can_be_rechecked(store, pool, agents):
+    """То же у вопроса, переданного как unresolved: Q1 пересчитали с F2, и его новая проверка
+    опирается на Q2 — сравнение вариантов Q2 шло с прежним выбором Q1. «Пересчитать» сравнивает
+    их с нынешним."""
+    council_id, _ = checked(store, pool)
+    assert chooses(council_id, "Q1", "F2").status_code == 200
+    agents.judged["Q1"] = leaning_on("Q2")
+    assert rechecks(council_id, "Q1").status_code == 200
+    pool.run()
+    q2 = decisions_of(council_id)["Q2"]
+    assert (q2["option"]["id"], q2["verdict"], q2["recheck"], q2["stale"]) == (
+        "P2", "recommended", "ready", [{"question": "Q1", "checked": "P1", "checkedText": None,
+                                        "chosen": "F2", "chosenText": None}])
+    asked = len(agents.prompts["decision_judge"])
+    assert rechecks(council_id, "Q2").json()["decision"]["recheck"] == "running"
+    pool.run()
+    related = json.loads(section(judged_prompt(agents, "Q2", asked), "RELATED QUESTIONS"))
+    assert [q["selected_proposal"]["id"] for q in related if q["id"] == "Q1"] == ["F2"]
+    q2 = decisions_of(council_id)["Q2"]
+    assert (q2["recheck"], q2["stale"]) == (None, [])
+
+
+def test_a_first_choice_of_an_unresolved_question_reaches_the_decisions_it_rests_on(store, pool,
+                                                                                    agents):
+    """Выбор впервые проверили: Q2 был unresolved, на «Вариантах» выбрали P2 и Q2 пересчитали, а
+    его проверка опирается на Q3 — проверка Q3 шла, когда Q2 был unresolved."""
+    council_id, _ = checked(store, pool)
+    assert chooses(council_id, "Q2", "P2").status_code == 200
+    agents.judged["Q2"] = leaning_on("Q3")
+    assert rechecks(council_id, "Q2").status_code == 200
+    pool.run()
+    shown = decisions_of(council_id)
+    assert (shown["Q2"]["option"]["id"], shown["Q2"]["verdict"]) == ("P2", "validated")
+    assert (shown["Q3"]["recheck"], shown["Q3"]["stale"]) == ("ready", [
+        {"question": "Q2", "checked": None, "checkedText": None, "chosen": "P2",
+         "chosenText": None}])
+    assert (shown["Q1"]["recheck"], shown["Q1"]["stale"]) == (None, [])
+
+
+def test_a_check_of_the_prior_version_went_with_the_choice_before_the_recheck(store, pool,
+                                                                             agents):
+    """Проверки прежней версии не помнят выбора других вопросов. Q1 пересчитали с F2 — им
+    дописывается прежний выбор Q1: с ним они и шли. Новая проверка Q1 опирается на Q3 — у Q3
+    «Пересчитать», как у новой проверки; Q2 не связан с Q1 — как был."""
+    council_id, _ = checked(store, pool)
+    analysis = stored(store, council_id).analysis
+    put(store, council_id, analysis=analysis.model_copy(update={"analyses": [
+        found.model_copy(update={"others": []}) for found in analysis.analyses]}))
+    assert chooses(council_id, "Q1", "F2").status_code == 200
+    agents.judged["Q1"] = leaning_on("Q3")
+    assert rechecks(council_id, "Q1").status_code == 200
+    pool.run()
+    shown = decisions_of(council_id)
+    assert (shown["Q3"]["recheck"], shown["Q3"]["stale"]) == ("ready", [
+        {"question": "Q1", "checked": "P1", "checkedText": None, "chosen": "F2",
+         "chosenText": None}])
+    assert (shown["Q2"]["recheck"], shown["Q2"]["stale"]) == (None, [])
+    others = {f.question_id: f.others for f in stored(store, council_id).analysis.analyses}
+    assert (others["Q2"], others["Q3"]) == (["Q1: P1"], ["Q1: P1"])
+
+
+def test_a_check_of_the_prior_version_keeps_the_choice_its_context_remembers(store, pool,
+                                                                             agents):
+    """Проверка прежней версии опиралась на Q1 и помнит в контексте, с каким его выбором шла: P1.
+    Q1 ещё в прежней версии пересчитали с F2, теперь вернули P1, и его новая проверка опирается на
+    Q3. Проверке Q3 дописывается выбор Q1 из её контекста, а не прежний утверждённый: она шла с
+    P1, и он сейчас утверждён — пересчитывать нечего. Q2 на Q1 не опирался — ему дописан F2."""
+    agents.judged["Q3"] = leaning_on("Q1")
+    council_id, _ = checked(store, pool)
+    del agents.judged["Q3"]
+    assert chooses(council_id, "Q1", "F2").status_code == 200
+    assert rechecks(council_id, "Q1").status_code == 200
+    pool.run()
+    analysis = stored(store, council_id).analysis
+    put(store, council_id, analysis=analysis.model_copy(update={"analyses": [
+        found.model_copy(update={"others": []}) for found in analysis.analyses]}))
+    q3 = decisions_of(council_id)["Q3"]
+    assert (q3["recheck"], q3["stale"]) == ("ready", [
+        {"question": "Q1", "checked": "P1", "checkedText": None, "chosen": "F2",
+         "chosenText": None}])
+    assert chooses(council_id, "Q1", "P1").status_code == 200
+    agents.judged["Q1"] = leaning_on("Q3")
+    assert rechecks(council_id, "Q1").status_code == 200
+    pool.run()
+    shown = decisions_of(council_id)
+    assert (shown["Q3"]["recheck"], shown["Q3"]["stale"]) == (None, [])
+    assert shown["Q1"]["context"][0]["question"] == "Q3"
+    others = {f.question_id: f.others for f in stored(store, council_id).analysis.analyses}
+    assert (others["Q2"], others["Q3"]) == (["Q1: F2"], ["Q1: P1"])
+
+
 # --- вариант решения удалили на «Вариантах»: пересчитать вопрос
 
 def ids_of(prompt) -> list[str]:
