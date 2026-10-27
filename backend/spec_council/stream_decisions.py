@@ -43,10 +43,13 @@
 проверка опиралась на прежний выбор этого (в её контексте он прежний, stale), сами не
 пересчитываются, но «Пересчитать» у них доступна, и видно, на какой выбор проверка опиралась и
 какой он сейчас (shifted; решение владельца к задаче «…ход пересчёта в «Ходе работы»…»). Так же
-— у решения вопроса, переданного как unresolved (решение владельца к задаче «…unresolved-вопрос
-помнит, на что опирался…»): судья ответил «сначала решите Q1», Q1 решили и пересчитали —
-«Пересчитать» сравнивает варианты с нынешним выбором, и судья рекомендует вариант, если теперь
-может.
+— в обратную сторону, у решений вопросов, на которые опирается новая проверка этого: их
+проверка шла с его прежним выбором — каждая проверка помнит выбор всех других вопросов
+(QuestionAnalysis.others; решение владельца к задаче «…перепроверка связанных вопросов в обе
+стороны»). Так же — у решения вопроса, переданного как unresolved (решение владельца к задаче
+«…unresolved-вопрос помнит, на что опирался…»): судья ответил «сначала решите Q1», Q1 решили и
+пересчитали — «Пересчитать» сравнивает варианты с нынешним выбором, и судья рекомендует вариант,
+если теперь может.
 
 Вариант, который берёт решение, удалили на «Вариантах» (решение владельца к задаче «…удалить
 любой вариант вопроса»), — решение ждёт «Пересчитать», как после смены выбора (gone_of):
@@ -75,7 +78,7 @@ from .models import (
 )
 from .options import picked, removed_of, sets_of
 from .order import Order, ordered
-from .pipeline import adr_id, choice_entry, question_key, related_adrs
+from .pipeline import adr_id, choice_entry, question_key, related_adrs, rests_on
 from .scope import kept_of
 from .work import known_decisions, remembered
 
@@ -208,21 +211,28 @@ def fresh(item: Shown) -> list[str]:
 
 def stale(stream: Stream, item: Shown) -> bool:
     """Проверка решения опиралась на выбор другого вопроса, а утверждённый выбор того с тех пор
-    другой — его пересчитали с новым выбором: в контексте проверки («Q5: P7») прежний. Само
-    решение не пересчитывается, его можно и фиксировать, а «Пересчитать» у него доступна. Так же
-    — у решения вопроса, переданного как unresolved: его проверка тоже помнит, на что
-    опиралась."""
+    другой — его пересчитали с новым выбором: в контексте проверки («Q5: P7») прежний. Так же —
+    в обратную сторону: новая проверка того вопроса опирается на это решение, а эта шла с его
+    прежним выбором (решение владельца к задаче «…перепроверка связанных вопросов в обе
+    стороны»). Само решение не пересчитывается, его можно и фиксировать, а «Пересчитать» у него
+    доступна. Так же — у решения вопроса, переданного как unresolved: его проверка тоже помнит,
+    на что опиралась."""
     return bool(shifted(stream, item))
 
 
 def shifted(stream: Stream, item: Shown) -> list[tuple[Choice, Choice]]:
-    """На какой выбор других вопросов опиралась проверка решения и какой у них утверждён сейчас —
-    у тех, чей выбор с тех пор другой (stale), по порядку контекста проверки: «Проверка шла с
-    Q5: P7, а сейчас у Q5 выбран P58» (решение владельца к задаче «…ход пересчёта в «Ходе
-    работы»…»)."""
+    """С каким выбором связанных вопросов шла проверка решения и какой у них утверждён сейчас —
+    у тех, чей выбор с тех пор другой (stale): сначала вопросы, на которые она опирается, по
+    порядку её контекста — «Проверка шла с Q5: P7, а сейчас у Q5 выбран P58» (решение владельца
+    к задаче «…ход пересчёта в «Ходе работы»…»), — потом вопросы, чья проверка опирается на это
+    решение, по порядку вопросов: с каким их выбором шла эта проверка, она помнит (others)."""
     checked = {choice.question_id: choice for choice in stream.choices or []}
+    seen = {entry.split(": ", 1)[0]: entry for entry in item.analysis.others}
+    leaning = [seen[found.question_id]
+               for found in (stream.analysis.analyses if stream.analysis else [])
+               if found.question_id in seen and item.question.id in rests_on(found)]
     shifts: dict[str, tuple[Choice, Choice]] = {}
-    for entry in item.analysis.context:
+    for entry in [*item.analysis.context, *leaning]:
         was = choice_of(entry)
         now = checked.get(was.question_id)
         if (was.question_id != item.question.id and was.question_id not in shifts
@@ -242,8 +252,8 @@ def choice_of(entry: str) -> Choice:
 
 def due(stream: Stream, item: Shown) -> bool:
     """Решение есть что пересчитать: выбор вопроса на «Вариантах» не тот, что проверили;
-    отмечены замены, которых проверка не учла; проверка опиралась на прежний выбор другого
-    вопроса."""
+    отмечены замены, которых проверка не учла; проверка шла с прежним выбором связанного
+    вопроса — того, на который она опирается, или того, чья проверка опирается на неё."""
     return item.unchecked or bool(fresh(item)) or stale(stream, item)
 
 
@@ -296,9 +306,11 @@ def rechecked(stream: Stream, question_id: str, work: DecisionAnalysis) -> Strea
     решения — тот, что она проверила. Пересчитали с выбором, который не тот, что утверждён
     (поменяли на «Вариантах»), — утверждённым становится он, и ход шага помнит, что проверил его;
     решение — как его оставили модели: «почему» и отметки прежнего выбора к новому не идут. Так же
-    — когда вариант прежней проверки удалили на «Вариантах» (gone_of). Порядок решений остаётся
-    прежним: у новой проверки зависимости могли стать другими, а порядок меняется только с новым
-    запуском шага (order_of)."""
+    — когда вариант прежней проверки удалили на «Вариантах» (gone_of). Проверкам других вопросов,
+    которые не помнят, с каким выбором этого вопроса шли (их делали до того, как стали помнить
+    others), дописывается прежний: с ним они и шли — и те, на которые опирается новая проверка,
+    можно пересчитать (shifted). Порядок решений остаётся прежним: у новой проверки зависимости
+    могли стать другими, а порядок меняется только с новым запуском шага (order_of)."""
     rechecks = {**stream.rechecks, question_id: work}
     if work.state != "done":
         return stream.model_copy(update={"rechecks": rechecks})
@@ -323,11 +335,24 @@ def rechecked(stream: Stream, question_id: str, work: DecisionAnalysis) -> Strea
                    for entry in entries]
     if changed or question_id in gone_of(stream):
         ruling = first_ruling(found)
+    analyses = [found if one.question_id == question_id else one for one in analysis.analyses]
+    if changed and before is not None:
+        analyses = remembering(analyses, before)
     changes["analysis"] = analysis.model_copy(update={
-        "order": order_of(analysis), "choices": entries, "analyses": [
-            found if one.question_id == question_id else one for one in analysis.analyses]})
+        "order": order_of(analysis), "choices": entries, "analyses": analyses})
     changes["rulings"] = list({**rulings, question_id: ruling}.values())
     return stream.model_copy(update=changes)
+
+
+def remembering(analyses: list[QuestionAnalysis], before: Choice) -> list[QuestionAnalysis]:
+    """Проверки шага, где каждая помнит, с каким выбором вопроса before.question_id шла:
+    утверждённый выбор того поменяли, и проверка, которая его не помнит (её делали до того, как
+    стали помнить others), шла с прежним — before."""
+    question = before.question_id
+    return [found if found.question_id == question
+            or any(entry.split(": ", 1)[0] == question for entry in found.others)
+            else found.model_copy(update={"others": [*found.others, choice_entry(before)]})
+            for found in analyses]
 
 
 def order_of(analysis: DecisionAnalysis | None) -> Order:

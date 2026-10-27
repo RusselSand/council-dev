@@ -1117,7 +1117,10 @@ class DecisionRun(CouncilRun[DecisionAnalysis]):
     и по каким вопросам решения, которые называет её «почему» (QuestionAnalysis.adrs): на их выбор
     она тоже опирается, а номера ADR в перенесённой проверке ставят по новому отбору. Сравнение
     вариантов unresolved-вопроса помнит его так же: от каких вопросов оно зависит, говорит и оно
-    (решение владельца к задаче «…unresolved-вопрос помнит, на что опирался…»).
+    (решение владельца к задаче «…unresolved-вопрос помнит, на что опирался…»). Выбор по всем
+    другим вопросам проверка помнит тоже (QuestionAnalysis.others): пересчитают вопрос с другим
+    выбором, и его новая проверка будет опираться на эту, — эту можно пересчитать (решение
+    владельца к задаче «…перепроверка связанных вопросов в обе стороны»).
 
     replaced — по вопросу: решения проекта, замену которых решением этого вопроса подтвердил
     человек. Для проверки этого вопроса они уже не действуют — с ними выбор не расходится, и
@@ -1253,9 +1256,11 @@ def analysis_of_question(question: OpenQuestion, verdict: Analysis,
     """Проверка вопроса — и выбор по вопросам, на которые она опирается, как он был при ней
     (entries — выбор по каждому вопросу потока, «Q2: P5»): от которых зависит, где судья велел
     что-то поправить и чьи решения называет её «почему» (rests_on). Там выбрали другое —
-    проверку повторяют (work.holds). replaced — решения проекта, замену которых к ней
-    подтвердили; adrs — решения потока, которые называет её «почему» (decisions.adrs_named).
-    Текст решения — как его поправил судья (decisions.rewritten)."""
+    проверку повторяют (work.holds). Выбор по всем другим вопросам она помнит тоже (others):
+    пересчитали другой вопрос с другим выбором, и его проверка опирается на эту, — эту можно
+    пересчитать. replaced — решения проекта, замену которых к ней подтвердили; adrs — решения
+    потока, которые называет её «почему» (decisions.adrs_named). Текст решения — как его
+    поправил судья (decisions.rewritten)."""
     found = QuestionAnalysis(
         question_id=question.id, verdict=verdict.kind, proposal=verdict.proposal,
         constraint_conflicts=list(verdict.conflicts), risk_ids=list(verdict.risks),
@@ -1266,8 +1271,9 @@ def analysis_of_question(question: OpenQuestion, verdict: Analysis,
         project_conflicts=[DecisionClash(adr_id=clash.adr, text=clash.text)
                            for clash in verdict.clashes],
         replaced=list(replaced), adrs=dict(adrs or {}))
-    return found.model_copy(update={"context": [entries[name] for name in rests_on(found)
-                                                if name in entries]})
+    return found.model_copy(update={
+        "context": [entries[name] for name in rests_on(found) if name in entries],
+        "others": [entry for name, entry in entries.items() if name != question.id]})
 
 
 def rests_on(found: QuestionAnalysis) -> list[str]:
