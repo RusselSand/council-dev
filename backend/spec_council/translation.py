@@ -24,7 +24,7 @@ from collections.abc import Callable, Collection, Iterable, Mapping
 from itertools import accumulate, count
 from typing import NamedTuple
 
-from .export import blocks_of, in_prose, numbering_problem, translations, visible_of
+from .export import CODE, blocks_of, in_prose, numbering_problem, translations, visible_of
 from .slicing import BadAnswer
 
 # Метка связки в тексте для судьи: «⟦now⟧».
@@ -33,8 +33,9 @@ MARKER = re.compile(r"⟦([a-z]+)⟧")
 SECTIONS = ("entry", "now", "scope", "keep", "risks", "open", "after", "criteria")
 # Все связки, что бывают метками.
 MARKED = frozenset((*SECTIONS, "because", "replaces", "commit"))
-# Фраза в кавычках: «…», “…”, „…“ и "…".
-QUOTED = re.compile(r"«([^«»\n]+)»|“([^“”\n]+)”|„([^„“”\n]+)[“”]|\"([^\"\n]+)\"")
+# Фраза в кавычках: «…», “…”, „…“ и "…". Пустые кавычки — тоже пара: иначе прямые кавычки за
+# ними сходятся не с теми.
+QUOTED = re.compile(r"«([^«»\n]*)»|“([^“”\n]*)”|„([^„“”\n]*)[“”]|\"([^\"\n]*)\"")
 QUOTES = "«»“”„\""
 # Знаки в конце фразы в кавычках, что в переводе бывают внутри кавычек: “Unassigned,” — так
 # пишут по-английски.
@@ -180,9 +181,12 @@ def phrase(text: str) -> str:
 
 
 def quoted(text: str) -> list[str]:
-    """Фразы в кавычках в прозе текста — не в коде (export.visible_of)."""
-    return [phrase(next(group for group in found.groups() if group is not None))
-            for found in QUOTED.finditer(visible_of(text))]
+    """Фразы в кавычках в прозе текста, как она написана (export.visible_of, written): «_» и
+    «*» в них — сами собой, как бы их ни понял Markdown, — «"_"» и «"r_"». Код не в счёт: в коде
+    фразы нет, и фраза с кодом — не фраза; но кавычки вокруг кода — пара, как и пустые."""
+    found = (phrase(next(group for group in match.groups() if group is not None))
+             for match in QUOTED.finditer(visible_of(text, written=True)))
+    return [item for item in found if item and CODE not in item]
 
 
 def merged(*glossaries: Mapping[str, str]) -> Glossary:
