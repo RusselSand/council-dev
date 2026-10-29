@@ -14,6 +14,7 @@
 """
 
 import logging
+import os
 from collections.abc import Iterable
 from datetime import UTC, datetime
 from pathlib import Path
@@ -29,6 +30,10 @@ log = logging.getLogger(__name__)
 
 # Что в проекте задаёт человек.
 DRAFT = set(ProjectDraft.model_fields)
+# На сколько уровней вглубь каталога репозиториев ищем рабочие копии.
+COPIES_DEPTH = 2
+# Какие папки, кроме скрытых, поиск рабочих копий не обходит.
+UNVISITED = {"node_modules"}
 
 
 class ProjectError(ValueError):
@@ -181,25 +186,56 @@ def folder_of(text: str, base: Path | None) -> Path:
 
 
 def working_copies(base: Path | None) -> list[str]:
-    """Рабочие копии git в каталоге репозиториев: он сам (".") и каталоги прямо в нём — те, где
-    есть .git (у подмодулей и worktree это файл), и не по ссылке наружу. Глубже не ищем. Без
-    каталога предлагать нечего."""
+    """Рабочие копии git в каталоге репозиториев — каталоги, где есть .git (у подмодулей и
+    worktree это файл), и не по ссылке наружу: на 1-м уровне («репо») и на 2-м («папка/репо»).
+    Имя — путь от каталога через «/». В найденную копию не заглядываем — вложенные в неё читает
+    её скан, — а скрытые папки (имя с «.») и node_modules не обходим (решение владельца к задаче
+    «Бекенд · Проекты: рабочие копии git на 2 уровня вглубь…»). Сам каталог — рабочая копия:
+    она одна, «.». Без каталога предлагать нечего."""
     if base is None:
         return []
     root = base.resolve()
     if not root.is_dir():
         return []
-    paths = ["."] if (root / ".git").exists() else []
+    if (root / ".git").exists():
+        return ["."]
+    return copies_in(root, root, COPIES_DEPTH)
+
+
+def copies_in(folder: Path, root: Path, depth: int) -> list[str]:
+    """Рабочие копии в folder — и в его папках, до depth уровней вниз; имена — от root. По имени
+    без учёта регистра: копии из папки — на её месте."""
     try:
-        children = sorted(root.iterdir(), key=lambda child: (child.name.casefold(), child.name))
+        children = folders_in(folder)
     except OSError as exc:
-        log.warning("Каталог репозиториев %s не прочитан: %s", root, exc)
-        children = []
+        if folder == root:
+            log.warning("Каталог репозиториев %s не прочитан: %s", root, exc)
+        return []           # папку в нём не прочесть — молча: таких бывает много (системные)
+    paths = []
     for child in children:
         try:
-            if (child.is_dir() and (child / ".git").exists()
-                    and child.resolve().is_relative_to(root)):
-                paths.append(child.name)
+            if not child.resolve().is_relative_to(root):
+                continue
+            if (child / ".git").exists():
+                paths.append(child.relative_to(root).as_posix())
+            elif depth > 1:
+                paths += copies_in(child, root, depth - 1)
         except OSError:
             continue        # нет доступа — не предлагаем: скан его всё равно не прочтёт
     return paths
+
+
+def folders_in(folder: Path) -> list[Path]:
+    """Папки в folder, которые поиск обходит, — без скрытых и node_modules, по имени без учёта
+    регистра. Саму папку не прочесть — OSError."""
+    found = []
+    with os.scandir(folder) as entries:
+        for entry in entries:
+            if entry.name.startswith(".") or entry.name in UNVISITED:
+                continue
+            try:
+                if entry.is_dir():
+                    found.append(Path(entry.path))
+            except OSError:
+                continue
+    return sorted(found, key=lambda path: (path.name.casefold(), path.name))

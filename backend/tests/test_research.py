@@ -462,6 +462,32 @@ def test_the_code_research_does_not_read_the_council_folders(store, projects, ag
         "docs/council/"]
 
 
+def test_a_copy_in_a_folder_is_researched_by_its_path(store, projects, agents, pool, repos):
+    """Рабочая копия на 2-м уровне каталога репозиториев — по имени-пути (решение владельца к
+    задаче «Бекенд · Проекты: рабочие копии git на 2 уровня вглубь…»): её исследуют, как копию
+    на 1-м, и папка документации проекта в ней в снимок не входит."""
+    web = repos.parent / "work" / "web"
+    (web / "docs" / "council").mkdir(parents=True)
+    (web / "page.py").write_text("def page(): ...\n", encoding="utf-8")
+    (web / "docs" / "council" / "ADR-0047.md").write_text("Пока не делаем.\n", encoding="utf-8")
+    for args in (["init", "-q"], ["add", "."],
+                 ["-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "-m", "init"]):
+        subprocess.run(["git", "-C", str(web), *args], check=True, capture_output=True)
+    council_id = confirmed(store, projects)
+    projects.update_project(store.get_council(council_id).project, {
+        "repositories": ["work/web", "api"], "notes": "work/web/docs/council"})
+    assert error_of(starts(council_id, "code", {"repos": ["web"]})) == (422, "unknown_repo")
+    code = starts(council_id, "code", {"repos": ["work/web"]}).json()["research"]["code"]
+    assert code["repos"] == [{"name": "work/web", "selected": True},
+                             {"name": "api", "selected": False}]
+    pool.run()
+    assert research_of(council_id)["code"]["scanned"] == [
+        {"name": "work/web", "commit": inventory(web).commit_sha, "files": 1}]
+    assert agents.seen == ["page.py"]
+    assert store.get_council(council_id).research.scan.repositories[0].skipped == [
+        "docs/council/"]
+
+
 def test_the_copies_are_read_with_the_project_as_it_is_when_the_research_gets_to_them(
         store, projects, agents, pool, repos):
     """Пока ход ждал места в пуле, проекту задали папку документации и убрали из него рабочую
