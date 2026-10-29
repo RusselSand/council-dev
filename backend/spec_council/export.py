@@ -520,10 +520,15 @@ def phrases_of(stream: Stream, fragments: Mapping[int, LabeledFragment],
     return frozenset(found)
 
 
-# Где в env разбора строк прозы копится то, что он нашёл (marking): что не трогать (SPANS) и
-# видимый текст (SEEN) — по нему узнают сочетания (phrases_of, in_prose).
+# Где в env разбора строк прозы копится то, что он нашёл (marking): что не трогать (SPANS),
+# видимый текст (SEEN) — по нему узнают сочетания (phrases_of, in_prose), — и чем от него
+# отличается текст как написан (WRITTEN) — по нему ищут фразы в кавычках (translation.quoted).
 SPANS = "spans"
 SEEN = "seen"
+WRITTEN = "written"
+# Знак строки кода и адреса в <…> в тексте как написан (visible_of(written=True)): не граница,
+# как в видимом тексте, а знак — кавычки вокруг кода остаются парой.
+CODE = "\0"
 # Откуда в содержимом блока отсчитаны места того, что читает разбор: подпись картинки он
 # читает отдельно, с её начала.
 BASES = "bases"
@@ -550,10 +555,10 @@ def breaks(tag: str) -> bool:
 
 
 def marking(kind: str, rule: InlineRule) -> InlineRule:
-    """Правило разбора строк прозы, что отмечает найденное: что не трогать (SPANS в env) и
-    видимый текст (SEEN) — где это в содержимом блока. У ссылки и картинки не трогают только
-    адрес «](…)» или метку «][…]»: текст ссылки — проза; а если метка — сам текст ([Q1], [Q1][]),
-    то весь «[Q1]»."""
+    """Правило разбора строк прозы, что отмечает найденное: что не трогать (SPANS в env),
+    видимый текст (SEEN) и чем от него отличается текст как написан (WRITTEN) — где это в
+    содержимом блока. У ссылки и картинки не трогают только адрес «](…)» или метку «][…]»:
+    текст ссылки — проза; а если метка — сам текст ([Q1], [Q1][]), то весь «[Q1]»."""
 
     def marked(state: StateInline, silent: bool) -> bool:
         start = state.pos
@@ -568,10 +573,14 @@ def marking(kind: str, rule: InlineRule) -> InlineRule:
         finally:
             if image and bases is not None:
                 bases.pop()
-        spans, seen = state.env.get(SPANS), state.env.get(SEEN)
-        if not found or silent or spans is None or seen is None or bases is None:
+        spans, seen, written = (state.env.get(key) for key in (SPANS, SEEN, WRITTEN))
+        if (not found or silent or spans is None or seen is None or written is None
+                or bases is None):
             return found
         end, base = state.pos, bases[-1]
+        if kind == "emphasis" or kind in BORDER:
+            # Как написан текст: знак выделения — сам собой, строка кода и адрес в <…> — CODE.
+            written.append((base + start, base + end, None if kind == "emphasis" else CODE))
         # Видимое — как есть в тексте (None) или своим текстом: граница — «\n».
         if kind == "escape":
             # «\*» — видимая «*», «\» в конце строки — перенос.
@@ -612,6 +621,7 @@ for name, kind, rule in (("text", "text", rules_inline.text),
                          ("newline", "newline", rules_inline.newline),
                          ("escape", "escape", rules_inline.escape),
                          ("backticks", "code", rules_inline.backtick),
+                         ("emphasis", "emphasis", rules_inline.emphasis.tokenize),
                          ("link", "link", rules_inline.link),
                          ("image", "link", rules_inline.image),
                          ("autolink", "autolink", rules_inline.autolink),
@@ -665,6 +675,9 @@ class Blocks(NamedTuple):
     # по знаку с его местом («\n» — граница). Место — от начала первой строки блока.
     marked: Marked
     seen: Seen
+    # Чем от видимого текста блока отличается текст как написан (as_written): знаки выделения
+    # «*» и «_» — сами собой, строка кода и адрес в <…> — CODE на месте границы «\n».
+    written: Seen
     # Из строк кода — строки блоков HTML: их теги — настоящие.
     html: set[int]
 
@@ -683,6 +696,7 @@ def blocks_of(text: str) -> Blocks:
     prose: dict[int, int] = {}
     marked: Marked = {}
     seen: Seen = {}
+    written: Seen = {}
     for block, token in enumerate(tokens):
         if token.type != "inline" or not token.map:
             continue
@@ -690,18 +704,33 @@ def blocks_of(text: str) -> Blocks:
         prose.update(dict.fromkeys(range(first, last), block))
         spans: list[tuple[str, int, int]] = []
         shown: list[tuple[int, int, str | None]] = []
+        own: list[tuple[int, int, str | None]] = []
         MARKDOWN.inline.parse(token.content, MARKDOWN,
-                              {**env, SPANS: spans, SEEN: shown, BASES: [0]}, [])
+                              {**env, SPANS: spans, SEEN: shown, WRITTEN: own, BASES: [0]}, [])
         place = placed(token.content, rows[first:last])
         marked[block] = [(kind, place(start), place(end)) for kind, start, end in spans]
-        # Пробел Юникода (неразрывный и прочие) — пробел: так «Cloudflare R2» узнаётся и с ним.
-        seen[block] = [(at, spaced(sign)) for start, end, text in
-                       sorted(shown, key=lambda found: found[0])
-                       for at, sign in ([(place(at), token.content[at])
-                                         for at in range(start, end)]
-                                        if text is None else [(place(start), sign)
-                                                              for sign in text])]
-    return Blocks(lines, prose, marked, seen, html)
+        seen[block] = signs_of(token.content, place, shown)
+        written[block] = signs_of(token.content, place, own)
+    return Blocks(lines, prose, marked, seen, written, html)
+
+
+def signs_of(content: str, place: Callable[[int], int],
+             found: Iterable[tuple[int, int, str | None]]) -> list[tuple[int, str]]:
+    """Что нашёл разбор строк блока (found: начало, конец в content и текст — или None, если
+    как есть) — по знаку с его местом в тексте блока (place). Пробел Юникода (неразрывный и
+    прочие) — пробел: так «Cloudflare R2» узнаётся и с ним."""
+    return [(at, spaced(sign)) for start, end, text in sorted(found, key=lambda item: item[0])
+            for at, sign in ([(place(at), content[at]) for at in range(start, end)]
+                             if text is None else [(place(start), sign) for sign in text])]
+
+
+def as_written(seen: Sequence[tuple[int, str]],
+               written: Sequence[tuple[int, str]]) -> list[tuple[int, str]]:
+    """Знаки блока прозы, как он написан: видимые (seen) и те, чем текст от них отличается
+    (Blocks.written), — знаки выделения между видимыми, а CODE — на месте границы «\n» кода."""
+    codes = {at for at, sign in written if sign == CODE}
+    return sorted([*(item for item in seen if item[0] not in codes), *written],
+                  key=lambda item: item[0])
 
 
 def block_starts(text: str, blocks: Blocks) -> dict[int, int]:
@@ -732,17 +761,23 @@ def elements_of(text: str, blocks: Blocks) -> list[tuple[int, int]]:
     return raw_elements(text, tags)
 
 
-def visible_of(text: str) -> str:
+def visible_of(text: str, written: bool = False) -> str:
     """Видимый текст прозы (blocks_of): без кода (и элементов кода HTML: <code>, <pre>…),
     адресов, тегов и разметки ссылок и выделения; блоки и строки кода — через перенос строки. И
     текст блоков HTML — так же. В нём сочетание исходного текста — его слово: `Q1` в коде — не
-    его слово, а «Cloudflare [R2](…)» и «<div>Cloudflare R2</div>» — «Cloudflare R2»."""
+    его слово, а «Cloudflare [R2](…)» и «<div>Cloudflare R2</div>» — «Cloudflare R2». С written —
+    проза, как она написана (as_written): знаки выделения «*» и «_» — сами собой, как бы их ни
+    понял Markdown, а строка и элемент кода и адрес в <…> — знаком CODE, а не переносом строки.
+    По нему ищут фразы в кавычках (translation.quoted)."""
     blocks = blocks_of(text)
     elements = elements_of(text, blocks)
     starts = block_starts(text, blocks)
-    shown = ["".join("\n" if inside(starts[block] + at, elements) else sign
-                     for at, sign in signs) for block, signs in blocks.seen.items()]
-    shown += [spaced("".join(sign for _, sign in html_signs(text, start, end, elements)))
+    code = CODE if written else "\n"
+    shown = ["".join(code if inside(starts[block] + at, elements) else sign
+                     for at, sign in (as_written(signs, blocks.written[block]) if written
+                                      else signs))
+             for block, signs in blocks.seen.items()]
+    shown += [spaced("".join(sign for _, sign in html_signs(text, start, end, elements, code)))
               for start, end in html_runs(text, blocks)]
     return "\n".join(shown)
 
@@ -752,11 +787,12 @@ def spaced(text: str) -> str:
     return re.sub(r"[^\S\n]", " ", text)
 
 
-def html_signs(text: str, start: int, end: int,
-               elements: Iterable[tuple[int, int]]) -> list[tuple[int, str]]:
+def html_signs(text: str, start: int, end: int, elements: Iterable[tuple[int, int]],
+               code: str = "\n") -> list[tuple[int, str]]:
     """Видимый текст блока HTML (text[start:end]) — по знаку с его местом: тег и комментарий
-    прозрачны, а тег, что рвёт строку (BREAKS), и элемент кода (elements) — граница «\n»."""
-    drops = sorted([(max(begin, start), min(close, end), "\n") for begin, close in elements
+    прозрачны, а тег, что рвёт строку (BREAKS), — граница «\n», и элемент кода (elements) —
+    знак code: граница или CODE (visible_of)."""
+    drops = sorted([(max(begin, start), min(close, end), code) for begin, close in elements
                     if begin < end and close > start]
                    + [(*piece.span(), "\n" if breaks(piece.group(0)) else "")
                       for piece in HTML_PIECE.finditer(text, start, end)],
@@ -855,7 +891,7 @@ def in_prose(text: str, change: Callable[[str], str], keep: Collection[str] = ()
     себе, элементы кода (raw_elements) и сочетания keep («F1 score») — как есть. В блоке HTML
     проза — его видимый текст, а теги, комментарии и элементы кода — как есть."""
     blocks = blocks_of(text)
-    code, prose, marked, seen, html = blocks
+    code, prose, marked, seen, _, html = blocks
     lines = [f"{row}\n" for row in text.split("\n")]
     lines[-1] = lines[-1][:-1]
     # Сочетание — его слова через пробелы в видимом тексте прозы: разметка ссылок и выделения

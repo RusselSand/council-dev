@@ -16,6 +16,7 @@ from spec_council.translation import (
     legend,
     merged,
     offered,
+    quoted,
     relevant,
     templated,
     translated,
@@ -206,6 +207,40 @@ def test_a_stop_inside_the_quotes_does_not_hide_a_phrase_from_the_glossary():
                                   "translation": "Could not group endpoints"}]},
                    {"n1": "Пишет «Не удалось сгруппировать эндпойнты»."},
                    {"n1": "It says “Could not group endpoints”."}, glossary) == {}
+
+
+def test_an_underscore_in_straight_quotes_does_not_shift_the_phrases():
+    # Совет 04d60eed, ISS-0049: Markdown читал «_". If … prefix "r_» как выделение, без «_»
+    # прямые кавычки сходились не с теми, и одно «"unassigned"» терялось.
+    glossary = {"не распределены": "unassigned"}
+    source = ("Задачи без группы — в списке «не распределены». Недопустимые знаки заменяются на "
+              "«_». Если сегмент начинается не с буквы, добавляется префикс «r_». Пустой список "
+              "«не распределены» скрыт, а «не распределены» в заголовке остаётся.")
+    text = ('Issues without a group are in the "unassigned" list. Invalid characters are '
+            'replaced by "_". If the segment does not start with a letter, the prefix "r_" is '
+            'added. An empty "unassigned" list is hidden, and "unassigned" in the heading stays.')
+    assert quoted(text) == ["unassigned", "_", "r_", "unassigned", "unassigned"]
+    assert glossary_problem(source, text, glossary) is None
+    texts, _ = translated(answer(text), {"n1": source}, glossary, fill)
+    assert texts == {"n1": text}
+    # Одно место переведено иначе — ответ негодный, как и прежде.
+    wrong = text.replace('and "unassigned" in', 'and "not distributed" in')
+    with pytest.raises(BadAnswer, match="в переводе ISS-0049 «не распределены» переведено не так"):
+        translated(answer(wrong), {"n1": source}, glossary, fill, {"n1": "ISS-0049"})
+
+
+def test_a_phrase_in_quotes_is_as_written_and_code_in_quotes_is_no_phrase():
+    # «*» и «_» в кавычках — сами собой, как бы их ни понял Markdown; выделение вокруг кавычек —
+    # не часть фразы.
+    assert quoted('Mask "*" and "x*", name "snake_case", **bold "Unassigned"** stays.') == \
+        ["*", "x*", "snake_case", "Unassigned"]
+    # Пустые кавычки и кавычки вокруг кода — пара: прямые кавычки за ними не сдвигаются, а код —
+    # не фраза.
+    assert quoted('Empty "" or "`r_`" or "<code>r_</code>" or "<https://r.dev>", then '
+                  '"Unassigned".') == ["Unassigned"]
+    assert glossary_problem("Префикс «`r_`» есть у «не распределены» и у «не распределены».",
+                            'The prefix "`r_`" goes to "unassigned" and to "unassigned".',
+                            {"не распределены": "unassigned"}) is None
 
 
 def test_a_translation_against_the_glossary_is_rejected():
