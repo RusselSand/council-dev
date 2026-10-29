@@ -1,6 +1,7 @@
 """Проекты: рабочие копии и папка документации, которые совет берёт по проекту."""
 
 import json
+import os
 import subprocess
 import threading
 from datetime import UTC, datetime, timedelta
@@ -376,10 +377,52 @@ def test_a_project_of_the_previous_version_opens(repos, tmp_path, store):
         app.dependency_overrides.pop(get_projects)
 
 
+def link_folder(link, target):
+    """Каталог-ссылка: на Windows — junction (его можно и без прав администратора)."""
+    if os.name == "nt":
+        import _winapi
+        _winapi.CreateJunction(str(target), str(link))
+    else:
+        link.symlink_to(target, target_is_directory=True)
+
+
 def test_working_copies_are_offered_from_the_repositories_folder(repos):
     assert client.get("/api/repos").json() == {"repos": ["back", "front"]}
     subprocess.run(["git", "-C", str(repos), "init", "-q"], check=True, capture_output=True)
-    assert client.get("/api/repos").json() == {"repos": [".", "back", "front"]}
+    # Сам каталог — рабочая копия: в неё не заглядываем, вложенные читает её скан.
+    assert client.get("/api/repos").json() == {"repos": ["."]}
+
+
+def test_working_copies_are_found_two_levels_deep_named_by_their_path(repos, tmp_path):
+    """Решение владельца к задаче «Бекенд · Проекты: рабочие копии git на 2 уровня вглубь…»:
+    копии — на 1-м и 2-м уровне, имя — путь от каталога; в найденную не заглядываем, скрытые
+    папки и node_modules не обходим, по ссылке наружу не ходим."""
+    git_repo(repos / "Work" / "api")
+    git_repo(repos / "Work" / "deep" / "lib")              # 3-й уровень — не ищем
+    git_repo(repos / "back" / "inner")                     # в рабочей копии
+    (repos / "Work" / "sub").mkdir()
+    (repos / "Work" / "sub" / ".git").write_text("gitdir: ../../.git/modules/sub\n",
+                                                 encoding="utf-8")  # .git — файл
+    git_repo(repos / "archive" / "old")
+    git_repo(repos / ".hidden" / "secret")
+    git_repo(repos / ".dot")
+    git_repo(repos / "node_modules" / "pkg")
+    git_repo(repos / "archive" / "node_modules")
+    (repos / "notes.txt").write_text("", encoding="utf-8")
+    git_repo(tmp_path / "outside" / "far")
+    link_folder(repos / "elsewhere", tmp_path / "outside")
+    assert client.get("/api/repos").json() == {
+        "repos": ["archive/old", "back", "front", "Work/api", "Work/sub"]}
+
+
+def test_a_project_takes_working_copies_by_their_path(repos, projects, store):
+    git_repo(repos / "work" / "api")
+    git_repo(repos / "work" / "deep" / "lib")
+    git_repo(repos / "back" / "inner")
+    res = creates(repos=["work/api", "back"])
+    assert res.status_code == 201 and res.json()["project"]["repos"] == ["work/api", "back"]
+    for name in ("work", "work/deep/lib", "back/inner", "work\\api", "./work/api", "api"):
+        assert error_of(edits(res.json()["project"]["id"], repos=[name])) == (422, "unknown_repo")
 
 
 def test_without_a_repositories_folder_there_are_no_working_copies(tmp_path):

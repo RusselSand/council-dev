@@ -209,6 +209,9 @@ export interface DataSource {
   updateProject(id: string, fields: ProjectFields): Promise<Project>;
   /** DELETE /api/projects/<id> — удалить проект, который не выбран ни в одном совете; ответа нет. */
   deleteProject(id: string): Promise<void>;
-  /** GET /api/repos — рабочие копии git из COUNCIL_REPOS: их отмечают в окне проекта. */
+  /**
+   * GET /api/repos — рабочие копии git из COUNCIL_REPOS на 1-м и 2-м уровне: их отмечают в окне проекта. Имя — путь от
+   * COUNCIL_REPOS: `api` или `work/api`.
+   */
   listRepos(): Promise<string[]>;
 }
