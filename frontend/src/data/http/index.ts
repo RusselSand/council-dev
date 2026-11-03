@@ -242,9 +242,9 @@ export const httpSource: DataSource = {
     return stream;
   },
   async getTasks(id) {
-    const { catalog, progress, parents, tasks, vanished, readyStreams, pendingStreams, error } =
+    const { catalog, progress, outcomes, tasks, vanished, readyStreams, pendingStreams, error } =
       await request<TasksPlan>('GET', `${councilPath(id)}/tasks`);
-    return { catalog, progress, parents, tasks, vanished, readyStreams, pendingStreams, error };
+    return { catalog, progress, outcomes, tasks, vanished, readyStreams, pendingStreams, error };
   },
   async approveTasks(id) {
     const { council } = await request<{ council: CouncilSummary }>('POST', `${councilPath(id)}/tasks/approve`, {});

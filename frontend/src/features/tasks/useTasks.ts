@@ -6,11 +6,11 @@ import { adrLabel } from '../../domain/outcomes';
 import { hasRejected, progressRows, type ProgressRow } from '../../domain/run';
 import {
   dependencyLabels,
-  parentLabel,
+  outcomeLabel,
   taskBranches,
   taskLabel,
-  type ParentTask,
   type Task,
+  type TaskOutcome,
   type TaskPhase,
   type VanishedTask,
 } from '../../domain/tasks';
@@ -38,20 +38,20 @@ export interface TaskView {
   scope: string[];
   /** Открытые вопросы для агента; нет — плашки нет. */
   questions: string[];
-  /** Решения: «ADR-0041, ADR-0042»; нет — строки нет. Итог — у родительской задачи. */
+  /** Решения: «ADR-0041, ADR-0042»; нет — строки нет. Итог — над задачей. */
   meta: string | null;
 }
 
-/** Родительская задача на экране — утверждённый итог и его подзадачи. */
-export interface ParentView {
+/** Итог на экране — утверждённый итог и его задачи. */
+export interface OutcomeView {
   /** id в плане: ключ на экране. */
   id: string;
-  /** Номер на тёмной метке: «ISS-0030», номера нет — номер итога «O5». */
+  /** Номер на тёмной метке: «OUT-0030», номера нет — номер итога в потоке «O5». */
   label: string;
   /** «поток A». */
   stream: string;
   title: string;
-  /** «2 подзадачи», «без подзадач» — серая. */
+  /** «2 задачи», «без задач» — серая. */
   tag: { tone: TagTone; label: string };
   open: boolean;
   toggleLabel: string;
@@ -62,7 +62,7 @@ export interface ParentView {
   criteria: string[];
   /** «итог O5 · ADR-0041, ADR-0042». */
   meta: string;
-  /** Подзадачи — в порядке плана. */
+  /** Задачи итога — в порядке плана. */
   tasks: TaskView[];
 }
 
@@ -91,14 +91,14 @@ export interface TasksScreen {
 
   /** «Задачи готовы по потоку A. Потоки B и C ещё не дошли до итогов…»; все потоки готовы — null, плашки нет. */
   pending: string | null;
-  /** Родительские задачи — по одной на утверждённый итог, с подзадачами. */
-  parents: ParentView[];
-  /** Задачи, чьей родительской в плане нет, — отдельно. */
+  /** Итоги — по одному на утверждённый итог, с их задачами. */
+  outcomes: OutcomeView[];
+  /** Задачи, чьего итога в плане нет, — отдельно. */
   orphans: TaskView[];
   /** Открыть или свернуть задачу. */
   toggleTask: (id: string) => void;
-  /** Открыть или свернуть родительскую задачу. */
-  toggleParent: (id: string) => void;
+  /** Открыть или свернуть итог. */
+  toggleOutcome: (id: string) => void;
   /** «Уйдут из каталога · 7». */
   vanishedTitle: string;
   vanished: VanishedTask[];
@@ -129,21 +129,21 @@ function tagOf(task: Task, tasks: Task[], t: Translate): TaskView['tag'] {
   return { tone: 'gray', label: t('tasks.tag.after', { ids: dependencyLabels(task, tasks).join(', ') }) };
 }
 
-/** Строка под родительской задачей: итог — в потоке, решения — номера в каталоге, а нет их — в потоке. */
-function parentMeta(parent: ParentTask, t: Translate): string {
-  const { outcome } = parent;
-  if (!parent.decisions.length) return t('tasks.parent.meta.outcome', { outcome });
-  return t('tasks.parent.meta', { outcome, decisions: parent.decisions.map(adrLabel).join(', ') });
+/** Строка под итогом: итог — в потоке, решения — номера в каталоге, а нет их — в потоке. */
+function outcomeMeta(planned: TaskOutcome, t: Translate): string {
+  const { outcome } = planned;
+  if (!planned.decisions.length) return t('tasks.outcome.meta.outcome', { outcome });
+  return t('tasks.outcome.meta', { outcome, decisions: planned.decisions.map(adrLabel).join(', ') });
 }
 
-/** Метка родительской задачи: сколько у неё подзадач — серая. */
-function parentTag(count: number, t: Translate): ParentView['tag'] {
-  return { tone: 'gray', label: count ? t('tasks.parent.tag', { count }) : t('tasks.parent.none') };
+/** Метка итога: сколько у него задач — серая. */
+function outcomeTag(count: number, t: Translate): OutcomeView['tag'] {
+  return { tone: 'gray', label: count ? t('tasks.outcome.tag', { count }) : t('tasks.outcome.none') };
 }
 
-/** Ключ открытой задачи или родительской на экране: у них разные id. */
+/** Ключ открытой задачи или итога на экране: у них разные id. */
 const taskKey = (id: string) => `task:${id}`;
-const parentKey = (id: string) => `parent:${id}`;
+const outcomeKey = (id: string) => `outcome:${id}`;
 
 /** Строка тёмной плашки: сколько задач и куда они пишутся; каталога нет — «Без папки» (решение q-010 бекенда). */
 function summaryText(count: number, catalog: Catalog | null, t: Translate): string {
@@ -154,8 +154,8 @@ function summaryText(count: number, catalog: Catalog | null, t: Translate): stri
 /**
  * «Задачи» совета. Пока модели строят план или судья переводит задачи — ход работы, как у «Групп» (решение q-009
  * бекенда). Иначе — как в макете: план остановился — красная плашка и «Запустить снова»; не все потоки готовы — плашка
- * «Не все потоки готовы»; задачи для coding agents — под родительскими задачами своих итогов (решение владельца к задаче
- * «Бекенд · Итоги → родительские задачи…»), все сначала свёрнуты, щелчок открывает или сворачивает задачу, пока экран
+ * «Не все потоки готовы»; задачи для coding agents — под своими итогами (решение владельца к задаче «Бекенд · Задачи:
+ * итоги — файлы OUT в подпапке…»), все сначала свёрнуты, щелчок открывает или сворачивает задачу, пока экран
  * открыт (модели построили план заново — открытое забывается: задачи другие); «Уйдут из каталога»; внизу — «Записать в
  * каталог» всегда, как в макете. После записи экран остаётся на «Задачах». Другой совет — другой экран: ставьте с key
  * по совету.
@@ -166,7 +166,7 @@ export function useTasks(council: CouncilSummary): TasksScreen {
   const query = useCouncilTasks(council.id, running);
   const action = useApproveTasks();
   const retryAction = useRetryTasks();
-  /** Задачи и родительские задачи, которые человек открыл (taskKey, parentKey). */
+  /** Задачи и итоги, которые человек открыл (taskKey, outcomeKey). */
   const [opened, setOpened] = useState<ReadonlySet<string>>(new Set());
   useRound(running, () => setOpened(new Set()));
   const toggle = (key: string) =>
@@ -179,7 +179,7 @@ export function useTasks(council: CouncilSummary): TasksScreen {
 
   const plan = query.data;
   const tasks = plan?.tasks ?? [];
-  const { branches, orphans } = taskBranches(plan?.parents ?? [], tasks);
+  const { branches, orphans } = taskBranches(plan?.outcomes ?? [], tasks);
 
   const taskView = (task: Task): TaskView => {
     const open = opened.has(taskKey(task.id));
@@ -218,26 +218,26 @@ export function useTasks(council: CouncilSummary): TasksScreen {
     retryError: retryAction.error,
 
     pending: plan ? pendingText(plan.readyStreams, plan.pendingStreams, t, formatList) : null,
-    parents: branches.map(({ parent, tasks: children }): ParentView => {
-      const open = opened.has(parentKey(parent.id));
+    outcomes: branches.map(({ outcome, tasks: children }): OutcomeView => {
+      const open = opened.has(outcomeKey(outcome.id));
       return {
-        id: parent.id,
-        label: parentLabel(parent),
-        stream: t('tasks.stream', { stream: parent.stream }),
-        title: parent.title,
-        tag: parentTag(children.length, t),
+        id: outcome.id,
+        label: outcomeLabel(outcome),
+        stream: t('tasks.stream', { stream: outcome.stream }),
+        title: outcome.title,
+        tag: outcomeTag(children.length, t),
         open,
         toggleLabel: t(open ? 'tasks.collapse' : 'tasks.expand'),
-        change: parent.change,
-        criteriaTitle: t('tasks.parent.criteria', { count: parent.criteria.length }),
-        criteria: parent.criteria,
-        meta: parentMeta(parent, t),
+        change: outcome.change,
+        criteriaTitle: t('tasks.outcome.criteria', { count: outcome.criteria.length }),
+        criteria: outcome.criteria,
+        meta: outcomeMeta(outcome, t),
         tasks: children.map(taskView),
       };
     }),
     orphans: orphans.map(taskView),
     toggleTask: (id) => toggle(taskKey(id)),
-    toggleParent: (id) => toggle(parentKey(id)),
+    toggleOutcome: (id) => toggle(outcomeKey(id)),
     vanishedTitle: t('tasks.vanished', { count: plan?.vanished.length ?? 0 }),
     vanished: plan?.vanished ?? [],
 

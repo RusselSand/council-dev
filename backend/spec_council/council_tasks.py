@@ -12,10 +12,11 @@
 связки — из словаря языка заметок, фразы — по глоссарию, который начинается с глоссариев выгрузок
 потоков, и с решениями, на которых стоит задача, как они лежат в каталоге (references_of; решение
 владельца к задаче «Бекенд · Перевод заметок и задач…», translation.py).
-«Записать в каталог» на «Задачах» пишет файлы в папку задач проекта (tasks_export.py): на каждый
-утверждённый итог — родительская задача, задачи плана — её подзадачи (решение владельца к задаче
-«Бекенд · Итоги → родительские задачи…»); папки нет — «Задачи» готовы без записи. План
-остановился — «Запустить снова» (retried).
+«Записать в каталог» на «Задачах» пишет файлы в папку задач проекта (tasks_export.py): в ней —
+только задачи плана, а каждый утверждённый итог — файлом в её подпапку outcomes, и задачи плана
+называют свой итог (решение владельца к задаче «Бекенд · Задачи: итоги — файлы OUT в подпапке, в
+папке задач только ISS»); папки нет — «Задачи» готовы без записи. План остановился — «Запустить
+снова» (retried).
 
 Хранение прежнее: план — Council.tasks (pipeline.TaskRun), черновик выгрузки плана с переводом
 судьи — Council.tasks_draft (pipeline.NotesRun), последняя запись — Council.tasks_export. Номера и
@@ -44,7 +45,7 @@ from .export import (
     words_for,
 )
 from .export import written as written_files
-from .issue_files import loaded
+from .issue_files import OUTCOME, OUTCOMES, loaded, number_key
 from .models import (
     Council,
     ExportedNote,
@@ -77,12 +78,12 @@ from .tasks import (
     inputs_of,
     not_ready,
     outcome_names,
-    parents_of,
+    plan_outcomes,
     research_cited,
     research_maps,
     research_texts,
 )
-from .tasks_export import aligned, drafted_tasks
+from .tasks_export import aligned, drafted_tasks, parents_apart
 from .translation import merged
 
 
@@ -404,16 +405,17 @@ def prepared(council: Council, plan: TaskPlan, folders: Folders,
 def draft_of(council: Council, plan: TaskPlan, notes: Path, issues: Path,
              store: Store) -> tuple[TasksDraft, Shelf]:
     """Черновик выгрузки плана в папку задач issues — каким его записали бы сейчас: файл на
-    родительскую задачу каждого утверждённого итога и на каждую задачу плана с номером на весь
-    проект, что с каждым будет и какие файлы прошлой записи исчезли. Каталог заметок или папку
-    задач не прочитать, или заметки, на которых план стоит, удалили — NotesError с причиной."""
+    каждую задачу плана с номером на весь проект и на каждый утверждённый итог — с номером итога,
+    в подпапке, — что с каждым будет и какие файлы прошлой записи исчезли. Каталог заметок или
+    папку задач не прочитать, или заметки, на которых план стоит, удалили — NotesError с
+    причиной."""
     shelf = shelf_of(notes, issues)
     fragments = {f.id: f for f in council.slicing.fragments} if council.slicing else {}
     previous = export_in(council.tasks_export, issues)
     files, vanished, numbers = drafted_tasks(
         plan, fragments, shelf, previous, words_for(language()),
-        notes_language(), reserved_by_others(store, council.id, issues),
-        outcome_names(council, fragments, plan.cited), parents_of(council))
+        notes_language(), reserved_by_others(store, council.id, issues) | outcomes_before(
+            store, notes), outcome_names(council, fragments, plan.cited), plan_outcomes(council))
     return TasksDraft(state="done", run=uuid4().hex[:8], plan=plan.run,
                       language=notes_language(), root=str(issues), notes=files,
                       vanished=vanished, numbers=numbers,
@@ -463,7 +465,8 @@ def wrote(council: Council, folders: Folders,
     # Задачу во всех файлах зовут названием из её файла, и после перевода тоже.
     edits = aligned(draft.notes, {note.key: note.text for note in draft.notes})
     # Исчезнувшую задачу, которую ещё ждёт файл, что остаётся в папке, не удалить: она остаётся.
-    delete = [note.id for note in draft.vanished if not note.linked_from]
+    # Родительскую задачу прежней версии, правленную руками, — тоже (vanished_of).
+    delete = [note.id for note in draft.vanished if not note.linked_from and not note.edited]
 
     def keep(exported: list[ExportedNote]) -> None:
         record = TasksExport(run=draft.run, plan=draft.plan, language=draft.language,
@@ -494,22 +497,24 @@ def shown_draft(council: Council, folders: Folders, store: Store) -> TasksDraft 
 
 
 def shelf_of(notes: Path, issues: Path) -> Shelf:
-    """Каталог заметок и файлы задач, что уже лежат в папке задач. Не прочитать — NotesError."""
+    """Каталог заметок, файлы задач, что уже лежат в папке задач, и итоги — в её подпапке. Не
+    прочитать — NotesError."""
     try:
         catalog = Catalog.load(notes)
     except NotesError as exc:
         raise NotesError(f"Каталог заметок {notes}: {exc}") from None
     try:
-        return Shelf(catalog, notes, issues, loaded(issues))
+        return Shelf(catalog, notes, issues, loaded(issues), loaded(issues, "outcome"))
     except NotesError as exc:
         raise NotesError(f"Папка задач {issues}: {exc}") from None
 
 
 def export_in(record: TasksExport | None, issues: Path | None) -> TasksExport | None:
-    """Запись плана — если она в эту папку задач: в другой её файлов нет."""
+    """Запись плана — если она в эту папку задач: в другой её файлов нет. Родительские задачи
+    прежней версии в ней — со своим ключом, не итога (parents_apart)."""
     if record is None or issues is None or record.root != str(issues):
         return None
-    return record
+    return parents_apart(record)
 
 
 def reserved_by_others(store: Store, council_id: str, issues: Path) -> set[str]:
@@ -518,6 +523,23 @@ def reserved_by_others(store: Store, council_id: str, issues: Path) -> set[str]:
     return {item.id for council in store.list_councils() if council.id != council_id
             and council.tasks_export is not None and council.tasks_export.root == str(issues)
             for item in (*council.tasks_export.notes, *council.tasks_export.numbers)}
+
+
+def outcomes_before(store: Store, notes: Path) -> set[str]:
+    """Номера итогов прежних версий: OUT, что лежат в каталоге заметок notes (папка outcomes/ —
+    их совет не читает и не пишет, но номера заняты), и те, что помнят выгрузки потоков всех
+    советов в этот каталог. Новый итог в подпапке папки задач их не берёт: его номер — следующий
+    после самого большого (решение владельца к задаче «Бекенд · Задачи: итоги — файлы OUT в
+    подпапке…»)."""
+    folder = notes / OUTCOMES
+    found = {number_key(path.stem) for path in folder.glob("*.md")
+             if OUTCOME.fullmatch(path.stem)} if folder.is_dir() else set()
+    return found | {number_key(number) for council in store.list_councils()
+                    for stream in council.streams or []
+                    if stream.notes is not None and stream.notes.root == str(notes)
+                    for number in (*stream.notes.refs.values(),
+                                   *(note.id for note in stream.notes.notes))
+                    if OUTCOME.fullmatch(number)}
 
 
 def realigned(notes: list[NotePlan], previous: TasksExport | None,

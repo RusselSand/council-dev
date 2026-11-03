@@ -4,8 +4,9 @@
 решения есть номер заметки (ADR-…), и модели называют его им — те же номера ложатся в файлы
 задач, и ссылки в тексте задачи сразу верные. Итогов в заметках нет (решение владельца к задаче
 «Бекенд · Итоги → родительские задачи…»): итог в плане зовут номером в совете — поток и номер
-итога в нём («A-O1», outcome_name), а при записи итог становится родительской задачей, и задачи
-плана этого итога — её подзадачи (tasks_export.py). В план не входит итог, которого человек не
+итога в нём («A-O1», outcome_name), а при записи итог ложится своим файлом OUT в подпапку папки
+задач, и задачи плана этого итога называют его (tasks_export.py; решение владельца к задаче
+«Бекенд · Задачи: итоги — файлы OUT в подпапке…»). В план не входит итог, которого человек не
 утвердил: «Утвердить итоги» оставляет неутверждённые и заблокированные такими, а в задачи уходят
 утверждённые.
 
@@ -193,11 +194,11 @@ def outcome_name(group: str, outcome_id: str) -> str:
 
 
 @dataclass(frozen=True)
-class Parent:
-    """Родительская задача — утверждённый итог потока (решение владельца к задаче «Бекенд ·
-    Итоги → родительские задачи…»): задачи плана этого итога — её подзадачи. name — итог в
-    плане (outcome_name); names — им и тем, как его звал план прежней версии: номером его
-    заметки (OUT-…), пока выгрузка потока его помнит."""
+class PlanOutcome:
+    """Итог плана — утверждённый итог потока: при записи — файл итога в подпапке папки задач, а
+    задачи плана этого итога называют его (решение владельца к задаче «Бекенд · Задачи: итоги —
+    файлы OUT в подпапке…»). name — итог в плане (outcome_name); names — им и тем, как его звал
+    план прежней версии: номером его заметки (OUT-…), пока выгрузка потока его помнит."""
 
     name: str
     names: tuple[str, ...]
@@ -205,22 +206,23 @@ class Parent:
     outcome: Outcome
 
 
-def parents_of(council: Council) -> list[Parent]:
-    """Родительские задачи совета: утверждённые итоги — по порядку потоков, а в потоке — по
-    порядку сборки."""
-    found: list[Parent] = []
+def plan_outcomes(council: Council) -> list[PlanOutcome]:
+    """Итоги плана задач совета: утверждённые итоги — по порядку потоков, а в потоке — по порядку
+    сборки."""
+    found: list[PlanOutcome] = []
     for stream in council.streams or []:
         refs = stream.notes.refs if stream.notes else {}
         for outcome in planned_outcomes(stream):
             name = outcome_name(stream.group, outcome.id)
-            found.append(Parent(name, (name, *([refs[outcome.id]] if outcome.id in refs else [])),
-                                stream, outcome))
+            found.append(PlanOutcome(
+                name, (name, *([refs[outcome.id]] if outcome.id in refs else [])), stream,
+                outcome))
     return found
 
 
-def parent_by_name(parents: Iterable[Parent]) -> dict[str, Parent]:
-    """Родительская задача по имени итога в плане — и в плане прежней версии."""
-    return {name: parent for parent in parents for name in parent.names}
+def outcome_by_name(outcomes: Iterable[PlanOutcome]) -> dict[str, PlanOutcome]:
+    """Итог плана по его имени в плане — и в плане прежней версии."""
+    return {name: outcome for outcome in outcomes for name in outcome.names}
 
 
 def planner_notes(stream: Stream) -> set[str]:
@@ -260,7 +262,7 @@ def own_fragments(council: Council, stream: Stream,
 
 def outcome_names(council: Council, fragments: Mapping[int, LabeledFragment],
                   cited: Collection[str] = ()) -> dict[str, Names]:
-    """Номера потока у каждого итога плана — по имени итога в плане (Parent.names, и как его
+    """Номера потока у каждого итога плана — по имени итога в плане (PlanOutcome.names, и как его
     звал план прежней версии): файл задачи называет части потока своего итога. cited — номера
     каталога, что называло исследование, когда строили план (TaskPlan.cited)."""
     research = research_texts(council)
@@ -268,12 +270,12 @@ def outcome_names(council: Council, fragments: Mapping[int, LabeledFragment],
     exported = exported_of(council)
     streams: dict[str, Names] = {}
     found: dict[str, Names] = {}
-    for parent in parents_of(council):
-        stream = parent.stream
+    for outcome in plan_outcomes(council):
+        stream = outcome.stream
         if stream.group not in streams:
             streams[stream.group] = names_of(stream, own_fragments(council, stream, fragments),
                                              research, exported, cited, maps)
-        found |= dict.fromkeys(parent.names, streams[stream.group])
+        found |= dict.fromkeys(outcome.names, streams[stream.group])
     return found
 
 

@@ -2,8 +2,9 @@
 принятые решения — каждое своей заметкой, со ссылками на ближайшие вышестоящие. Поток выгружают,
 как только утвердили итоги, до задач: так следующий поток видит его решения через «решения
 проекта». Итогов в заметках нет (решение владельца к задаче «Бекенд · Итоги → родительские
-задачи…»): итог нужен для работы над задачами и становится родительской задачей в папке задач
-(tasks_export.py), а в каталоге решений не хранится.
+задачи…»): итог нужен для работы над задачами и ложится файлом OUT в подпапку папки задач
+(tasks_export.py; решение владельца к задаче «Бекенд · Задачи: итоги — файлы OUT в подпапке…»), а
+в каталоге решений не хранится.
 
 Выгрузка — в два хода. Черновик (drafted): какие заметки лягут, под какими номерами, с каким
 текстом и что с ними будет — новая, перепишется, уже такая, правили руками. Запись (written):
@@ -217,29 +218,34 @@ class Part:
 
 @dataclass(frozen=True)
 class Shelf:
-    """Куда ложится выгрузка: заметки — в каталог root, файлы задач — в папку issues (None —
-    выгружают заметки потока, а не задачи). files — файлы задач, что в ней уже лежат, по
-    номеру."""
+    """Куда ложится выгрузка: заметки — в каталог root, файлы задач — в папку issues, а итоги — в
+    её подпапку (issue_files.OUTCOMES; issues — None: выгружают заметки потока, а не задачи).
+    files — файлы задач, что в ней уже лежат, outcomes — файлы итогов, по номеру."""
 
     catalog: Catalog
     root: Path
     issues: Path | None = None
     files: Mapping[str, Note] = field(default_factory=dict)
+    outcomes: Mapping[str, Note] = field(default_factory=dict)
 
     def held(self, note_id: str, kind: str) -> Note | None:
-        """Что лежит на месте заметки или файла задачи сейчас."""
-        return (self.files if kind == "issue" else self.catalog.notes).get(note_id)
+        """Что лежит на месте заметки, файла задачи или итога сейчас."""
+        if kind == "issue":
+            return self.files.get(note_id)
+        if kind == "outcome" and self.issues is not None:
+            return self.outcomes.get(note_id)
+        return self.catalog.notes.get(note_id)
 
     def path(self, note_id: str, kind: str) -> Path:
         """Где файл: прочитанный — там, откуда прочли, новый — на своём месте."""
         held = self.held(note_id, kind) or Note(note_id, kind, "")
-        if kind == "issue" and self.issues is not None:
-            return issue_files.path_of(self.issues, held)
+        if kind in issue_files.KINDS and self.issues is not None:
+            return issue_files.path_of(issue_files.folder_of(self.issues, kind), held)
         return path_of(self.root, held)
 
 
 def file_text(note: Note) -> str:
-    return issue_files.rendered(note) if note.type == "issue" else rendered(note)
+    return issue_files.rendered(note) if note.type in issue_files.KINDS else rendered(note)
 
 
 def question_key(question: OpenQuestion) -> str:
@@ -1071,8 +1077,8 @@ def digest_of(path: Path) -> str:
 def unmarked_digest(path: Path, kind: str) -> str:
     """Отпечаток выгруженного файла: заметки — без superseded_by во frontmatter (notes.unmarked).
     Его дописывает и меняет выгрузка другого потока (notes.marked) — это правит совет, а не
-    человек, и отпечаток от этого не меняется. Файл задачи — как есть."""
-    if kind == "issue":
+    человек, и отпечаток от этого не меняется. Файл задачи и итога — как есть."""
+    if kind in issue_files.KINDS:
         return digest_of(path)
     try:
         text = path.read_bytes().decode("utf-8")
@@ -1201,11 +1207,11 @@ def previous_of(plan: NotePlan, before: Mapping[str, ExportedNote]) -> ExportedN
 
 
 def settled(plan: NotePlan, old: ExportedNote | None, shelf: Shelf) -> NotePlan:
-    """Что будет с заметкой (или файлом задачи) при записи — по тому, что лежит там сейчас.
-    Файл задачи, где статус поменяли после записи, — правленный руками, как при любой правке
-    (решение владельца к задаче «Бекенд · Задачи: статус во frontmatter…»). Файл задачи без
-    статуса (записан прежней версией) — не тот же: запись ставит ему статус open, как и всем
-    задачам, которые пишет."""
+    """Что будет с заметкой (или файлом задачи, итога) при записи — по тому, что лежит там
+    сейчас. Файл задачи или итога, где статус поменяли после записи, — правленный руками, как при
+    любой правке (решение владельца к задаче «Бекенд · Задачи: статус во frontmatter…»). Файл
+    задачи без статуса (записан прежней версией) — не тот же: запись ставит ему статус open, как и
+    всем задачам, которые пишет."""
     held = shelf.held(plan.id, plan.type)
     if held is None:
         return plan.model_copy(update={"action": "create", "current": None})
@@ -1213,7 +1219,7 @@ def settled(plan: NotePlan, old: ExportedNote | None, shelf: Shelf) -> NotePlan:
     if old is not None and not written_as(path, old.digest, plan.type):
         return plan.model_copy(update={"action": "edited", "current": held.body})
     if held.body == plan.text.strip() and list(held.links) == plan.links \
-            and (plan.type != "issue" or held.status is not None):
+            and (plan.type not in issue_files.KINDS or held.status is not None):
         return plan.model_copy(update={"action": "same", "current": None})
     return plan.model_copy(update={"action": "update", "current": held.body})
 
@@ -1317,8 +1323,8 @@ def graph_problems(catalog: Catalog, notes: Sequence[NotePlan], vanished: Sequen
     deletable(vanished, delete)
     after = dict(catalog.notes)
     for plan in notes:
-        # Файл задачи — не заметка графа.
-        if plan.action != "edited" and plan.type != "issue":
+        # Файл задачи или итога — не заметка графа.
+        if plan.action != "edited" and plan.type not in issue_files.KINDS:
             after[plan.id] = Note(plan.id, plan.type, edits.get(plan.key, plan.text),
                                   tuple(plan.links))
     for note_id in delete:
@@ -1340,10 +1346,10 @@ def untranslated(notes: Sequence[NotePlan]) -> dict[str, str]:
 
 def portions(notes: Sequence[NotePlan]) -> list[dict[str, str]]:
     """Что переводить, по ходам судьи: заметки — одним, их связки и термины переводятся
-    вместе, а файл задачи — каждый своим: задачи длинные, и все разом не влезли бы в один ответ
-    модели."""
+    вместе, а файл задачи или итога — каждый своим: задачи длинные, и все разом не влезли бы в
+    один ответ модели."""
     sources = untranslated(notes)
-    issues = {note.key for note in notes if note.type == "issue"}
+    issues = {note.key for note in notes if note.type in issue_files.KINDS}
     together = {key: text for key, text in sources.items() if key not in issues}
     apart = [{key: text} for key, text in sources.items() if key in issues]
     return [part for part in (together, *apart) if part]

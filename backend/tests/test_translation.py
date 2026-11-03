@@ -8,7 +8,7 @@ import pytest
 from spec_council.export import because, replacing, words_for
 from spec_council.models import Issue, Outcome
 from spec_council.slicing import BadAnswer
-from spec_council.tasks_export import issue_text, parent_text
+from spec_council.tasks_export import issue_text, outcome_text
 from spec_council.translation import (
     Template,
     filled,
@@ -79,9 +79,10 @@ def test_an_issue_shows_the_judge_its_headings_and_commit_line_as_markers():
         "Индекса нет.\n\n```\n## Риски\n```\n\n## To do\n- Собрать индекс.\n\n## Risks\n"
         "- Медленно.\n\n## Open questions\n- Где хранить?\n\n## After the issues\n"
         "- ISS-0007: Схема\n\n" + COMMIT.format("ISS-0008"))
-    parent = parent_text(Outcome(id="O1", title="Мерило", behavior="Видно.",
-                                 acceptance_criteria=["Считается."]), RU)
-    assert templated(parent, "issue", "ISS-0009", RU) == \
+    # Файл итога — заголовок критериев тоже метка.
+    outcome = outcome_text(Outcome(id="O1", title="Мерило", behavior="Видно.",
+                                   acceptance_criteria=["Считается."]), RU)
+    assert templated(outcome, "outcome", "OUT-0009", RU) == \
         Template("# Мерило\n\nВидно.\n\n## ⟦criteria⟧\n- Считается.")
 
 

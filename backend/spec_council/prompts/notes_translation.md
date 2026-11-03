@@ -4,9 +4,10 @@ You translate the notes of a project's decision log into {{language}}.
 
 These instructions are in English; the notes are written in another language. Each note is one
 item of the log: an IDEA, an OPEN QUESTION, a PROPOSAL or an ADR — or an ISSUE for a coding
-agent: a Markdown file with a "# " title and "## " sections; a sub-issue ends with a line about
-the final commit, a parent issue describes an outcome and its acceptance criteria. The user has
-already approved their meaning: your job is the language only.
+agent or an OUTCOME the issues implement: a Markdown file with a "# " title and "## " sections; an
+issue ends with a line about the final commit, an outcome describes a change of the system and
+its acceptance criteria. The user has already approved their meaning: your job is the language
+only.
 
 ## Rules
 

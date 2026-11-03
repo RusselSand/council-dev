@@ -4,12 +4,12 @@
 Этап — после потоков (решение q-009 бекенда): план на весь совет строят модели, когда готовы все
 потоки, — его начинает сервер сам, на «Записать в каталог» последнего потока (web/notes.py) или на
 «К потокам →», когда исследование прошли заново (web/research.py). План готов — судья сразу
-переводит задачи, если язык каталога задач не тот, на котором работает совет. В плане — на каждый
-утверждённый итог родительская задача (parents) и задачи плана, подзадачи своего итога (решение
-владельца к задаче «Бекенд · Итоги → родительские задачи…»). Цепочка и запись —
-council_tasks.py, состояние этапа — standing.py. Каталог задач — папка задач проекта
-(«Папка задач» в окне проекта); её нет — «Без папки», и «Записать в каталог» отмечает «Задачи»
-готовыми без записи (решение q-010 бекенда).
+переводит задачи, если язык каталога задач не тот, на котором работает совет. В плане — утверждённые
+итоги (outcomes) и задачи плана, каждая — своего итога: итоги пишутся отдельно от задач, файлами OUT
+в подпапку папки задач (решение владельца к задаче «Бекенд · Задачи: итоги — файлы OUT в
+подпапке…»). Цепочка и запись — council_tasks.py, состояние этапа — standing.py. Каталог задач —
+папка задач проекта («Папка задач» в окне проекта); её нет — «Без папки», и «Записать в каталог»
+отмечает «Задачи» готовыми без записи (решение q-010 бекенда).
 
 Раньше этап вёл старый фронт старыми ручками …/tasks, …/tasks/reset, …/tasks/draft и
 …/tasks/write: человек строил план, сбрасывал устаревший, собирал черновик, правил тексты файлов и
@@ -37,7 +37,7 @@ from ..standing import (
     tasks_work,
 )
 from ..store import Store, council_lock
-from ..tasks import Parent, basis_of, parent_by_name, parents_of
+from ..tasks import PlanOutcome, basis_of, outcome_by_name, plan_outcomes
 from .councils import CouncilAnswer, context_of, folders_of, shown
 from .errors import ApiError, ContractRoute
 from .notes import Catalog
@@ -64,7 +64,7 @@ class TaskStep(Schema):
     runs: list[Run]
 
 
-class ParentTask(Schema):
+class TaskOutcome(Schema):
     id: str
     catalog_id: str | None
     stream: str
@@ -85,7 +85,7 @@ class Task(Schema):
     current: str | None
     scope: list[str]
     open_questions: list[str]
-    parent: str
+    outcome: str
     decisions: list[AdrRef]
     depends_on: list[str]
 
@@ -98,7 +98,7 @@ class VanishedTask(Schema):
 class TasksPlan(Schema):
     catalog: Catalog | None
     progress: list[TaskStep]
-    parents: list[ParentTask]
+    outcomes: list[TaskOutcome]
     tasks: list[Task]
     vanished: list[VanishedTask]
     ready_streams: list[str]
@@ -190,21 +190,22 @@ def plan_of(council: Council, folders: Folders, projects: Projects, store: Store
                if any(step != "done" for step in stream.steps.values())]
     catalog = catalog_of(council, projects, folders)
     if state == "idle":
-        return TasksPlan(catalog=catalog, progress=[], parents=[], tasks=[], vanished=[],
+        return TasksPlan(catalog=catalog, progress=[], outcomes=[], tasks=[], vanished=[],
                          ready_streams=[], pending_streams=pending, error=None)
     plan = current_plan(council)
     draft = shown_draft(council, folders, store) if plan is not None else None
     numbers = {number.issue_id: number.id for number in draft.numbers} if draft else {}
     owners = owners_of(council)
-    parents = parents_of(council) if plan else []
-    by_name = parent_by_name(parents)
+    outcomes = plan_outcomes(council) if plan else []
+    by_name = outcome_by_name(outcomes)
     return TasksPlan(
         catalog=catalog, progress=progress_of(council, folders),
-        parents=[parent_task_of(parent, numbers.get(parent.name)) for parent in parents],
+        outcomes=[task_outcome_of(outcome, outcome_number(numbers.get(outcome.name)))
+                  for outcome in outcomes],
         tasks=[task_of(issue, numbers.get(issue.id), owners, by_name) for issue in plan.issues]
         if plan else [],
         vanished=[VanishedTask(id=note.id, title=title_of(note.text)) for note in draft.vanished
-                  if not note.linked_from] if draft else [],
+                  if not note.linked_from and not note.edited] if draft else [],
         ready_streams=[stream.id for stream in where.streams] if plan else [],
         pending_streams=pending,
         error=error_of(council, folders) if state == "failed" else None)
@@ -258,32 +259,37 @@ def owners_of(council: Council) -> dict[str, tuple[str, str]]:
             for name, note in stream.notes.refs.items()}
 
 
-def parent_task_of(parent: Parent, number: str | None) -> ParentTask:
-    """Родительская задача — утверждённый итог: его поток и номер в потоке, название, что
-    меняется и критерии готовности; решения, которые он реализует, — номерами в потоке и в
-    каталоге заметок."""
-    refs = parent.stream.notes.refs if parent.stream.notes else {}
-    outcome = parent.outcome
-    return ParentTask(id=parent.name, catalog_id=number, stream=parent.stream.group,
-                      outcome=outcome.id, title=outcome.title, change=outcome.behavior,
-                      criteria=list(outcome.acceptance_criteria),
-                      decisions=[AdrRef(adr=adr, catalog_id=refs.get(adr))
-                                 for adr in outcome.adr_ids])
+def outcome_number(number: str | None) -> str | None:
+    """Номер итога в каталоге — номер его файла OUT. Черновик, записанный прежней версией, давал
+    итогу номер родительской задачи (ISS-…): у итога номера нет, пока задачи не запишут снова."""
+    return number if number is not None and number.startswith("OUT-") else None
+
+
+def task_outcome_of(planned: PlanOutcome, number: str | None) -> TaskOutcome:
+    """Итог плана — утверждённый итог: его поток и номер в потоке, название, что меняется и
+    критерии готовности; решения, которые он реализует, — номерами в потоке и в каталоге
+    заметок."""
+    refs = planned.stream.notes.refs if planned.stream.notes else {}
+    outcome = planned.outcome
+    return TaskOutcome(id=planned.name, catalog_id=number, stream=planned.stream.group,
+                       outcome=outcome.id, title=outcome.title, change=outcome.behavior,
+                       criteria=list(outcome.acceptance_criteria),
+                       decisions=[AdrRef(adr=adr, catalog_id=refs.get(adr))
+                                  for adr in outcome.adr_ids])
 
 
 def task_of(issue: Issue, number: str | None, owners: dict[str, tuple[str, str]],
-            parents: dict[str, Parent]) -> Task:
-    """Задача плана — подзадача родительской задачи своего итога (у плана прежней версии итог
-    назван номером его заметки: parent_by_name знает и его); решения в плане — номерами заметок,
-    а в потоке их зовут своими номерами; решение проекта, которого в потоке нет, — номером
-    каталога."""
-    parent = parents.get(issue.outcome_id)
+            outcomes: dict[str, PlanOutcome]) -> Task:
+    """Задача плана — своего итога (у плана прежней версии итог назван номером его заметки:
+    outcome_by_name знает и его); решения в плане — номерами заметок, а в потоке их зовут своими
+    номерами; решение проекта, которого в потоке нет, — номером каталога."""
+    planned = outcomes.get(issue.outcome_id)
     return Task(id=issue.id, catalog_id=number,
-                stream=parent.stream.group if parent else "", title=issue.title,
+                stream=planned.stream.group if planned else "", title=issue.title,
                 story=issue.user_story, entries=issue.main_entry_points,
                 current=issue.current_state or None, scope=issue.scope,
                 open_questions=issue.open_questions,
-                parent=parent.name if parent else issue.outcome_id,
+                outcome=planned.name if planned else issue.outcome_id,
                 decisions=[AdrRef(adr=owners.get(adr, ("", adr))[1], catalog_id=adr)
                            for adr in issue.adr_ids],
                 depends_on=issue.depends_on)

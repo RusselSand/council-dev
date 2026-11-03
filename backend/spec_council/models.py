@@ -1054,7 +1054,8 @@ class Issue(BaseModel):
     зачем (user story), где менять (точки входа), что меняем (current_state), что именно сделать,
     с границами (scope), и что неясно в реализации (open_questions) — без решения: его принимают
     с агентом. Решения — номерами заметок (ADR-…): поток выгружен до плана. Итог — номером в
-    совете (tasks.outcome_name): итогов в заметках нет, при записи итог — родительская задача."""
+    совете (tasks.outcome_name): итогов в заметках нет, при записи итог — файл OUT в подпапке
+    папки задач (tasks_export.py)."""
 
     # I1, I2… по порядку плана.
     id: str
@@ -1076,7 +1077,8 @@ class Issue(BaseModel):
     open_questions: list[str] = []
 
 
-# issue — не заметка графа, а файл задачи в папке задач проекта (issue_files.py).
+# issue — не заметка графа, а файл задачи в папке задач проекта (issue_files.py); outcome у
+# «Задач» — файл итога в её подпапке, а у выгрузок потока прежних версий — заметка итога.
 NoteType = Literal["idea", "open_question", "proposal", "adr", "outcome", "issue"]
 
 
@@ -1114,6 +1116,9 @@ class VanishedNote(BaseModel):
     type: NoteType
     text: str
     linked_from: list[str] = []
+    # Файл правили руками после записи — он остаётся как есть: родительская задача прежней
+    # версии, чей итог теперь файлом в подпапке (tasks_export.vanished_of).
+    edited: bool = False
 
 
 class IssueNumber(BaseModel):

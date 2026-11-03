@@ -64,7 +64,7 @@ import {
   startedStructure,
   STRUCTURES,
 } from './structures';
-import { parentTasks, plannedProgress, startedProgress, TASKS, tasksCatalog } from './tasks';
+import { plannedProgress, startedProgress, taskOutcomes, TASKS, tasksCatalog } from './tasks';
 
 /** Копия, чтобы экран не мог поменять моки у себя в руках. */
 const copy = <T>(value: T): T => structuredClone(value);
@@ -581,9 +581,9 @@ const TASKS_FAILED = 'План задач не построен — запуст
  * План задач совета, как его отдаёт сервер: план — на весь совет, когда готовы все потоки (решение q-009 бекенда); до
  * этого задач нет, а потоки, которые ещё не готовы (не записаны в каталог заметок), — в pendingStreams. План построен —
  * когда «Задачи» ждут вас или готовы; пока модели строят план — его ход, задач ещё нет. Новых планов моки не строят:
- * модели в моках не заканчивают работу, и план есть только у советов из данных макета. Родительские задачи — по
- * утверждённым итогам потоков (решение владельца к задаче «Бекенд · Итоги → родительские задачи…»). Каталог — папка
- * задач проекта совета, какой она сейчас; задачи пишутся не на языке совета — судья их перевёл.
+ * модели в моках не заканчивают работу, и план есть только у советов из данных макета. Итоги — утверждённые итоги
+ * потоков, с номерами своих файлов OUT (решение владельца к задаче «Бекенд · Задачи: итоги — файлы OUT в подпапке…»).
+ * Каталог — папка задач проекта совета, какой она сейчас; задачи пишутся не на языке совета — судья их перевёл.
  */
 function tasksPlanOf(id: string): TasksPlan {
   const { project, participants, judge, stages } = councils[councilAt(id)];
@@ -602,10 +602,10 @@ function tasksPlanOf(id: string): TasksPlan {
       : stages.tasks === 'running'
         ? startedProgress(participants, judge)
         : [],
-    parents: built
-      ? parentTasks(
+    outcomes: built
+      ? taskOutcomes(
           list.map((stream) => [stream.id, outcomesOf(stream.id)]),
-          plan.tasks,
+          plan.lastOutcome,
         )
       : [],
     tasks: built ? plan.tasks : [],

@@ -25,11 +25,13 @@ from itertools import accumulate, count
 from typing import NamedTuple
 
 from .export import CODE, blocks_of, in_prose, numbering_problem, translations, visible_of
+from .issue_files import KINDS
 from .slicing import BadAnswer
 
 # Метка связки в тексте для судьи: «⟦now⟧».
 MARKER = re.compile(r"⟦([a-z]+)⟧")
-# Связки-заголовки разделов файла задачи — строкой «## …» (tasks_export.issue_text, parent_text).
+# Связки-заголовки разделов файла задачи и итога — строкой «## …» (tasks_export.issue_text,
+# outcome_text).
 SECTIONS = ("entry", "now", "scope", "keep", "risks", "open", "after", "criteria")
 # Все связки, что бывают метками.
 MARKED = frozenset((*SECTIONS, "because", "replaces", "commit"))
@@ -63,8 +65,8 @@ def labels_of(text: str, kind: str, note_id: str,
     метка — по порядку. У решения — «потому что» между решением и «почему» (export.because) и
     подпись строки замен в конце (export.replacing): первое в прозе — в коде («`", потому что "`»)
     это не связка, а другие — уже слова самого текста. У файла задачи — заголовки разделов и
-    строка о номере для коммита (последняя такая, tasks_export.issue_text), вне блоков кода:
-    пример кода в задаче — как есть."""
+    строка о номере для коммита (последняя такая, tasks_export.issue_text), у файла итога —
+    заголовок критериев, вне блоков кода: пример кода в задаче — как есть."""
     if kind == "adr":
         found = []
         because = prose_find(text, f", {words['because']} ")
@@ -75,7 +77,7 @@ def labels_of(text: str, kind: str, note_id: str,
         if replaces is not None:
             found.append((*replaces.span(1), "replaces"))
         return sorted(found)
-    if kind != "issue":
+    if kind not in KINDS:
         return []
     code = blocks_of(text).code
     heads = {f"## {words[word]}": word for word in SECTIONS}

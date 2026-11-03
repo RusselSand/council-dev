@@ -1,7 +1,7 @@
 import { Caption } from '../../ui/Caption';
 import styles from './DoneWhen.module.css';
 
-/** paper — белый блок на сером итоге («Итоги»); muted — серый блок на белой родительской задаче («Задачи»). */
+/** paper — белый блок на сером итоге («Итоги»); muted — серый блок на белом итоге «Задач». */
 export type DoneWhenVariant = 'paper' | 'muted';
 
 interface DoneWhenProps {

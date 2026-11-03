@@ -1,7 +1,7 @@
 import type { Catalog } from '../../domain/notes';
 import type { AdrRef, StreamOutcome } from '../../domain/outcomes';
 import type { RunState } from '../../domain/run';
-import type { ParentTask, Task, TaskStep, VanishedTask } from '../../domain/tasks';
+import type { Task, TaskOutcome, TaskStep, VanishedTask } from '../../domain/tasks';
 import { COUNCIL_LANGUAGE } from './notes';
 import { PROJECTS, type MockProject } from './projects';
 import { modelRun } from './runs';
@@ -16,10 +16,12 @@ export interface MockTasks {
   vanished: VanishedTask[];
   /** Судья задач: свёл разошедшиеся планы моделей — done; планы совпали, судья не понадобился — skipped. */
   judge: RunState;
+  /** Самый большой номер итога (OUT) в каталоге заметок и прежних выгрузках: номера итогов плана — следующие. */
+  lastOutcome: number;
 }
 
-/** Родительская задача итога в плане — поток и номер итога в нём, как её зовёт сервер: «A-O5». */
-const parentId = (stream: string, outcome: string): string => `${stream}-${outcome}`;
+/** Итог в плане — поток и номер итога в нём, как его зовёт сервер: «A-O5». */
+const outcomeId = (stream: string, outcome: string): string => `${stream}-${outcome}`;
 
 /** Задача потока A без открытых вопросов и зависимостей; остальное — extra. */
 const task = (
@@ -39,25 +41,27 @@ const task = (
   current: null,
   scope: [],
   openQuestions: [],
-  parent: parentId('A', outcome),
+  outcome: outcomeId('A', outcome),
   decisions: [],
   dependsOn: [],
   ...extra,
 });
 
-/** Итог и решение потока A g1: итог O3 — родительская задача A-O3; ADR-1 — ADR-0041 (streams[0].notes.refs). */
+/** Итог и решение потока A g1: итог O3 — в плане A-O3; ADR-1 — ADR-0041 (streams[0].notes.refs). */
 const g1Outcome = (n: number): string => `O${n}`;
 const g1Adr = (n: number): AdrRef => ({ adr: `ADR-${n}`, catalogId: `ADR-${String(40 + n).padStart(4, '0')}` });
 
 /**
  * Задачи g1 — из data-1.json (tasks.issues): title, user_story — story, main_entry_points — entries, current_state —
  * current, scope, open_questions, depends_on; outcome_id и adr_ids там — номера в каталоге, номера в потоке — по
- * streams[0].notes.refs («OUT-0026» — итог O5, его родительская задача — A-O5). Номера задач в каталоге —
- * tasks_draft.numbers (I1 → ISS-0023). «Уйдут из каталога» — tasks_draft.vanished: заголовок — первая строка text без
- * «# », как его берёт макет. Судья задач — tasks.steps (task_plan_judge — done).
+ * streams[0].notes.refs («OUT-0026» — итог O5, в плане — A-O5). Номера задач в каталоге — tasks_draft.numbers
+ * (I1 → ISS-0023). «Уйдут из каталога» — tasks_draft.vanished: заголовок — первая строка text без «# », как его берёт
+ * макет. Судья задач — tasks.steps (task_plan_judge — done). Самый большой номер итога — OUT-0029 у O8 в
+ * streams[0].notes.refs: номера итогов плана — с OUT-0030.
  */
 const G1: MockTasks = {
   judge: 'done',
+  lastOutcome: 29,
   tasks: [
     task(
       'I1',
@@ -291,12 +295,14 @@ const protoAdr = (adr: string): AdrRef => ({ adr, catalogId: null });
 
 /**
  * Задачи советов-примеров — ISSUES из prototype.js, все — потока A: why — story, where — entries, scope — scope, after —
- * dependsOn. Итога и решений у задач в макете нет — они из итогов потока (OUTCOMES): очередь и отправка — подзадачи
+ * dependsOn. Итога и решений у задач в макете нет — они из итогов потока (OUTCOMES): очередь и отправка — задачи итога
  * OUT-1 (ADR-0007, ADR-0008), сжатие фото — OUT-2 (ADR-0009). «Уйдут из каталога» в макете у них пусто. Работы моделей
- * над задачами в макете нет: судья задач не понадобился, как у c7 в контракте.
+ * над задачами в макете нет: судья задач не понадобился, как у c7 в контракте. Итогов в каталоге заметок у них нет:
+ * номера итогов плана — с OUT-0001.
  */
 const PROTO: MockTasks = {
   judge: 'skipped',
+  lastOutcome: 0,
   tasks: [
     task(
       'I1',
@@ -345,21 +351,18 @@ const PROTO: MockTasks = {
  */
 export const TASKS: Record<string, MockTasks> = { g1: G1, c1: PROTO, c4: PROTO, c7: PROTO };
 
-/** Номер задачи в каталоге числом: «ISS-0029» — 29; номера нет — 0. */
-const issueNumber = (catalogId: string | null): number => Number(catalogId?.replace(/^ISS-/, '') ?? 0);
-
 /**
- * Родительские задачи плана, как их отдаёт сервер (решение владельца к задаче «Бекенд · Итоги → родительские задачи…»):
- * утверждённые итоги потоков — по порядку потоков, в потоке — по порядку итогов (streams — поток и его итоги). Номера в
- * каталоге — следующие за номерами задач плана, по порядку; в макете родительских задач нет.
+ * Итоги плана, как их отдаёт сервер (решение владельца к задаче «Бекенд · Задачи: итоги — файлы OUT в подпапке, в папке
+ * задач только ISS»): утверждённые итоги потоков — по порядку потоков, в потоке — по порядку итогов (streams — поток и
+ * его итоги). Номера в каталоге — номера их файлов OUT, следующие за самым большим (last), по порядку; в макете итогов на
+ * «Задачах» нет.
  */
-export function parentTasks(streams: [string, StreamOutcome[]][], tasks: Task[]): ParentTask[] {
-  const top = Math.max(0, ...tasks.map((t) => issueNumber(t.catalogId)));
+export function taskOutcomes(streams: [string, StreamOutcome[]][], last: number): TaskOutcome[] {
   return streams
     .flatMap(([stream, outcomes]) => outcomes.filter((o) => o.approved).map((outcome) => ({ stream, outcome })))
     .map(({ stream, outcome }, n) => ({
-      id: parentId(stream, outcome.id),
-      catalogId: `ISS-${String(top + n + 1).padStart(4, '0')}`,
+      id: outcomeId(stream, outcome.id),
+      catalogId: `OUT-${String(last + n + 1).padStart(4, '0')}`,
       stream,
       outcome: outcome.id,
       title: outcome.title,

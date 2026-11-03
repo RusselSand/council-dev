@@ -7,7 +7,7 @@ interface TaskHeadProps {
   /** «поток A». */
   stream: string;
   title: string;
-  /** Метка справа от названия: «можно брать», «после ISS-0023», «2 подзадачи». */
+  /** Метка справа от названия: «можно брать», «после ISS-0023», «2 задачи». */
   tag: { tone: TagTone; label: string };
   open: boolean;
   /** «подробнее» у свёрнутой, «свернуть» у открытой. */
@@ -17,7 +17,7 @@ interface TaskHeadProps {
 
 /**
  * Строка задачи, как в макете: номер, поток, название, метка и «подробнее» — одна кнопка во всю ширину, щелчок открывает
- * или сворачивает задачу. Так же — строка родительской задачи.
+ * или сворачивает задачу. Так же — строка итога.
  */
 export function TaskHead({ label, stream, title, tag, open, toggleLabel, onToggle }: TaskHeadProps) {
   return (

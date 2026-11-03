@@ -7,7 +7,7 @@ import { useI18n } from '../../i18n';
 import { Button } from '../../ui/Button';
 import { NextStep } from '../../ui/NextStep';
 import { TitledCard } from '../../ui/TitledCard';
-import { ParentCard } from './parts/ParentCard';
+import { OutcomeCard } from './parts/OutcomeCard';
 import { PendingStreams } from './parts/PendingStreams';
 import { TaskCard } from './parts/TaskCard';
 import { VanishedTasks } from './parts/VanishedTasks';
@@ -17,7 +17,7 @@ import { useTasks } from './useTasks';
  * Этап «Задачи»: пока модели строят план или судья переводит задачи — «ИИ работает» и ход работы; иначе — план
  * остановился — «План задач остановился» и «Запустить снова», а на судье, чей ответ не прошёл проверку, — под ней и ход
  * работы; не все потоки готовы — «Не все потоки готовы»; «Задачи для
- * coding agents» — родительские задачи итогов, в каждой — её подзадачи, свёрнутые и открытые; «Уйдут из каталога»;
+ * coding agents» — итоги, в каждом — его задачи, свёрнутые и открытые; «Уйдут из каталога»;
  * внизу — «Записать задачи» и «Записать в каталог». Пока план грузится — «Загружаем…» или ошибка. Другой совет — другой
  * экран: ставьте с key={council.id}.
  */
@@ -43,12 +43,12 @@ export function Tasks({ council }: { council: CouncilSummary }) {
       {screen.rejectedShown && progress}
       {screen.pending && <PendingStreams text={screen.pending} />}
       <TitledCard caption={t('tasks.caption')} title={t('tasks.title')} intro={t('tasks.intro')}>
-        {screen.parents.map((parent) => (
-          <ParentCard key={parent.id} parent={parent} onToggle={() => screen.toggleParent(parent.id)}>
-            {parent.tasks.map((task) => (
+        {screen.outcomes.map((outcome) => (
+          <OutcomeCard key={outcome.id} outcome={outcome} onToggle={() => screen.toggleOutcome(outcome.id)}>
+            {outcome.tasks.map((task) => (
               <TaskCard key={task.id} task={task} onToggle={() => screen.toggleTask(task.id)} />
             ))}
-          </ParentCard>
+          </OutcomeCard>
         ))}
         {screen.orphans.map((task) => (
           <TaskCard key={task.id} task={task} onToggle={() => screen.toggleTask(task.id)} />
