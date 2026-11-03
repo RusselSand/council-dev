@@ -465,7 +465,8 @@ def wrote(council: Council, folders: Folders,
     # Задачу во всех файлах зовут названием из её файла, и после перевода тоже.
     edits = aligned(draft.notes, {note.key: note.text for note in draft.notes})
     # Исчезнувшую задачу, которую ещё ждёт файл, что остаётся в папке, не удалить: она остаётся.
-    delete = [note.id for note in draft.vanished if not note.linked_from]
+    # Родительскую задачу прежней версии, правленную руками, — тоже (vanished_of).
+    delete = [note.id for note in draft.vanished if not note.linked_from and not note.edited]
 
     def keep(exported: list[ExportedNote]) -> None:
         record = TasksExport(run=draft.run, plan=draft.plan, language=draft.language,

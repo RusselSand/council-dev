@@ -42,6 +42,7 @@ from .export import (
     numbering_problem,
     numbers_in_prose,
     planned,
+    written_as,
 )
 from .models import (
     ExportedNote,
@@ -328,12 +329,16 @@ def vanished_of(shelf: Shelf, filed: Mapping[str, ExportedNote], notes: Sequence
     прежней версии: при записи их удаляют. Файлы, что останутся в папке как есть, — не из плана
     или правленные руками: исчезнувшую задачу (итог), на которую они ссылаются (и как на родителя
     или итог), удалить нельзя — и она тоже остаётся. Исчезнувшая задача, которую удалят, своего
-    итога не держит."""
+    итога не держит. Родительская задача прежней версии, правленная руками (и статус тоже), —
+    как любой такой файл: остаётся как есть (edited), хотя её итог и ложится в подпапку, — раньше
+    она была в плане, и запись её не трогала."""
     files = {**shelf.files, **shelf.outcomes}
     current = {number.id for number in numbers}
     gone = [old.id for old in filed.values()
             if old.id not in current and old.id in files and old.id not in reserved]
     edited = {plan_note.id for plan_note in notes if plan_note.action == "edited"}
+    edited |= {note_id for note_id in gone if parent_before(filed[note_id])
+               and not written_as(shelf.path(note_id, "issue"), filed[note_id].digest, "issue")}
     staying = {note.id for note in files.values()
                if (note.id not in current and note.id not in gone) or note.id in edited}
 
@@ -346,8 +351,14 @@ def vanished_of(shelf: Shelf, filed: Mapping[str, ExportedNote], notes: Sequence
         staying |= set(held)
         held = [note_id for note_id in gone if note_id not in staying and linked_from(note_id)]
     return [VanishedNote(id=note_id, type=files[note_id].type, text=files[note_id].body,
-                         linked_from=linked_from(note_id))
+                         linked_from=linked_from(note_id), edited=note_id in edited)
             for note_id in gone]
+
+
+def parent_before(old: ExportedNote) -> bool:
+    """Родительская задача, которую записала прежняя версия: итог файлом задачи (его ключ — итога,
+    numbers_of)."""
+    return old.type == "issue" and old.key.startswith("o:")
 
 
 def aligned(notes: Sequence[NotePlan], texts: Mapping[str, str] | None = None,

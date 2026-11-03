@@ -676,6 +676,39 @@ def test_parent_tasks_of_the_previous_version_leave_the_tasks_folder(agents, bas
     assert f"# {TASK} OUT-0001\n" in text
 
 
+def test_a_parent_task_of_the_previous_version_edited_by_hand_stays(agents, base):
+    """Родительскую задачу прежней версии правили руками — поставили статус: запись её не трогает,
+    как и любой правленый файл, — она не уходит из каталога, а итог всё равно ложится в подпапку.
+    Откатили правку — уходит при следующей записи."""
+    council_id = ready()
+    writes(council_id)
+    issues = base / "issues"
+    written_by_the_previous_version(council_id, issues)
+    parent = issues / "ISS-0002.md"
+    original = parent.read_text(encoding="utf-8")
+    edited = original.replace("status: open", "status: done")
+    parent.write_text(edited, encoding="utf-8")
+    plan = council(council_id).tasks
+    get_store().update_council(council_id, {"tasks": plan.model_copy(update={"basis": {}})})
+    retries(council_id)
+    assert plan_of(council_id)["vanished"] == []
+    assert writes(council_id).status_code == 200
+    assert files_in(issues) == ["ISS-0001.md", "ISS-0002.md"]
+    assert parent.read_text(encoding="utf-8") == edited
+    assert outcomes_in(issues) == ["OUT-0001.md"]
+    assert "outcome: OUT-0001\n" in (issues / "ISS-0001.md").read_text(encoding="utf-8")
+    [kept] = [note for note in council(council_id).tasks_export.notes if note.id == "ISS-0002"]
+    assert kept.kept
+
+    parent.write_text(original, encoding="utf-8")
+    plan = council(council_id).tasks
+    get_store().update_council(council_id, {"tasks": plan.model_copy(update={"basis": {}})})
+    retries(council_id)
+    assert plan_of(council_id)["vanished"] == [{"id": "ISS-0002", "title": RESULT}]
+    assert writes(council_id).status_code == 200
+    assert files_in(issues) == ["ISS-0001.md"]
+
+
 def test_research_approved_again_builds_a_stale_plan_again(agents, base):
     council_id = ready()
     first = council(council_id).tasks

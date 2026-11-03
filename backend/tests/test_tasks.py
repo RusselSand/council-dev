@@ -904,6 +904,17 @@ def test_a_parent_task_of_the_previous_version_vanishes_and_its_outcome_gets_a_f
                                            {"C-O1": Names({}, {})})
     assert task.action == "edited"
     assert [(note.id, note.linked_from) for note in vanished] == [("ISS-0002", ["ISS-0001"])]
+    # Родительскую задачу правили руками (поставили статус) — она остаётся как есть, а итог
+    # всё равно ложится в подпапку.
+    (issues / "ISS-0001.md").write_text(issue_rendered(old_task), encoding="utf-8")
+    (issues / "ISS-0002.md").write_text(
+        issue_rendered(Note("ISS-0002", "issue", outcome.text, status="done")), encoding="utf-8")
+    shelf = Shelf(Catalog({}), tmp_path / "notes", issues, loaded(issues))
+    [task, outcome], vanished, _ = drafted_tasks(plan, {}, shelf, previous, words, "Russian", (),
+                                                 {"C-O1": Names({}, {})})
+    assert (task.action, task.links, outcome.action) == ("update", ["OUT-0001"], "create")
+    assert [(note.id, note.linked_from, note.edited) for note in vanished] == [
+        ("ISS-0002", [], True)]
 
 
 def test_outcome_files_are_read_only_from_their_subfolder(tmp_path):

@@ -205,7 +205,7 @@ def plan_of(council: Council, folders: Folders, projects: Projects, store: Store
         tasks=[task_of(issue, numbers.get(issue.id), owners, by_name) for issue in plan.issues]
         if plan else [],
         vanished=[VanishedTask(id=note.id, title=title_of(note.text)) for note in draft.vanished
-                  if not note.linked_from] if draft else [],
+                  if not note.linked_from and not note.edited] if draft else [],
         ready_streams=[stream.id for stream in where.streams] if plan else [],
         pending_streams=pending,
         error=error_of(council, folders) if state == "failed" else None)

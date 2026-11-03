@@ -1116,6 +1116,9 @@ class VanishedNote(BaseModel):
     type: NoteType
     text: str
     linked_from: list[str] = []
+    # Файл правили руками после записи — он остаётся как есть: родительская задача прежней
+    # версии, чей итог теперь файлом в подпапке (tasks_export.vanished_of).
+    edited: bool = False
 
 
 class IssueNumber(BaseModel):
