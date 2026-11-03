@@ -238,6 +238,22 @@ def test_slicing_goes_in_the_background_and_ends_with_fragments(store, pool):
         "slices", "waiting", "waiting")
 
 
+def test_a_text_from_jira_is_sliced_and_its_fragments_stay_as_written(store, pool):
+    """Модели режут на PARTS — с обычными пробелами, а в тексте из Jira неразрывные пробелы,
+    пробелы нулевой ширины, двойные пробелы и \\r\\n: нарезка проходит, фрагменты — из текста
+    как есть, сам текст не меняется."""
+    nbsp, narrow, zero, bom = map(chr, (0x00A0, 0x202F, 0x200B, 0xFEFF))
+    written = [f"Мастера на{nbsp}объектах часто без связи{nbsp}— подвал,{narrow}промзона.",
+               f"Заявка не{zero} сохраняется,  если пропала сеть.", PARTS[2]]
+    text = f"{bom}{written[0]}\r\n\r\n{written[1]}\t{written[2]}"
+    council_id = new_council(store, text=text)
+    slices(council_id)
+    pool.run()
+    assert slicing_of(council_id) == {"progress": DONE, "fragments": [
+        {**one, "text": part} for one, part in zip(SLICED, written, strict=True)]}
+    assert store.get_council(council_id).brief == text
+
+
 def test_a_running_slicing_is_not_started_again(store, pool, agents):
     council_id = new_council(store)
     first = slices(council_id).json()["council"]

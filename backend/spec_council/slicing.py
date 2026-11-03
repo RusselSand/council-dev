@@ -4,6 +4,12 @@
 исходном тексте начинается очередной фрагмент. Пробел или запятая, отнесённые моделью
 к другому фрагменту, нарезку не меняют, а итоговые фрагменты режутся из исходного текста
 по границам, поэтому всегда дословны и ничего не теряют.
+
+Фрагмент модели ищется в тексте дословно, кроме промежутков: пробельные и невидимые знаки
+подряд — один промежуток, какие бы они ни были и сколько бы их ни было. В тексте из Jira
+бывают неразрывные пробелы, пробелы нулевой ширины, табуляции и \\r\\n, а модель, переписывая
+фрагмент, ставит обычные пробелы и переводы строк. Невидимый знак модель может и пропустить:
+его в тексте как будто нет.
 """
 
 import json
@@ -14,6 +20,17 @@ from itertools import pairwise
 LABELS = ("idea", "question", "proposal", "constraint", "risk")
 
 WORD = re.compile(r"\w")
+# Невидимые знаки: нулевой ширины, направления письма, мягкий перенос, BOM.
+HIDDEN = "".join(map(chr, (0x00AD, 0x180E, *range(0x200B, 0x2010), *range(0x202A, 0x202F),
+                          *range(0x2060, 0x2070), 0xFEFF)))
+# Промежуток: пробельные и невидимые знаки подряд.
+GAP = re.compile(rf"[\s{HIDDEN}]+")
+EDGE_GAPS = re.compile(rf"\A{GAP.pattern}|{GAP.pattern}\Z")
+# Поиск видит каждый невидимый знак текста как U+200B — позиции те же, — а невидимые знаки
+# фрагмента модели не видит вовсе.
+VEIL = chr(0x200B)
+VEILED = str.maketrans(dict.fromkeys(HIDDEN, VEIL))
+UNSEEN = str.maketrans(dict.fromkeys(HIDDEN))
 # Знаки внутри слова: граница сразу после них режет слово — «что-|то», «don'|t».
 JOINERS = "-‐‑'’"
 # Открывающие знаки при разрезе уходят к следующему фрагменту: «Главное…», а не «…базы. «».
@@ -79,29 +96,40 @@ def parse_json(reply: str) -> dict:
     return data
 
 
+def sought(quote: str) -> str:
+    """regex: как искать цитату модели в тексте человека, переведённом через VEILED. Пробельные
+    знаки цитаты подряд — любой промежуток текста; между видимыми знаками в тексте могут стоять
+    невидимые; остальное — дословно. Промежуток берёт как можно меньше знаков: тот, что в конце
+    фрагмента, оставляет остаток следующему — «Первое » и « Второе» в «Первое  Второе»."""
+    pieces = re.split(r"\s+", quote.translate(UNSEEN))
+    return rf"[\s{VEIL}]+?".join(f"{VEIL}*".join(map(re.escape, piece)) for piece in pieces)
+
+
 def bounds_of(text: str, fragments: object) -> Bounds:
-    """Границы нарезки или BadAnswer, если фрагменты не дословны, не по порядку,
-    перекрываются или между ними потерян содержательный текст."""
+    """Границы нарезки или BadAnswer, если фрагменты не дословны (с точностью до промежутков
+    и невидимых знаков), не по порядку, перекрываются или между ними потерян содержательный
+    текст. Всё, кроме поиска, — по исходному тексту."""
     if not isinstance(fragments, list) or not fragments:
         raise BadAnswer("нет списка фрагментов")
+    seen = text.translate(VEILED)
     position = 0
     starts = []
     for fragment in fragments:
         if not isinstance(fragment, str) or not WORD.search(fragment):
             raise BadAnswer(f"фрагмент без текста: {fragment!r}")
-        found = text.find(fragment, position)
-        if found < 0:
+        found = re.compile(sought(fragment)).search(seen, position)
+        if found is None:
             raise BadAnswer(
                 f"фрагмента нет в тексте дословно или он не по порядку: «{short(fragment)}»"
             )
-        if WORD.search(text, position, found):
+        if WORD.search(text, position, found.start()):
             raise BadAnswer(f"потерян текст перед «{short(fragment)}»")
-        start = WORD.search(text, found).start()
+        start = WORD.search(text, found.start()).start()
         if starts and splits_word(text, start):
             around = text[max(0, start - 12) : start + 12]
             raise BadAnswer(f"граница посреди слова: «{short(around)}»")
         starts.append(start)
-        position = found + len(fragment)
+        position = found.end()
     if WORD.search(text, position):
         raise BadAnswer(f"потерян текст в конце: «{short(text[position:])}»")
     return tuple(starts[1:])
@@ -123,7 +151,8 @@ def cut(text: str, bounds: Bounds) -> list[str]:
     фрагментами. Режем по первому пробельному символу промежутка: закрывающее мысль
     (запятая, точка, скобка) остаётся с предыдущим фрагментом, а маркер списка, кавычка
     или тире после пробела уходят к следующему: «- Первое» / «- Второе». Промежуток без
-    пробела отдаёт следующему фрагменту только открывающие знаки.
+    пробела отдаёт следующему фрагменту только открывающие знаки. Промежутки по краям
+    фрагмента, и невидимые знаки в них тоже, — не его.
     """
     edges = [0]
     for bound in bounds:
@@ -139,7 +168,7 @@ def cut(text: str, bounds: Bounds) -> list[str]:
                 edge -= 1
         edges.append(edge)
     edges.append(len(text))
-    return [text[start:end].strip() for start, end in pairwise(edges)]
+    return [EDGE_GAPS.sub("", text[start:end]) for start, end in pairwise(edges)]
 
 
 def slice_options(text: str, data: dict) -> list[SliceOption]:
@@ -196,13 +225,15 @@ def boundary_notes(data: dict) -> list[BoundaryNote]:
     return notes
 
 
-# Края цитат судьи сравниваем без пробелов и знаков: «без базы» и «без базы.» — одно.
-EDGES = " \t\r\n.,;:!?…—–-«»„“\"'()[]"
+# Края цитат судьи сравниваем без промежутков и знаков: «без базы» и «без базы.» — одно.
+EDGE = rf"[\s{HIDDEN}.,;:!?…—–\-«»„“\"'()\[\]]"
+EDGES = re.compile(rf"\A{EDGE}+|{EDGE}+\Z")
 
 
 def note_places(fragments: list[str], notes: list[BoundaryNote]) -> dict[int, str]:
     """К какому фрагменту (индекс) отнести пояснение. Ищем по паре цитат, а не по одной:
-    одна и та же фраза может встретиться в тексте дважды. Не нашлось — пропускается."""
+    одна и та же фраза может встретиться в тексте дважды. Не нашлось — пропускается. Цитаты
+    ищутся во фрагментах так же, как фрагменты нарезки в тексте (sought)."""
     placed: dict[int, list[str]] = {}
     for note in notes:
         index = boundary_index(fragments, note)
@@ -212,18 +243,20 @@ def note_places(fragments: list[str], notes: list[BoundaryNote]) -> dict[int, st
 
 
 def boundary_index(fragments: list[str], note: BoundaryNote) -> int | None:
-    left, right = note.left.strip(EDGES), note.right.strip(EDGES)
+    left, right = EDGES.sub("", note.left), EDGES.sub("", note.right)
     if not left or not right:
         return None
+    texts = [EDGES.sub("", fragment).translate(VEILED) for fragment in fragments]
+    ends, starts = re.compile(rf"{sought(left)}\Z"), re.compile(sought(right))
     # Проведённая граница: левая цитата кончает фрагмент, правая начинает следующий.
-    for i in range(1, len(fragments)):
-        before, after = fragments[i - 1].strip(EDGES), fragments[i].strip(EDGES)
-        if before.endswith(left) and after.startswith(right):
+    for i in range(1, len(texts)):
+        if ends.search(texts[i - 1]) and starts.match(texts[i]):
             return i
     # Непроведённая: обе цитаты по порядку внутри одного фрагмента.
-    for i, fragment in enumerate(fragments):
-        at = fragment.find(left)
-        if at >= 0 and fragment.find(right, at + len(left)) >= 0:
+    inside = re.compile(sought(left))
+    for i, fragment in enumerate(texts):
+        at = inside.search(fragment)
+        if at and starts.search(fragment, at.end()):
             return i
     return None
 
