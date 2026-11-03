@@ -25,6 +25,13 @@ TEXT = ("worker крутится локально, принимает задан
 FRAGMENTS = ["worker крутится локально,", "принимает задания по HTTP.",
              "«Главное» — не потерять результат, если что-то упало."]
 
+NBSP, NARROW, ZERO, BOM, SHY = map(chr, (0x00A0, 0x202F, 0x200B, 0xFEFF, 0x00AD))
+# Тот же текст из Jira, дополненный руками: неразрывные пробелы, пробелы нулевой ширины,
+# табуляция, двойные пробелы и \r\n. Модели отдают фрагменты FRAGMENTS — с обычными пробелами.
+JIRA_PARTS = [f"worker{NBSP}крутится  локально,", f"принимает задания по{NARROW}HTTP.",
+              f"«Главное»\t—{NBSP}не потерять результат,{ZERO}если что-то упало."]
+JIRA = (f"{BOM}{JIRA_PARTS[0]}\r\n{JIRA_PARTS[1]}{ZERO} {JIRA_PARTS[2]}\r\n")
+
 
 def test_json_in_a_fence_or_with_text_around():
     assert parse_json('```json\n{"a": 1}\n```') == {"a": 1}
@@ -166,7 +173,44 @@ def test_quotes_compare_without_edge_punctuation():
     ("worker крутится", ["work", "er крутится"]),
     ("что-то пошло", ["что-", "то пошло"]),
     ("don't stop", ["don'", "t stop"]),
+    (f"worker{NBSP}крутится", ["work", "er крутится"]),
 ])
 def test_boundary_inside_a_word_is_refused(text, fragments):
     with pytest.raises(BadAnswer, match="посреди слова"):
         bounds_of(text, fragments)
+
+
+def test_a_text_from_jira_is_sliced_by_fragments_with_plain_spaces():
+    shifted = ["worker крутится локально", ", принимает задания по HTTP. ", FRAGMENTS[2]]
+    assert bounds_of(JIRA, FRAGMENTS) == bounds_of(JIRA, shifted)
+    # Фрагменты — из текста как есть: человек видит свой текст, ничего в нём не поменялось.
+    assert cut(JIRA, bounds_of(JIRA, FRAGMENTS)) == JIRA_PARTS
+
+
+@pytest.mark.parametrize(("fragments", "problem"), [
+    (["worker крутится локально,", "принимает задачи по HTTP.", FRAGMENTS[2]], "дословно"),
+    (["workerкрутится локально,", *FRAGMENTS[1:]], "дословно"),
+    (["worker крутится локально,", FRAGMENTS[2]], "потерян текст перед"),
+    (FRAGMENTS[:2], "потерян текст в конце"),
+])
+def test_a_text_from_jira_is_checked_as_strictly_as_any_other(fragments, problem):
+    with pytest.raises(BadAnswer, match=problem):
+        bounds_of(JIRA, fragments)
+
+
+def test_an_invisible_sign_the_model_dropped_is_as_if_it_were_not_there():
+    text = f"Пишем в лог{ZERO}, а не в базу. Ре{SHY}зультат не{ZERO}теряем."
+    fragments = ["Пишем в лог, а не в базу.", "Результат не теряем."]
+    assert cut(text, bounds_of(text, fragments)) == [
+        f"Пишем в лог{ZERO}, а не в базу.", f"Ре{SHY}зультат не{ZERO}теряем."]
+
+
+def test_fragments_share_a_double_gap_between_them():
+    text = "Первое.  Второе."
+    assert cut(text, bounds_of(text, ["Первое. ", " Второе."])) == ["Первое.", "Второе."]
+
+
+def test_judge_notes_with_plain_spaces_land_on_fragments_from_jira():
+    notes = [BoundaryNote("задания по HTTP.", "«Главное» —", "две мысли"),
+             BoundaryNote("результат, если", "что-то упало", "одна мысль")]
+    assert note_places(JIRA_PARTS, notes) == {2: "две мысли одна мысль"}
