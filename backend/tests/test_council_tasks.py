@@ -16,6 +16,7 @@ import pytest
 from spec_council import council_tasks, stream_notes
 from spec_council.app import app
 from spec_council.deps import get_agents, get_launcher, get_projects, get_repositories
+from spec_council.export import digest_of
 from spec_council.groups import marked
 from spec_council.issue_files import rendered as issue_rendered
 from spec_council.models import CouncilStatus, ProjectDraft, Slicing, Structure, StructureProposal
@@ -161,18 +162,23 @@ def files_in(folder):
     return sorted(path.name for path in folder.glob("*.md")) if folder.exists() else []
 
 
+def outcomes_in(issues):
+    """Файлы итогов — в подпапке outcomes папки задач."""
+    return files_in(issues / "outcomes")
+
+
 TASK_I1 = {
     "id": "I1", "catalogId": "ISS-0001", "stream": "C", "title": f"{TASK} C-O1",
     "story": "As a team, I want answers measured, so that the idea is checked.",
     "entries": ["app.py"], "current": "Меры нет.", "scope": ["Считать долю отвеченных вопросов."],
-    "openQuestions": ["Где хранить долю?"], "parent": "C-O1",
+    "openQuestions": ["Где хранить долю?"], "outcome": "C-O1",
     "decisions": [{"adr": "ADR-1", "catalogId": "ADR-0001"},
                   {"adr": "ADR-2", "catalogId": "ADR-0002"}],
     "dependsOn": []}
-# Родительская задача итога O1 потока C — решение владельца к задаче «Бекенд · Итоги →
-# родительские задачи…».
-PARENT_O1 = {
-    "id": "C-O1", "catalogId": "ISS-0002", "stream": "C", "outcome": "O1", "title": RESULT,
+# Итог O1 потока C — файл итога OUT в подпапке папки задач (решение владельца к задаче «Бекенд ·
+# Задачи: итоги — файлы OUT в подпапке, в папке задач только ISS»).
+OUTCOME_O1 = {
+    "id": "C-O1", "catalogId": "OUT-0001", "stream": "C", "outcome": "O1", "title": RESULT,
     "change": "Доля отвеченных вопросов видна команде.", "criteria": ["Доля считается по #help."],
     "decisions": [{"adr": "ADR-1", "catalogId": "ADR-0001"},
                   {"adr": "ADR-2", "catalogId": "ADR-0002"}]}
@@ -199,14 +205,14 @@ def test_the_last_stream_written_plans_the_tasks_and_they_are_written_to_the_tas
                 {"model": "fable", "state": "done", "attempt": 1, "rejected": []}]},
             {"phase": "task_plan_judge", "runs": [
                 {"model": "fable", "state": "skipped", "attempt": 1, "rejected": []}]}],
-        "parents": [PARENT_O1], "tasks": [TASK_I1], "vanished": [], "readyStreams": ["C"],
+        "outcomes": [OUTCOME_O1], "tasks": [TASK_I1], "vanished": [], "readyStreams": ["C"],
         "pendingStreams": [], "error": None}
     summary = tasks_of(council_id)
     assert (summary["stage"], summary["state"]) == ("tasks", "waiting")
     assert summary["activity"] == [{"stage": "tasks", "stream": None, "step": None,
                                     "state": "waiting", "text": "Запишите 1 задачу в каталог"}]
     issues = base / "issues"
-    assert files_in(issues) == []                                  # план файлов не пишет
+    assert files_in(issues) == [] and outcomes_in(issues) == []    # план файлов не пишет
 
     res = writes(council_id)
     assert res.status_code == 200, res.text
@@ -214,24 +220,25 @@ def test_the_last_stream_written_plans_the_tasks_and_they_are_written_to_the_tas
     assert (written["stage"], written["state"], written["stages"]["tasks"]) == \
         ("tasks", "done", "done")
     assert written["activity"] == [] and written["summary"].startswith("1 задача и ")
-    # Задача плана — подзадача родительской задачи своего итога: родитель и решения — только
-    # номерами, во frontmatter; итог плана в тексте — номером родительской задачи. Совет пишет
+    # В папке задач — только задачи; итог — файлом в подпапке outcomes. Задача называет свой итог
+    # и решения только номерами, во frontmatter; итог плана в тексте — номером итога. Совет пишет
     # задачу открытой, а строка о финальном коммите просит поставить ей done в том же коммите
     # (решение владельца к задаче «Бекенд · Задачи: статус во frontmatter…»).
-    assert files_in(issues) == ["ISS-0001.md", "ISS-0002.md"]
+    assert files_in(issues) == ["ISS-0001.md"]
+    assert outcomes_in(issues) == ["OUT-0001.md"]
     text = (issues / "ISS-0001.md").read_text(encoding="utf-8")
-    assert text.startswith("---\nid: ISS-0001\nstatus: open\nparent: ISS-0002\n"
-                           f"adrs: [ADR-0001, ADR-0002]\n---\n\n# {TASK} ISS-0002\n")
-    assert "Где хранить долю?" in text and "outcomes" not in text
+    assert text.startswith("---\nid: ISS-0001\nstatus: open\noutcome: OUT-0001\n"
+                           f"adrs: [ADR-0001, ADR-0002]\n---\n\n# {TASK} OUT-0001\n")
+    assert "Где хранить долю?" in text and "parent" not in text
     assert text.endswith("\n\nВ финальном коммите укажите номер задачи — ISS-0001 — и поставьте "
                          "`status: done` во frontmatter этой задачи в том же коммите.\n")
-    # Родительская — итог: название, поведение и критерии; решения, что он реализует, — номерами.
-    # Она тоже открытая.
-    assert (issues / "ISS-0002.md").read_text(encoding="utf-8") == (
-        f"---\nid: ISS-0002\nstatus: open\nadrs: [ADR-0001, ADR-0002]\n---\n\n# {RESULT}\n\n"
+    # Итог — название, поведение и критерии; решения, что он реализует, — номерами. Он тоже
+    # открытый: done ему ставит владелец, когда проверил целостность; строки о коммите нет.
+    assert (issues / "outcomes" / "OUT-0001.md").read_text(encoding="utf-8") == (
+        f"---\nid: OUT-0001\nstatus: open\nadrs: [ADR-0001, ADR-0002]\n---\n\n# {RESULT}\n\n"
         "Доля отвеченных вопросов видна команде.\n\n## Критерии готовности\n"
         "- Доля считается по #help.\n")
-    # Итогов в каталоге заметок нет: их подзадачам там ссылаться не на что.
+    # Итогов в каталоге заметок нет.
     assert not list((base / "notes").rglob("OUT-*.md"))
     # После записи план тот же — с теми же номерами.
     assert plan_of(council_id) == shown
@@ -247,7 +254,7 @@ def test_the_plan_waits_for_every_stream(agents, base):
     ready(council_id)
     assert council(council_id).tasks is None                     # A и B не готовы
     assert plan_of(council_id) == {
-        "catalog": {"path": "issues", "language": "Russian"}, "progress": [], "parents": [],
+        "catalog": {"path": "issues", "language": "Russian"}, "progress": [], "outcomes": [],
         "tasks": [], "vanished": [], "readyStreams": [], "pendingStreams": ["A", "B"],
         "error": None}
     assert tasks_of(council_id)["stages"]["tasks"] == "idle"
@@ -332,11 +339,11 @@ def test_a_selection_after_a_failed_search_again_plans_the_tasks(agents, base):
     assert tasks_of(council_id)["stages"]["tasks"] == "waiting"
 
 
-def test_a_plan_of_the_previous_version_naming_outcomes_by_notes_is_written_with_parents(
+def test_a_plan_of_the_previous_version_naming_outcomes_by_notes_is_written_with_outcomes(
         agents, base):
     """Совет прежней версии: план звал итог номером его заметки (OUT-0001), а выгрузка потока его
-    помнит. Задачи видны подзадачами родительской задачи итога и пишутся с ней; номер итога в
-    тексте — номер родительской задачи."""
+    помнит. Задачи видны задачами своего итога и пишутся с его файлом; номер заметки итога занят —
+    у файла итога следующий, и номер итога в тексте — он."""
     council_id = ready()
     store = get_store()
     found = council(council_id)
@@ -348,11 +355,30 @@ def test_a_plan_of_the_previous_version_naming_outcomes_by_notes_is_written_with
         "tasks": plan.model_copy(update={"issues": [issue.model_copy(update={
             "outcome_id": "OUT-0001", "title": f"{TASK} OUT-0001"}) for issue in plan.issues]})})
     shown = plan_of(council_id)
-    assert [task["parent"] for task in shown["tasks"]] == ["C-O1"]
-    assert shown["parents"] == [PARENT_O1]
+    assert [task["outcome"] for task in shown["tasks"]] == ["C-O1"]
+    assert shown["outcomes"] == [{**OUTCOME_O1, "catalogId": "OUT-0002"}]
     assert writes(council_id).status_code == 200
     text = (base / "issues" / "ISS-0001.md").read_text(encoding="utf-8")
-    assert "parent: ISS-0002" in text and f"# {TASK} ISS-0002" in text
+    assert "outcome: OUT-0002" in text and f"# {TASK} OUT-0002" in text
+    assert outcomes_in(base / "issues") == ["OUT-0002.md"]
+
+
+def test_outcome_numbers_follow_the_outcomes_already_in_the_catalog(agents, base):
+    """Номер итога — следующий после самого большого OUT в каталоге заметок (итоги прежних версий
+    лежат там в outcomes/, совет их не читает), прежних выгрузках и подпапке итогов: последний
+    был OUT-0040 — итог OUT-0041."""
+    council_id = single()
+    free_c(council_id)
+    assert approves(council_id, "C").status_code == 200
+    old = base / "notes" / "outcomes"
+    old.mkdir(parents=True)
+    (old / "OUT-0040.md").write_text("---\nid: OUT-0040\ntype: outcome\nlinks: []\n---\n\nИтог\n",
+                                     encoding="utf-8")
+    written_notes(council_id)
+    assert [o["catalogId"] for o in plan_of(council_id)["outcomes"]] == ["OUT-0041"]
+    assert writes(council_id).status_code == 200
+    assert outcomes_in(base / "issues") == ["OUT-0041.md"]
+    assert (old / "OUT-0040.md").exists()                     # чужие итоги каталога — как были
 
 
 def test_a_council_of_the_previous_version_without_a_plan_runs_it_on_retry(agents, base):
@@ -382,18 +408,19 @@ def test_without_a_tasks_folder_the_tasks_are_seen_and_passed_without_writing(ag
     shown = plan_of(council_id)
     assert shown["catalog"] is None
     assert shown["tasks"] == [{**TASK_I1, "catalogId": None}]
-    assert shown["parents"] == [{**PARENT_O1, "catalogId": None}]
+    assert shown["outcomes"] == [{**OUTCOME_O1, "catalogId": None}]
     res = writes(council_id)
     assert res.status_code == 200
     summary = res.json()["council"]
     assert summary["stages"]["tasks"] == "done"
     assert summary["summary"] == "1 задача готова — у проекта нет папки задач"
-    assert files_in(base / "issues") == []
+    assert files_in(base / "issues") == [] and outcomes_in(base / "issues") == []
     # Папку задали — задачи пишут в неё.
     project_of(council_id, issues="issues")
     assert tasks_of(council_id)["stages"]["tasks"] == "waiting"
     assert writes(council_id).json()["council"]["stages"]["tasks"] == "done"
-    assert files_in(base / "issues") == ["ISS-0001.md", "ISS-0002.md"]
+    assert files_in(base / "issues") == ["ISS-0001.md"]
+    assert outcomes_in(base / "issues") == ["OUT-0001.md"]
 
 
 def test_a_tasks_folder_inside_the_documentation_folder_is_no_folder(agents, base):
@@ -405,7 +432,7 @@ def test_without_a_documentation_folder_there_is_nothing_to_plan(agents, base):
     council_id = ready(notes="", issues="")
     assert council(council_id).tasks is None
     assert "task_plan" not in agents.prompts
-    assert plan_of(council_id) == {"catalog": None, "progress": [], "parents": [], "tasks": [],
+    assert plan_of(council_id) == {"catalog": None, "progress": [], "outcomes": [], "tasks": [],
                                    "vanished": [], "readyStreams": [], "pendingStreams": [],
                                    "error": None}
     assert tasks_of(council_id)["stages"]["tasks"] == "waiting"
@@ -417,15 +444,22 @@ def test_a_plan_built_again_keeps_the_numbers_and_the_files_edited_by_hand(agent
     writes(council_id)
     issues = base / "issues"
     edited = (issues / "ISS-0001.md").read_text(encoding="utf-8").replace(
-        f"# {TASK} ISS-0002", "# Своя задача")
+        f"# {TASK} OUT-0001", "# Своя задача")
     (issues / "ISS-0001.md").write_text(edited, encoding="utf-8")
+    # Итог проверили — владелец поставил ему done: файл правлен руками.
+    outcome = issues / "outcomes" / "OUT-0001.md"
+    checked = outcome.read_text(encoding="utf-8").replace("status: open", "status: done")
+    outcome.write_text(checked, encoding="utf-8")
     plan = council(council_id).tasks
     get_store().update_council(council_id, {"tasks": plan.model_copy(update={"basis": {}})})
     retries(council_id)
-    assert plan_of(council_id)["tasks"][0]["catalogId"] == "ISS-0001"
+    shown = plan_of(council_id)
+    assert shown["tasks"][0]["catalogId"] == "ISS-0001"
+    assert shown["outcomes"][0]["catalogId"] == "OUT-0001"
     assert writes(council_id).status_code == 200
-    # Файл правили руками после записи — совет его не трогает.
+    # Файлы правили руками после записи — совет их не трогает.
     assert (issues / "ISS-0001.md").read_text(encoding="utf-8") == edited
+    assert outcome.read_text(encoding="utf-8") == checked
 
 
 def test_a_number_mentioned_in_a_note_stays_with_its_task(agents, base):
@@ -487,12 +521,13 @@ def test_a_vanished_task_is_deleted_on_writing(agents, base):
     get_store().update_council(council_id, {"tasks": plan.model_copy(update={"basis": {}})})
     retries(council_id)
     shown = plan_of(council_id)
-    # Родительская задача та же — номер её; задача другая — следующий.
-    assert [task["catalogId"] for task in shown["tasks"]] == ["ISS-0003"]
-    assert [parent["catalogId"] for parent in shown["parents"]] == ["ISS-0002"]
-    assert shown["vanished"] == [{"id": "ISS-0001", "title": f"{TASK} ISS-0002"}]
+    # Итог тот же — номер его; задача другая — следующий номер задачи.
+    assert [task["catalogId"] for task in shown["tasks"]] == ["ISS-0002"]
+    assert [outcome["catalogId"] for outcome in shown["outcomes"]] == ["OUT-0001"]
+    assert shown["vanished"] == [{"id": "ISS-0001", "title": f"{TASK} OUT-0001"}]
     assert writes(council_id).status_code == 200
-    assert files_in(issues) == ["ISS-0002.md", "ISS-0003.md"]
+    assert files_in(issues) == ["ISS-0002.md"]
+    assert outcomes_in(issues) == ["OUT-0001.md"]
     # После записи «Уйдут из каталога» те же.
     assert plan_of(council_id)["vanished"] == shown["vanished"]
 
@@ -512,11 +547,11 @@ def test_a_vanished_task_another_file_waits_for_stays(agents, base):
     assert shown["vanished"] == []                                  # её не удалить
     assert [task["catalogId"] for task in shown["tasks"]] == ["ISS-0006"]
     assert writes(council_id).status_code == 200
-    assert files_in(issues) == ["ISS-0001.md", "ISS-0002.md", "ISS-0005.md", "ISS-0006.md"]
+    assert files_in(issues) == ["ISS-0001.md", "ISS-0005.md", "ISS-0006.md"]
 
 
 def unapproved(council_id):
-    """Итог сняли с утверждения: его родительская задача и подзадачи исчезают из плана."""
+    """Итог сняли с утверждения: он и его задачи исчезают из плана."""
     store = get_store()
     [stream] = council(council_id).streams
     plan = council(council_id).tasks
@@ -527,38 +562,40 @@ def unapproved(council_id):
     retries(council_id)
 
 
-def test_a_vanished_parent_a_staying_file_names_stays(agents, base):
-    """Свою задачу человек положил руками подзадачей родительской ISS-0002, а итог потом сняли с
-    утверждения: родительская задача исчезла из плана, но её ещё называет файл, что остаётся."""
+def test_a_vanished_outcome_a_staying_file_names_stays(agents, base):
+    """Свою задачу человек положил руками задачей итога OUT-0001, а итог потом сняли с
+    утверждения: итог исчез из плана, но его ещё называет файл, что остаётся."""
     council_id = ready()
     writes(council_id)
     issues = base / "issues"
-    own = Note("ISS-0005", "issue", "# Своя", ("parent:ISS-0002",))
+    own = Note("ISS-0005", "issue", "# Своя", ("OUT-0001",))
     (issues / "ISS-0005.md").write_text(issue_rendered(own), encoding="utf-8")
     unapproved(council_id)
     shown = plan_of(council_id)
-    assert (shown["parents"], shown["tasks"]) == ([], [])
-    assert shown["vanished"] == [{"id": "ISS-0001", "title": f"{TASK} ISS-0002"}]
+    assert (shown["outcomes"], shown["tasks"]) == ([], [])
+    assert shown["vanished"] == [{"id": "ISS-0001", "title": f"{TASK} OUT-0001"}]
     assert writes(council_id).status_code == 200
-    assert files_in(issues) == ["ISS-0002.md", "ISS-0005.md"]
+    assert files_in(issues) == ["ISS-0005.md"]
+    assert outcomes_in(issues) == ["OUT-0001.md"]
 
 
-def test_a_vanished_parent_goes_with_its_vanished_subtasks(agents, base):
-    """Родительскую задачу называет только её подзадача, а та уходит в той же записи: уходят
-    обе."""
+def test_a_vanished_outcome_goes_with_its_vanished_tasks(agents, base):
+    """Итог называет только его задача, а та уходит в той же записи: уходят оба — и файл итога
+    из подпапки."""
     council_id = ready()
     writes(council_id)
     issues = base / "issues"
     unapproved(council_id)
     shown = plan_of(council_id)
-    assert {task["id"] for task in shown["vanished"]} == {"ISS-0001", "ISS-0002"}
+    assert shown["vanished"] == [{"id": "ISS-0001", "title": f"{TASK} OUT-0001"},
+                                 {"id": "OUT-0001", "title": RESULT}]
     assert writes(council_id).status_code == 200
-    assert files_in(issues) == []
+    assert files_in(issues) == [] and outcomes_in(issues) == []
 
 
-def test_a_vanished_parent_of_a_subtask_a_staying_file_waits_for_stays(agents, base):
-    """Свою задачу человек положил руками после подзадачи ISS-0001: подзадача остаётся — и её
-    родительская задача тоже."""
+def test_a_vanished_outcome_of_a_task_a_staying_file_waits_for_stays(agents, base):
+    """Свою задачу человек положил руками после задачи ISS-0001: задача остаётся — и её итог
+    тоже."""
     council_id = ready()
     writes(council_id)
     issues = base / "issues"
@@ -567,7 +604,76 @@ def test_a_vanished_parent_of_a_subtask_a_staying_file_waits_for_stays(agents, b
     unapproved(council_id)
     assert plan_of(council_id)["vanished"] == []
     assert writes(council_id).status_code == 200
-    assert files_in(issues) == ["ISS-0001.md", "ISS-0002.md", "ISS-0005.md"]
+    assert files_in(issues) == ["ISS-0001.md", "ISS-0005.md"]
+    assert outcomes_in(issues) == ["OUT-0001.md"]
+
+
+def written_by_the_previous_version(council_id, issues):
+    """Задачи совета записала прежняя версия: итог — родительской задачей ISS-0002 в папке задач,
+    задача — её подзадачей (parent во frontmatter). Файлы, запись и черновик — как их оставила
+    она."""
+    store = get_store()
+    found = council(council_id)
+    outcome = (issues / "outcomes" / "OUT-0001.md").read_text(encoding="utf-8")
+    (issues / "outcomes" / "OUT-0001.md").unlink()
+    (issues / "outcomes").rmdir()
+    (issues / "ISS-0002.md").write_text(outcome.replace("OUT-0001", "ISS-0002"), encoding="utf-8")
+    task = issues / "ISS-0001.md"
+    task.write_text(task.read_text(encoding="utf-8").replace("outcome: OUT-0001",
+                                                             "parent: ISS-0002")
+                    .replace("OUT-0001", "ISS-0002"), encoding="utf-8")
+
+    def older(text):
+        return text.replace("OUT-0001", "ISS-0002")
+
+    def links(found):
+        return [link.replace("OUT-0001", "parent:ISS-0002") for link in found]
+
+    export, draft = found.tasks_export, found.tasks_draft
+    numbers = [number.model_copy(update={"id": older(number.id)}) for number in export.numbers]
+    store.update_council(council_id, {
+        "tasks_export": export.model_copy(update={"numbers": numbers, "notes": [
+            note.model_copy(update={
+                "id": older(note.id), "type": "issue", "generated": older(note.generated),
+                "written": older(note.written), "links": links(note.links),
+                "digest": digest_of(issues / f"{older(note.id)}.md")})
+            for note in export.notes]}),
+        "tasks_draft": draft.model_copy(update={"numbers": numbers, "notes": [
+            note.model_copy(update={
+                "id": older(note.id), "type": "issue", "text": older(note.text),
+                "generated": older(note.generated), "links": links(note.links)})
+            for note in draft.notes]})})
+
+
+def test_parent_tasks_of_the_previous_version_leave_the_tasks_folder(agents, base):
+    """Решение владельца к задаче «Бекенд · Задачи: итоги — файлы OUT в подпапке, в папке задач
+    только ISS»: совет, чьи задачи записала прежняя версия, открывается как был — задачи
+    записаны, у итога номера нет, пока задачи не запишут снова. Записывают снова — родительская
+    задача уходит из папки задач («Уйдут из каталога»), итог ложится файлом в подпапку, а задача
+    называет его."""
+    council_id = ready()
+    writes(council_id)
+    issues = base / "issues"
+    written_by_the_previous_version(council_id, issues)
+    shown = plan_of(council_id)
+    assert tasks_of(council_id)["stages"]["tasks"] == "done"
+    assert [task["catalogId"] for task in shown["tasks"]] == ["ISS-0001"]
+    assert shown["outcomes"] == [{**OUTCOME_O1, "catalogId": None}]
+    assert shown["vanished"] == []
+
+    plan = council(council_id).tasks
+    get_store().update_council(council_id, {"tasks": plan.model_copy(update={"basis": {}})})
+    retries(council_id)
+    shown = plan_of(council_id)
+    assert [task["catalogId"] for task in shown["tasks"]] == ["ISS-0001"]
+    assert shown["outcomes"] == [OUTCOME_O1]
+    assert shown["vanished"] == [{"id": "ISS-0002", "title": RESULT}]
+    assert writes(council_id).status_code == 200
+    assert files_in(issues) == ["ISS-0001.md"]
+    assert outcomes_in(issues) == ["OUT-0001.md"]
+    text = (issues / "ISS-0001.md").read_text(encoding="utf-8")
+    assert "outcome: OUT-0001\n" in text and "parent" not in text
+    assert f"# {TASK} OUT-0001\n" in text
 
 
 def test_research_approved_again_builds_a_stale_plan_again(agents, base):
@@ -628,7 +734,7 @@ def test_only_approved_outcomes_go_into_the_plan_and_one_approved_later_plans_ag
     plan = council(council_id).tasks
     assert plan.run != first.run and [issue.outcome_id for issue in plan.issues] == ["C-O1"]
     assert plan_of(council_id)["tasks"] == [TASK_I1]
-    assert plan_of(council_id)["parents"] == [PARENT_O1]
+    assert plan_of(council_id)["outcomes"] == [OUTCOME_O1]
 
 
 def test_an_outcome_approved_while_the_plan_runs_plans_again(agents, base, monkeypatch):
@@ -1044,8 +1150,8 @@ def test_tasks_are_translated_with_the_words_of_the_streams_notes(english, base)
                              "`status: done` in the frontmatter of this issue in the same "
                              "commit.\n")
         assert "\nstatus: open\n" in task
-        parent = (base / "issues" / "ISS-0002.md").read_text(encoding="utf-8")
-        assert "\n## Acceptance criteria\n" in parent
+        outcome = (base / "issues" / "outcomes" / "OUT-0001.md").read_text(encoding="utf-8")
+        assert "\n## Acceptance criteria\n" in outcome
         assert council(council_id).tasks_export.glossary == {"Мерило": "Yardstick"}
     finally:
         app.dependency_overrides.pop(get_agents)

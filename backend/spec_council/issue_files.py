@@ -1,10 +1,12 @@
-"""Задачи файлами: на «Задачах» каждая задача ложится файлом в папку задач проекта — для coding
-agent, который её делает. Файл — ISS-0012.md с номером задачи на весь проект:
+"""Задачи и итоги файлами: на «Задачах» каждая задача плана ложится файлом в папку задач проекта —
+для coding agent, который её делает, — а каждый утверждённый итог — своим файлом в подпапку
+outcomes этой папки (решение владельца к задаче «Бекенд · Задачи: итоги — файлы OUT в подпапке, в
+папке задач только ISS»). Задача — ISS-0012.md с номером задачи на весь проект:
 
     ---
     id: ISS-0012
     status: open
-    parent: ISS-0010
+    outcome: OUT-0041
     adrs: [ADR-0007]
     depends_on: [ISS-0011]
     ---
@@ -13,23 +15,36 @@ agent, который её делает. Файл — ISS-0012.md с номер�
 
     Кому и зачем, где менять, что сделать…
 
-На каждый утверждённый итог — родительская задача: её номер, решения, которые итог реализует, а в
-теле — название, поведение и критерии готовности итога; задачи плана этого итога — её подзадачи,
-у каждой во frontmatter — её родитель (решение владельца к задаче «Бекенд · Итоги → родительские
-задачи…»). Во frontmatter — номер, статус, родитель, решения, на которых задача стоит, и задачи,
-после которых её делать, — только номерами: тексты решений в задачу не копируются, они живут в
-каталоге заметок. Пустые поля не пишутся. Поля outcomes у задач больше нет: у файлов прежней
-версии оно есть, совет его не читает.
+Итог — outcomes/OUT-0041.md со своим номером итога: во frontmatter — номер, статус и решения,
+которые итог реализует, в теле — название, поведение и критерии готовности итога:
+
+    ---
+    id: OUT-0041
+    status: open
+    adrs: [ADR-0007]
+    ---
+
+    # Название итога
+
+Задача называет свой итог (outcome), а итог своих задач не перечисляет. Во frontmatter — только
+номера: тексты решений в файл не копируются, они живут в каталоге заметок. Пустые поля не
+пишутся. У файлов прежних версий вместо итога — родительская задача (parent: ISS-…, решение
+владельца к задаче «Бекенд · Итоги → родительские задачи…») или поле outcomes: родителя совет ещё
+читает — пока такой файл, правленный руками, лежит в папке, его родительская задача не удаляется,
+— а outcomes нет. Сам совет родителя больше не пишет.
 
 Статус (решение владельца к задаче «Бекенд · Задачи: статус во frontmatter…»): совет пишет задачу
-открытой (open), done ставит тот, кто её делает, в финальном коммите, deferred и cancelled —
-владелец руками. Файл, где статус поменяли, — правленный руками: повторная запись его не трогает
-(export.settled — по отпечатку файла). Открытые и отложенные задачи видит исследование кода
-(research.planned_issues); у файла прежней версии статуса нет — его состояние неизвестно.
+и итог открытыми (open); done у задачи ставит тот, кто её делает, в финальном коммите, у итога —
+владелец, когда проверил, что всё целостно; deferred и cancelled — владелец руками. Файл, где
+статус поменяли, — правленный руками: повторная запись его не трогает (export.settled — по
+отпечатку файла). Открытые и отложенные задачи видит исследование кода
+(research.planned_issues); у файла прежней версии статуса нет — его состояние неизвестно. Итоги
+исследование не видит: они не задачи.
 
 Папка задач — не каталог заметок: Causa читает заметкой каждый .md в своей папке, и файл задачи
-там сломал бы ей весь каталог. Здесь же читается только верхний уровень папки и только файлы
-задач: README и прочее рядом не мешают.
+там сломал бы ей весь каталог. Задачи читаются только с верхнего уровня папки, итоги — только из
+подпапки outcomes, и в обеих — только свои файлы: README и прочее рядом не мешают, а итог — не
+задача.
 """
 
 import re
@@ -37,10 +52,18 @@ from collections.abc import Collection, Iterable, Mapping
 from pathlib import Path
 
 from .models import PlannedIssue
-from .notes import FRONTMATTER, Note, NotesError, issue_key, scalar
+from .notes import FRONTMATTER, Note, NotesError, scalar
 
 ISSUE = re.compile(r"ISS-\d+", re.IGNORECASE)
-# Статусы задачи во frontmatter; совет пишет её открытой.
+OUTCOME = re.compile(r"OUT-\d+", re.IGNORECASE)
+# Файлы, что пишут «Задачи»: задачи плана — в папке задач, итоги — в её подпапке OUTCOMES. Номер
+# каждого — свой: ISS-… у задачи, OUT-… у итога.
+KINDS = ("issue", "outcome")
+NUMBERS = {"issue": ISSUE, "outcome": OUTCOME}
+OUTCOMES = "outcomes"
+# Как файл зовут в причине, почему его не прочитать.
+NAMES = {"issue": "задачи", "outcome": "итога"}
+# Статусы задачи и итога во frontmatter; совет пишет их открытыми.
 STATUSES = ("open", "done", "deferred", "cancelled")
 OPEN = "open"
 # Какие задачи видит исследование кода: запланированные и отложенные; сделанные и отменённые —
@@ -53,21 +76,38 @@ TITLE = re.compile(r"[ ]{0,3}#[ \t]+(.+?)(?:[ \t]+#+)?[ \t\r]*(?=\n|\Z)")
 HEADING = re.compile(r"[ ]{0,3}#{1,2}[ \t]+(.+?)(?:[ \t]+#+)?[ \t\r]*$")
 # Пункт списка: «- …», «* …», «+ …».
 ITEM = re.compile(r"[ \t]*[-*+][ \t]+")
-# Родитель среди ссылок файла (Note.links) — его номер с этой пометкой: и он, и задачи, после
-# которых делать эту, — номера ISS-…, а лягут они в разные поля.
+# Родительская задача файла прежней версии среди его ссылок (Note.links) — её номер с этой
+# пометкой: и она, и задачи, после которых делать эту, — номера ISS-…, а лежат в разных полях.
 PARENT = "parent:"
-# Остальные ссылки по полям frontmatter — по префиксу номера, в этом порядке.
+# Итог задачи — номер OUT-… одной строкой; остальные ссылки — списками, по префиксу номера, в
+# этом порядке.
 FIELDS = (("adrs", "ADR"), ("depends_on", "ISS"))
 
 
+def number_key(number: str) -> str:
+    """Номер задачи или итога, как его раздаёт совет: ISS-7 и ISS-0007 — одна задача, OUT-7 и
+    OUT-0007 — один итог."""
+    return f"{number[:3].upper()}-{int(number[4:]):04d}"
+
+
+def folder_of(root: Path, kind: str) -> Path:
+    """Где лежат файлы вида kind: задачи — в самой папке задач, итоги — в её подпапке."""
+    return root / OUTCOMES if kind == "outcome" else root
+
+
 def parent_link(number: str) -> str:
-    """Ссылка на родительскую задачу среди ссылок файла."""
+    """Ссылка на родительскую задачу среди ссылок файла прежней версии."""
     return f"{PARENT}{number}"
 
 
 def parent_of(links: Iterable[str]) -> str | None:
-    """Номер родительской задачи из ссылок файла; родителя нет — None."""
+    """Номер родительской задачи из ссылок файла прежней версии; родителя нет — None."""
     return next((link.removeprefix(PARENT) for link in links if link.startswith(PARENT)), None)
+
+
+def outcome_of(links: Iterable[str]) -> str | None:
+    """Номер итога задачи из ссылок её файла; итога нет — None."""
+    return next((link for link in links if link.startswith("OUT-")), None)
 
 
 def targets(links: Iterable[str]) -> list[str]:
@@ -76,12 +116,16 @@ def targets(links: Iterable[str]) -> list[str]:
 
 
 def rendered(note: Note) -> str:
-    """Задача файлом: статус — сразу за номером (без статуса — открытая), links — родитель,
-    номера решений и задач, раскладываются по своим полям."""
+    """Задача или итог файлом: статус — сразу за номером (без статуса — открытый), links — итог,
+    номера решений и задач — раскладываются по своим полям. Родитель — только у файла прежней
+    версии, каким его прочли."""
     lines = [f"id: {note.id}", f"status: {note.status or OPEN}"]
     parent = parent_of(note.links)
     if parent is not None:
         lines.append(f"parent: {parent}")
+    outcome = outcome_of(note.links)
+    if outcome is not None:
+        lines.append(f"outcome: {outcome}")
     for name, prefix in FIELDS:
         found = [link for link in note.links if link.startswith(f"{prefix}-")]
         if found:
@@ -89,57 +133,63 @@ def rendered(note: Note) -> str:
     return "---\n" + "\n".join(lines) + f"\n---\n\n{note.body.strip()}\n"
 
 
-def parsed(text: str, path: Path | None = None) -> Note:
-    """Задача из файла. Ссылки — в том же порядке полей, что и при записи: так сверяется, что в
-    файле уже то же самое. Статус — как записан, в нижнем регистре; нет его — None. Нет
-    frontmatter или номера — NotesError."""
+def parsed(text: str, path: Path | None = None, kind: str = "issue") -> Note:
+    """Задача (или итог — kind) из файла. Ссылки — в том же порядке полей, что и при записи: так
+    сверяется, что в файле уже то же самое. Статус — как записан, в нижнем регистре; нет его —
+    None. Нет frontmatter или номера своего вида — NotesError."""
     found = FRONTMATTER.match(text)
     where = f" {path}" if path else ""
     if found is None:
-        raise NotesError(f"В файле задачи{where} нет frontmatter между строками ---")
+        raise NotesError(f"В файле {NAMES[kind]}{where} нет frontmatter между строками ---")
     meta: dict[str, str] = {}
     for line in found.group(1).splitlines():
         pair = re.match(r"\s*([A-Za-z_]+)\s*:\s*(.*)$", line)
         if pair is not None:
             meta[pair.group(1)] = pair.group(2).strip()
     note_id = scalar(meta.get("id", ""))
-    if ISSUE.fullmatch(note_id) is None:
-        raise NotesError(f"В файле задачи{where} нет номера ISS-…")
+    if NUMBERS[kind].fullmatch(note_id) is None:
+        prefix = "ISS" if kind == "issue" else "OUT"
+        raise NotesError(f"В файле {NAMES[kind]}{where} нет номера {prefix}-…")
     links: list[str] = []
     parent = scalar(meta.get("parent", ""))
     if parent:
         links.append(parent_link(parent))
+    outcome = scalar(meta.get("outcome", ""))
+    if outcome:
+        links.append(outcome)
     for name, _ in FIELDS:
         value = meta.get(name, "")
         if value.startswith("[") and value.endswith("]"):
             links += [scalar(item) for item in value[1:-1].split(",") if item.strip()]
-    return Note(issue_key(note_id), "issue", found.group(2).strip(), tuple(links), path,
+    return Note(number_key(note_id), kind, found.group(2).strip(), tuple(links), path,
                 status=scalar(meta.get("status", "")).lower() or None)
 
 
-def loaded(root: Path | None) -> dict[str, Note]:
-    """Файлы задач папки по номеру. Файл, что назван номером задачи (в любом регистре), но не
-    читается, — всё равно её: текстом целиком, без ссылок, — чтобы запись не затёрла его молча.
-    Остальные .md без номера — не задачи. Два файла с одним номером — NotesError."""
+def loaded(root: Path | None, kind: str = "issue") -> dict[str, Note]:
+    """Файлы задач папки root (или её итогов — kind) по номеру. Файл, что назван номером своего
+    вида (в любом регистре), но не читается, — всё равно его: текстом целиком, без ссылок, — чтобы
+    запись не затёрла его молча. Остальные .md без номера — не задачи (не итоги). Два файла с
+    одним номером — NotesError."""
     found: dict[str, Note] = {}
-    if root is None or not root.is_dir():
+    if root is None or not folder_of(root, kind).is_dir():
         return found
-    for path in sorted(root.glob("*.md")):
+    number = NUMBERS[kind]
+    for path in sorted(folder_of(root, kind).glob("*.md")):
         try:
             text = path.read_text(encoding="utf-8")
         except (OSError, UnicodeError) as exc:
-            if ISSUE.fullmatch(path.stem) is None:
+            if number.fullmatch(path.stem) is None:
                 continue
-            raise NotesError(f"Файл задачи {path} не прочитать: {exc}") from None
+            raise NotesError(f"Файл {NAMES[kind]} {path} не прочитать: {exc}") from None
         try:
-            note = parsed(text, path)
+            note = parsed(text, path, kind)
         except NotesError:
-            if ISSUE.fullmatch(path.stem) is None:
+            if number.fullmatch(path.stem) is None:
                 continue
-            note = Note(issue_key(path.stem), "issue", text.strip(), (), path)
+            note = Note(number_key(path.stem), kind, text.strip(), (), path)
         twin = found.setdefault(note.id, note)
         if twin is not note:
-            raise NotesError(f"Два файла задачи {note.id}: {twin.path} и {path}")
+            raise NotesError(f"Два файла {NAMES[kind]} {note.id}: {twin.path} и {path}")
     return found
 
 
@@ -151,15 +201,16 @@ def decisions_of(files: Mapping[str, Note]) -> dict[str, tuple[str, ...]]:
 
 
 def occupied(files: Mapping[str, Note]) -> set[str]:
-    """Номера, под чьим именем лежит файл другой задачи (ISS-0009.md с id ISS-0008): задача с
-    таким номером легла бы в этот файл и затёрла его."""
-    return {issue_key(note.path.stem) for note in files.values()
-            if note.path is not None and ISSUE.fullmatch(note.path.stem)
-            and issue_key(note.path.stem) != note.id}
+    """Номера, под чьим именем лежит файл другой задачи или итога (ISS-0009.md с id ISS-0008):
+    задача (итог) с таким номером легла бы в этот файл и затёрла его."""
+    return {number_key(note.path.stem) for note in files.values()
+            if note.path is not None and NUMBERS[note.type].fullmatch(note.path.stem)
+            and number_key(note.path.stem) != note.id}
 
 
 def path_of(root: Path, note: Note) -> Path:
-    """Где файл задачи: прочитанный — там, откуда прочли, новый — под своим номером."""
+    """Где файл задачи (итога — root — его подпапка): прочитанный — там, откуда прочли, новый — под
+    своим номером."""
     return note.path if note.path is not None else root / f"{note.id}.md"
 
 
@@ -206,7 +257,8 @@ def planned(files: Mapping[str, Note], to_do: Collection[str]) -> list[PlannedIs
     отложенные. Без статуса (файл прежней версии), сделанные, отменённые и со статусом, которого
     совет не знает, — нет: их работы в коде ждать не надо или состояние неизвестно. Что сделать —
     пункты раздела с одним из названий to_do («Что сделать» на языках, которые совет знает), а
-    раздела нет (родительская задача, файл на другом языке) — текст под названием."""
+    раздела нет (родительская задача прежней версии, файл на другом языке) — текст под
+    названием."""
     found: list[PlannedIssue] = []
     for note in sorted(files.values(), key=lambda note: int(note.id[4:])):
         if note.status not in PLANNED:
@@ -221,8 +273,8 @@ def planned(files: Mapping[str, Note], to_do: Collection[str]) -> list[PlannedIs
 
 
 def intro_of(body: str) -> str:
-    """Текст задачи между её названием и первым разделом «## …»: у родительской задачи — что
-    меняется, у подзадачи — кому и зачем."""
+    """Текст задачи между её названием и первым разделом «## …»: у родительской задачи прежней
+    версии — что меняется, у задачи плана — кому и зачем."""
     rows = body.splitlines()
     if rows and TITLE.match(rows[0]):
         rows = rows[1:]

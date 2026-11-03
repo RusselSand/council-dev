@@ -23,8 +23,8 @@ You do not make new product or architectural decisions.
 An OUTCOME is an observable state of the system that the human has already approved. Every
 decision and ADR here has a note ID (`ADR-0046`): use exactly these IDs. OUTCOMES are not in the
 project notes: an OUTCOME has an ID in this council — its group and its number in the group
-(`A-O1`). Each OUTCOME becomes a parent issue, and its ISSUES become the sub-issues of that
-parent.
+(`A-O1`). Each OUTCOME is written as a file of its own, next to the ISSUES, and each of its
+ISSUES names it.
 
 An ISSUE is a part of one OUTCOME that one coding agent does in one change: who needs it and why
 (`user_story`), where in the code it starts (`main_entry_points`), what is there now and what
