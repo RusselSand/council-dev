@@ -59,6 +59,7 @@ import {
 import {
   mergeGroups,
   noStructure,
+  relabeled,
   retriedStructure,
   splitGroup,
   startedStructure,
@@ -736,10 +737,9 @@ export const mockSource: DataSource = {
     if (at < 0) throw new ApiError('not_found', `Фрагмента ${fragmentId} у совета ${id} нет`, 404);
     if (!isLabel(label)) throw new ApiError('unknown_label', `Типа ${String(label)} нет`, 422);
     slicing.fragments[at] = { ...slicing.fragments[at], label };
-    // Фрагмент идёт в группы с типом, который выбрал человек.
-    for (const group of structures.get(id)?.groups ?? []) {
-      group.fragments = group.fragments.map((f) => (f.id === fragmentId ? { ...f, label } : f));
-    }
+    // Фрагмент идёт в группы с типом, который выбрал человек, и по нему же — идея группы из текста.
+    const structure = structures.get(id);
+    if (structure) structure.groups = structure.groups.map((group) => relabeled(group, fragmentId, label));
     touch(index);
     return copy(slicing.fragments[at]);
   },
@@ -764,10 +764,12 @@ export const mockSource: DataSource = {
     if (at < 0) throw new ApiError('not_found', `Группы ${groupId} у совета ${id} нет`, 404);
     const group = { ...structure.groups[at] };
     if (fields.title !== undefined) group.title = cleanName(fields.title);
-    // Идею вписал человек — она его, как в макете («вы»).
+    // Идею вписал человек — она его, как в макете («вы»). Стёр — идеи нет, её ищет совет (решение владельца к задаче
+    // «Бекенд · Группы: стёртая идея…»); в моках ИИ идей не находит.
     if (fields.idea !== undefined) {
-      group.idea = fields.idea;
-      group.ideaBy = 'user';
+      const erased = fields.idea.trim() === '';
+      group.idea = erased ? '' : fields.idea;
+      group.ideaBy = erased ? 'ai' : 'user';
     }
     structure.groups[at] = group;
     groupsEdited(index);

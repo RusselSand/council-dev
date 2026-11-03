@@ -6,6 +6,10 @@
 объединённой группы — её название и идея, а нет идеи — идея той, что к ней присоединили; связи
 пропавшей группы переходят к ней. У групп остаётся след правки — связи merged и split. Потоки,
 которые уже есть, держат свои группы, какими они были до правок (решение q-002).
+
+Идея, которую человек стёр (пустая или из одних пробелов), — «идеи нет, напишите её»: не своя
+идея человека, и фрагменты-идеи группы её не задают — её ищет совет; фрагменты-идеи — по типам,
+которые у фрагментов сейчас (решение владельца к задаче «Бекенд · Группы: стёртая идея…»).
 """
 
 from collections import Counter
@@ -71,16 +75,48 @@ def confirmed(council: Council) -> bool:
 def idea_of(council: Council, group: Group) -> Idea:
     """Своя идея группы (вписал человек, осталась после правки); у совета прежней версии —
     утверждённая в потоке группы; иначе из текста — фрагменты-идеи группы; иначе та, что
-    восстановил совет. Никакой нет — пустая, от ИИ: он её ещё восстановит."""
-    if group.idea is not None:
+    восстановил совет. Никакой нет — пустая, от ИИ: он её ещё восстановит. Идею стёрли — ни
+    своей, ни утверждённой, ни из текста нет: только та, что восстановил совет."""
+    if group.idea is not None and group.idea.strip():
         return Idea(group.idea, group.idea_by or "user")
-    stream = next((stream for stream in council.streams or [] if stream.group == group.id), None)
-    if stream is not None and stream.idea is not None:
-        return Idea(stream.idea.text, STREAM_IDEA[stream.idea.by])
-    if group.idea_fragment_ids:
-        texts = {fragment.id: fragment.text for fragment in fragments_in(council)}
-        return Idea(" ".join(texts[i] for i in group.idea_fragment_ids if i in texts), "text")
-    return Idea(found(group.discovery or (stream.discovery if stream else None)), "ai")
+    stream = stream_of(council, group)
+    if not erased(group):
+        if stream is not None and stream.idea is not None:
+            return Idea(stream.idea.text, STREAM_IDEA[stream.idea.by])
+        ideas = idea_fragments(council, group)
+        if ideas:
+            texts = {fragment.id: fragment.text for fragment in fragments_in(council)}
+            return Idea(" ".join(texts[i] for i in ideas), "text")
+    return Idea(found(discovery_of(council, group)), "ai")
+
+
+def erased(group: Group) -> bool:
+    """Человек стёр идею группы: своя идея — пустая или из одних пробелов. Это «идеи нет,
+    напишите её»: её ищет совет."""
+    return group.idea is not None and not group.idea.strip()
+
+
+def idea_fragments(council: Council, group: Group) -> list[int]:
+    """Фрагменты-идеи группы по её порядку — по типам, которые у фрагментов сейчас (выбрал
+    человек на «Нарезке»), а не по типам при раскладке: с фрагмента сняли тип «идея» — он уже
+    не идея группы; группе, где он есть, поставили — идея. Тип не меняли — фрагмент идея той
+    группы, где он идеей встал при раскладке и правках групп: у выделенной группы своих
+    фрагментов-идей нет."""
+    labels = {fragment.id: fragment.label for fragment in fragments_in(council)}
+    then = council.structure.labels if council.structure else {}
+    return [i for i in group.fragment_ids if labels.get(i) == "idea"
+            and (i in group.idea_fragment_ids or then.get(i) != "idea")]
+
+
+def stream_of(council: Council, group: Group) -> Stream | None:
+    """Поток группы у совета прежней версии: там её идея и её поиск."""
+    return next((stream for stream in council.streams or [] if stream.group == group.id), None)
+
+
+def discovery_of(council: Council, group: Group) -> IdeaDiscovery | None:
+    """Поиск идеи группы; у совета прежней версии, где группа его не вела, — поиск её потока."""
+    stream = stream_of(council, group)
+    return group.discovery or (stream.discovery if stream else None)
 
 
 def found(discovery: IdeaDiscovery | None) -> str:
@@ -91,8 +127,13 @@ def found(discovery: IdeaDiscovery | None) -> str:
 
 
 def seeks_idea(council: Council, group: Group) -> bool:
-    """Идею группы ищет совет: её нет ни у человека, ни в тексте."""
-    return group.idea is None and not idea_of(council, group).text
+    """Идею группы искать совету: её нет ни у человека, ни в тексте, и совет её ещё не искал
+    или поиск упал. Ищет сейчас — второй раз не запускать; искал и не нашёл — её впишет
+    человек."""
+    if idea_of(council, group).text.strip():
+        return False
+    discovery = discovery_of(council, group)
+    return discovery is None or discovery.state == "failed"
 
 
 def without_idea(council: Council) -> list[str]:
@@ -103,12 +144,15 @@ def without_idea(council: Council) -> list[str]:
     return [group.id for group in groups if not idea_of(council, group).text.strip()]
 
 
-def own_idea(idea: Idea) -> dict:
+def own_idea(council: Council, group: Group) -> dict:
     """Идея группы после правки, которая поменяла её состав, — своя: из фрагментов-идей и
     поиска совета её уже не посчитать. Пустая идея от ИИ своей не становится — её ещё
-    восстановит ИИ."""
-    if idea.text or idea.by == "user":
+    восстановит ИИ; стёртая человеком так и остаётся стёртой."""
+    idea = idea_of(council, group)
+    if idea.text:
         return {"idea": idea.text, "idea_by": idea.by}
+    if erased(group):
+        return {"idea": group.idea, "idea_by": "user"}
     return {"idea": None, "idea_by": None}
 
 
@@ -171,13 +215,12 @@ def merged(council: Council, source: Group, target: Group) -> Structure:
     связи с одной и той же группой — остаётся связь target), ссылки на source ведут на target,
     связи группы с самой собой нет; у target — след: с ней объединили source."""
     structure = council.structure
-    ours = idea_of(council, target)
-    idea, ideas = ((ours, target.idea_fragment_ids) if ours.text
-                   else (idea_of(council, source), source.idea_fragment_ids))
+    keeper = target if idea_of(council, target).text else source
+    ideas = idea_fragments(council, keeper)
     union = target.model_copy(update={
         "fragment_ids": [*target.fragment_ids,
                          *(i for i in source.fragment_ids if i not in target.fragment_ids)],
-        "idea_fragment_ids": list(ideas), "missing_idea": not ideas, **own_idea(idea),
+        "idea_fragment_ids": ideas, "missing_idea": not ideas, **own_idea(council, keeper),
         "origins": [*moved(target.origins, source.id, target.id, target.id),
                     GroupOrigin(kind="merged", group=source.id)],
     })
@@ -212,10 +255,9 @@ def split(council: Council, source: Group, fragment_ids: Collection[int], title:
     staying = [i for i in source.fragment_ids if i not in wanted]
     if not staying:
         raise EditRefused(f"Отмечены все фрагменты группы {source.id}: в ней ничего не останется")
-    ideas = [i for i in source.idea_fragment_ids if i in staying]
+    ideas = [i for i in idea_fragments(council, source) if i in staying]
     rest = source.model_copy(update={"fragment_ids": staying, "idea_fragment_ids": ideas,
-                                     "missing_idea": not ideas,
-                                     **own_idea(idea_of(council, source))})
+                                     "missing_idea": not ideas, **own_idea(council, source)})
     new = Group(id=free_letter(council), title=title.strip(),
                 fragment_ids=[i for i in source.fragment_ids if i in wanted],
                 idea_fragment_ids=[], missing_idea=True,

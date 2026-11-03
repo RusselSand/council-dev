@@ -13,6 +13,10 @@
 раньше, сразу ищет идею групп, у которых её нет ни в тексте, ни от человека (docs/old/arch.md,
 «Идеи групп»): ход идёт в фоне, этапов не меняет, а найденная идея — идея группы от ИИ. Группе,
 которую выделили уже после подтверждения, идею так же сразу ищет разделение.
+
+Человек стёр идею группы — идеи нет, и совет сразу ищет её сам, как подтверждение (решение
+владельца к задаче «Бекенд · Группы: стёртая идея…»); у советов, где стёртая идея сохранена
+раньше, — при старте сервера (sought_at_start).
 """
 
 from collections.abc import Iterable
@@ -21,12 +25,13 @@ from typing import Literal
 from fastapi import APIRouter
 
 from ..background import STRUCTURE, Slot, launched, reporter, running
-from ..deps import AgentsDep, LauncherDep, ProjectsDep, RepositoriesDep, StoreDep
+from ..deps import AgentsDep, Launcher, LauncherDep, ProjectsDep, RepositoriesDep, Store, StoreDep
 from ..groups import (
     EditRefused,
     IdeaBy,
     LinkKind,
     confirmed,
+    erased,
     fragments_of,
     group_in,
     idea_of,
@@ -38,7 +43,7 @@ from ..groups import (
 from ..models import Council, CouncilStatus, IdeaDiscovery, Slicing, StepName
 from ..models import Group as StoredGroup
 from ..models import Structure as StoredStructure
-from ..pipeline import GroupingRun, IdeaRun
+from ..pipeline import GroupingRun, IdeaRun, Runner
 from ..standing import structure_of as stage_of
 from ..store import council_lock
 from .councils import CouncilAnswer, missing, shown
@@ -167,8 +172,9 @@ def confirm_structure(council_id: str, store: StoreDep, agents: AgentsDep, launc
                       projects: ProjectsDep, repositories: RepositoriesDep,
                       body: Empty | None = None) -> CouncilAnswer:
     """Подтверждает группы — и разложенные, и остановившиеся, и не начатые; пока модели
-    раскладывают фрагменты, нельзя. У групп без идеи совет сразу её ищет, в фоне. Уже
-    подтверждены — в ответ совет как есть."""
+    раскладывают фрагменты, нельзя. У групп без идеи совет сразу её ищет, в фоне, — и у тех,
+    где человек её стёр; уже ищет — второй раз не запускает. Уже подтверждены — в ответ совет
+    как есть."""
     runs: dict[str, IdeaRun] = {}
     with council_lock:
         council = council_of(store, council_id)
@@ -188,10 +194,12 @@ def confirm_structure(council_id: str, store: StoreDep, agents: AgentsDep, launc
 
 
 @router.patch("/councils/{council_id}/groups/{group_id}")
-def update_group(council_id: str, group_id: str, fields: GroupFields,
-                 store: StoreDep) -> GroupAnswer:
-    """Название — без пробелов по краям; идея — как есть, и она теперь человека. Пустые — можно.
-    Под замком советов: правка и запуск раскладки не разойдутся."""
+def update_group(council_id: str, group_id: str, fields: GroupFields, store: StoreDep,
+                 agents: AgentsDep, launch: LauncherDep) -> GroupAnswer:
+    """Название — без пробелов по краям; идея — как есть, и она теперь человека. Пустые — можно:
+    стёртая идея — «идеи нет, напишите её», и совет сразу ищет её, в фоне, если ещё не ищет и не
+    нашёл. Под замком советов: правка и запуск раскладки не разойдутся."""
+    runs: dict[str, IdeaRun] = {}
     with council_lock:
         council = editable(store, council_id)
         group = group_of(council, group_id)
@@ -205,7 +213,14 @@ def update_group(council_id: str, group_id: str, fields: GroupFields,
             group = group.model_copy(update=changes)
             structure = council.structure.model_copy(update={"groups": [
                 group if one.id == group.id else one for one in council.structure.groups]})
-            council = store.update_council(council_id, {"structure": structure}) or council
+            if erased(group):
+                runs = idea_runs(store, council.model_copy(update={"structure": structure}),
+                                 [group], agents)
+            council = store.update_council(
+                council_id, {"structure": sought(structure, runs)}) or council
+            group = group_of(council, group_id)
+    for run in runs.values():
+        launched(launch, run, run.report)
     return GroupAnswer(group=group_view(council, group))
 
 
@@ -291,13 +306,34 @@ def answered(pipeline: GroupingRun, council: Council) -> None:
                     run.state = "done"
 
 
-def idea_runs(store: StoreDep, council: Council, groups: Iterable[StoredGroup],
-              agents: AgentsDep) -> dict[str, IdeaRun]:
-    """Поиск идеи у тех из групп, где её нет ни в тексте, ни от человека, — по группам."""
+def idea_runs(store: Store, council: Council, groups: Iterable[StoredGroup],
+              agents: Runner) -> dict[str, IdeaRun]:
+    """Поиск идеи у тех из групп, где её нет ни в тексте, ни от человека, а совет её ещё не
+    искал или поиск упал, — по группам."""
     return {group.id: IdeaRun(council.id, fragments_of(council, group), council.participants,
                               council.judge, agents,
                               reporter(store, council.id, idea_slot(group.id)))
             for group in groups if seeks_idea(council, group)}
+
+
+def sought_at_start(store: Store, agents: Runner, launch: Launcher) -> None:
+    """Старт сервера: у групп, где человек стёр идею, а совет её не искал (так сохраняла прежняя
+    версия) или поиск упал (сервер остановился посреди него), совет ищет её — в фоне, как после
+    правки. Время изменения совета от этого не меняется: это не правка человека."""
+    runs: list[IdeaRun] = []
+    with council_lock:
+        for council in store.list_councils():
+            structure = council.structure
+            if structure is None or stage_of(council) == "running":
+                continue
+            found = idea_runs(store, council,
+                              [group for group in structure.groups if erased(group)], agents)
+            if found:
+                store.update_council(council.id, {"structure": sought(structure, found)},
+                                     touch=False)
+                runs.extend(found.values())
+    for run in runs:
+        launched(launch, run, run.report)
 
 
 def sought(structure: StoredStructure, runs: dict[str, IdeaRun]) -> StoredStructure:
