@@ -14,7 +14,10 @@ ResearchStage, startStream). По контракту исследования к
 web/project_decisions.py).
 
 Исследование кода — по рабочим копиям проекта совета: их inventory берёт уже ход, в фоне
-(pipeline.CodeResearchRun). Скан упал — исследование снова в настройке (research.block_of), в
+(pipeline.CodeResearchRun). Там же ход читает открытые и отложенные задачи папки задач проекта —
+моделям они идут отдельным входом, как запланированная работа, а не код; какие задачи учло
+готовое исследование, видно на экране (решение владельца к задаче «Бекенд · Задачи: статус во
+frontmatter…», planned_reader). Скан упал — исследование снова в настройке (research.block_of), в
 списке советов видно, что оно остановилось, а у исследования — почему, кодом (stopReason):
 Figma отказала — её отказ, другая причина — общий failed (research.stop_of).
 """
@@ -27,6 +30,7 @@ from typing import Literal
 
 from fastapi import APIRouter, HTTPException
 
+from .. import issue_files
 from .. import research as domain
 from ..background import Slot, halt, held, launched, reporter
 from ..council_tasks import go, plan_begun
@@ -41,6 +45,7 @@ from ..deps import (
     RepositoriesDep,
     StoreDep,
 )
+from ..export import WORDS
 from ..figma import FigmaError, Tokenless, links_of
 from ..groups import IdeaBy, fragments_in, idea_of, without_idea
 from ..models import (
@@ -50,6 +55,7 @@ from ..models import (
     FindingDecision,
     LabeledFragment,
     ModelRun,
+    PlannedIssue,
     RepositoryScan,
     RepositoryStep,
     StepName,
@@ -57,6 +63,7 @@ from ..models import (
     StreamIdea,
 )
 from ..models import Research as Stored
+from ..notes import NotesError
 from ..pipeline import SCAN_ROUNDS, CodeResearchRun, DesignRun
 from ..projects import Projects
 from ..repository import (
@@ -108,6 +115,14 @@ class ScannedRepo(Schema):
     files: int
 
 
+class ResearchTask(Schema):
+    """Задача из папки задач проекта, которую учло исследование кода: открытая или
+    отложенная."""
+
+    id: str
+    status: Literal["open", "deferred"]
+
+
 class CodeResearch(Schema):
     state: domain.Block
     repos: list[RepoChoice]
@@ -117,6 +132,7 @@ class CodeResearch(Schema):
     rounds: int
     # У исследования кода своих причин у экрана нет — только общая.
     stop_reason: Literal["failed"] | None
+    tasks: list[ResearchTask]
 
 
 class DesignResearch(Schema):
@@ -238,7 +254,7 @@ def start_code(council_id: str, body: CodeStart, store: StoreDep, agents: Agents
                 council.id, ideas_of(council), chosen,
                 copy_reader(store, council_id, projects, repositories, notes_of, issues_of),
                 all_fragments(council), council.participants, council.judge, agents, report,
-                groups=letters_of(council))
+                groups=letters_of(council), planned=planned_reader(store, council_id, issues_of))
             held(pipeline)
             council = store.update_council(council_id, {"research": research.model_copy(update={
                 "scan": pipeline.state.model_copy(deep=True), "repository": None,
@@ -432,7 +448,9 @@ def research_of(council: Council, projects: Projects) -> Research:
                                  files=repo.files) for repo in scan.repositories]
             if code_done else [],
             rounds=scan.rounds if code_done else 0,
-            stop_reason="failed" if domain.stopped(scan, code) else None),
+            stop_reason="failed" if domain.stopped(scan, code) else None,
+            tasks=[ResearchTask(id=issue.id, status=issue.status) for issue in scan.issues]
+            if code_done else []),
         design=DesignResearch(
             state=design, link=domain.taken_link(research),
             runs=runs_of(shot, "design") if design == "running" and shot else [],
@@ -583,18 +601,40 @@ def copy_reader(store: StoreDep, council_id: str, projects: Projects,
     return read
 
 
+def planned_reader(store: StoreDep, council_id: str,
+                   issues_of: NotesOf) -> Callable[[], list[PlannedIssue]]:
+    """Как ход читает запланированные задачи проекта (решение владельца к задаче «Бекенд ·
+    Задачи: статус во frontmatter…»): открытые и отложенные из папки задач проекта совета, какой
+    она, когда ход до неё дошёл. В снимок кода папка задач не входит (skipped_folders) — задачи
+    идут моделям отдельным входом. Папки нет или она больше не годится — задач нет; папку не
+    прочитать — RepositoryError: ход падает с причиной."""
+    def read() -> list[PlannedIssue]:
+        with council_lock:
+            council = store.get_council(council_id)
+            root = folder_of(council, issues_of) if council is not None else None
+        try:
+            return issue_files.planned(issue_files.loaded(root),
+                                       [words["scope"] for words in WORDS.values()])
+        except NotesError as exc:
+            raise RepositoryError(f"Папку задач {root} не прочитать: {exc}") from None
+
+    return read
+
+
+def folder_of(council: Council, of: NotesOf) -> Path | None:
+    """Папка документации или задач проекта совета; больше не годится — её нет."""
+    try:
+        return of(council)
+    except HTTPException:
+        return None
+
+
 def skipped_folders(council: Council, notes_of: NotesOf,
                     issues_of: NotesOf) -> list[tuple[Path, str]]:
     """Папки документации и задач проекта совета — те же, с которыми «К потокам →» сверяет карту
     кода: в снимок кода они не входят, прошлые решения приходят в совет отбором. Папка больше не
     годится — её и пропускать негде."""
-    def folder(of: NotesOf) -> Path | None:
-        try:
-            return of(council)
-        except HTTPException:
-            return None
-
-    return council_folders(folder(notes_of), folder(issues_of))
+    return council_folders(folder_of(council, notes_of), folder_of(council, issues_of))
 
 
 def first_group(council: Council) -> str:

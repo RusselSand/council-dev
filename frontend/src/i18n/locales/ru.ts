@@ -140,6 +140,8 @@ export const ru = {
     other: '{count} фрейма · ~{minutes} мин',
   },
   'research.code.scanned': '{repo} · коммит {commit} · файлов: {files} · проходов: {rounds}',
+  'research.code.tasks': 'Учтены задачи: {tasks}',
+  'research.code.task.deferred': '{id} (отложена)',
   'research.findings.count': {
     one: '{count} находка',
     few: '{count} находки',

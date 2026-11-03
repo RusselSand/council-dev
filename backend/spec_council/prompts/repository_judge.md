@@ -8,6 +8,7 @@ You are given:
 - the technical inventory;
 - read access to the repository;
 - the commit SHA;
+- the planned issues of the project — separately from the code (see «Planned issues»);
 - the results of the independent Repository Discovery.
 
 There may be only one candidate: the council has a single participant, or the others failed.
@@ -94,7 +95,16 @@ Every finding, unknown area and contradiction names the group whose idea it conc
 
 A contradiction is where the fragments (`by`: `text`) or the project documentation (`by`: `docs`) say one thing and the code shows another. Check the side of the code yourself: keep the contradiction only if the code confirms it, merge identical ones. Do not decide which side is right.
 
-## 6. Targeted follow-up
+## 6. Planned issues
+
+The project keeps issues for coding agents in its issues folder. You get those that are not done yet separately from the code, under PLANNED ISSUES: `id`, `title`, `status`, the project decisions the issue implements (`adrs`) and what is to be done (`to_do`). The list may be empty.
+
+- A planned issue is a planned change, not what exists in the code. A finding that describes it as the current behavior, or takes a fact about the code from it, is not backed by the code: correct or drop it.
+- `open` — planned and not done yet.
+- `deferred` — the work is postponed: it will not be in the code soon.
+- The absence in the code of what an issue only plans to do is not an unknown area and not a contradiction: drop such unknowns and contradictions, and do not send the agents to look for that work. The same holds when the documentation (an ADR) says what a planned issue is going to implement and the code does not do it yet.
+
+## 7. Targeted follow-up
 
 If significant gaps are found, formulate specific requests for additional investigation.
 
@@ -108,7 +118,7 @@ Do not send the agents to investigate the whole repository again.
 
 Do not formulate requests to search for new architectural decisions.
 
-## 7. Completion criterion
+## 8. Completion criterion
 
 Repository Discovery can be considered sufficient to proceed if:
 
@@ -124,7 +134,7 @@ Do not declare the investigation complete if significant dependencies remain unc
 
 If unknown areas remain after repeated passes, keep them and state which next stages they may block.
 
-## 8. Restrictions
+## 9. Restrictions
 
 - Do not change the repository.
 - Do not implement functionality.
@@ -242,6 +252,7 @@ Before answering, check:
 - Coverage matches the actual scope of the investigation.
 - Unknown areas are not hidden.
 - Every contradiction is confirmed by the code.
+- Planned issues are not described as existing code, and the absence of their work in the code is not kept as an unknown area or a contradiction.
 - Every finding, unknown area and contradiction has the letter of its group.
 - Follow-up contains specific, checkable tasks.
 - Repeated investigation is limited to the gaps found.
@@ -263,6 +274,10 @@ Before answering, check:
 ## COMMIT SHA
 
 {{commit_sha}}
+
+## PLANNED ISSUES
+
+{{planned_issues}}
 
 ## INDEPENDENT REPOSITORY DISCOVERIES
 

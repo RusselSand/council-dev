@@ -42,6 +42,7 @@ const codeSetup = (repos: string[], unneeded: string[] = []): CodeResearch => ({
   scanned: [],
   rounds: 0,
   stopReason: null,
+  tasks: [],
 });
 
 /** Исследование макета, которое ещё не начинали. */
@@ -500,6 +501,8 @@ const G1: Research = {
     ],
     rounds: 1,
     stopReason: null,
+    // Исследование g1 — до статусов задач: задач оно не учитывало.
+    tasks: [],
   },
   design: { state: 'skipped', link: '', runs: [], minutes: 0, frames: 0, stopReason: null },
   findings: G1_FINDINGS,
@@ -629,16 +632,23 @@ export const noResearch = (repos: string[], unneeded: string[] = []): Research =
 
 /**
  * Исследования по id совета. g1 — из data-1.json. c6 ждёт вас — как в макете (RS0): код исследован, макет не начат,
- * выводы и противоречие ждут решения («Подтвердите карту кода»). У советов, ушедших дальше, — оба исследования готовы,
- * решения приняты. У остальных исследования не было; у проекта Кромка совет не отметил kromka-android — «не нужен
- * этой идее?», как в макете.
+ * выводы и противоречие ждут решения («Подтвердите карту кода»); исследование кода учло открытую и отложенную задачи
+ * папки задач — пример из задачи «Бекенд · Задачи: статус во frontmatter…», в макете их нет. У советов, ушедших
+ * дальше, — оба исследования готовы, решения приняты. У остальных исследования не было; у проекта Кромка совет
+ * не отметил kromka-android — «не нужен этой идее?», как в макете.
  */
 export const RESEARCHES: Record<string, Research> = {
   g1: G1,
   c1: protoDone(KROMKA, ['kromka-android']),
   c2: noResearch(['looper']),
   c6: {
-    code: codeDone(['looper']),
+    code: {
+      ...codeDone(['looper']),
+      tasks: [
+        { id: 'ISS-0030', status: 'open' },
+        { id: 'ISS-0031', status: 'deferred' },
+      ],
+    },
     design: designSetup(),
     findings: protoFindings().filter((f) => f.source === 'code'),
     flows: [],
@@ -671,6 +681,7 @@ export const startedCode = (code: CodeResearch, repos: string[], participants: s
   scanned: [],
   rounds: 0,
   stopReason: null,
+  tasks: [],
 });
 
 /** Исследование макета запустилось — как в макете (rd.runs): одна модель читает фреймы, другие сверяют с группами. */
@@ -694,7 +705,16 @@ export function toSetup(research: Research, kind: ResearchKind): Research {
   if (kind === 'code') {
     return {
       ...research,
-      code: { ...research.code, state: 'setup', runs: [], minutes: 0, scanned: [], rounds: 0, stopReason: null },
+      code: {
+        ...research.code,
+        state: 'setup',
+        runs: [],
+        minutes: 0,
+        scanned: [],
+        rounds: 0,
+        stopReason: null,
+        tasks: [],
+      },
       findings: research.findings.filter((f) => f.source !== 'code'),
       flows: [],
       coverage: [],

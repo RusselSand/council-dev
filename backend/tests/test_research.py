@@ -14,6 +14,7 @@ from spec_council.background import launched
 from spec_council.deps import (
     get_agents,
     get_figma,
+    get_issues_of,
     get_launcher,
     get_notes_of,
     get_projects,
@@ -306,7 +307,8 @@ def test_before_any_research_both_wait_for_their_setup(store, projects):
     assert research_of(council_id) == {
         "code": {"state": "setup", "repos": [{"name": "api", "selected": True},
                                              {"name": "front", "selected": True}],
-                 "runs": [], "minutes": 0, "scanned": [], "rounds": 0, "stopReason": None},
+                 "runs": [], "minutes": 0, "scanned": [], "rounds": 0, "stopReason": None,
+                 "tasks": []},
         "design": SETUP_DESIGN, "findings": [], "flows": [], "coverage": []}
     # Совет без проекта — репозиториев нет.
     store.update_council(council_id, {"project": ""})
@@ -343,7 +345,7 @@ def test_code_research_reads_the_chosen_copies_in_the_background(store, projects
                                       {"name": "front", "selected": False}],
         "runs": [doing("sol", "waiting", "проход 1 · ждёт снимка кода"),
                  doing("fable", "waiting", "проход 1 · ждёт снимка кода")],
-        "minutes": 2, "scanned": [], "rounds": 0, "stopReason": None}
+        "minutes": 2, "scanned": [], "rounds": 0, "stopReason": None, "tasks": []}
     council = listed(council_id)
     assert (council["stage"], council["state"]) == ("research", "running")
     assert council["activity"] == [at_stage("research", "running", "sol и fable исследуют код")]
@@ -357,7 +359,7 @@ def test_code_research_reads_the_chosen_copies_in_the_background(store, projects
                                    {"name": "front", "selected": False}],
         "runs": [], "minutes": 0,
         "scanned": [{"name": "api", "commit": inventory(repos).commit_sha, "files": 2}],
-        "rounds": 1, "stopReason": None}
+        "rounds": 1, "stopReason": None, "tasks": []}
     assert research["findings"] == CODE_FINDINGS
     assert research["flows"] == [{"name": "Создание заявки", "entry": "app.py", "steps": [
         {"text": "main принимает заявку.", "findings": ["R1"]}]}]
@@ -460,6 +462,82 @@ def test_the_code_research_does_not_read_the_council_folders(store, projects, ag
     assert agents.seen == ["app.py"]
     assert store.get_council(council_id).research.scan.repositories[0].skipped == [
         "docs/council/"]
+
+
+def task_file(folder, number, status=None, body="# Задача\n", adrs=()):
+    """Файл задачи в папке задач проекта: status None — файл прежней версии, без статуса."""
+    folder.mkdir(parents=True, exist_ok=True)
+    head = (f"id: {number}\n" + (f"status: {status}\n" if status else "")
+            + (f"adrs: [{', '.join(adrs)}]\n" if adrs else ""))
+    (folder / f"{number}.md").write_text(f"---\n{head}---\n\n{body}", encoding="utf-8")
+
+
+def planned_in(prompt: str) -> list[dict]:
+    """Задачи, которые промпт исследования кода даёт моделям отдельным входом."""
+    return json.loads(prompt.split("## PLANNED ISSUES\n\n")[1].split("\n\n## ")[0])
+
+
+def test_the_code_research_sees_the_open_and_deferred_tasks_of_the_project(store, projects,
+                                                                          agents, pool, repos):
+    """Решение владельца к задаче «Бекенд · Задачи: статус во frontmatter…»: исследование кода
+    получает отдельным входом задачи папки задач проекта — открытые и отложенные: номер, название,
+    статус, решения и что сделать. Сделанные, отменённые и файлы без статуса (их состояние
+    неизвестно) — нет. Папка задач по-прежнему не входит в снимок кода. Какие задачи учло готовое
+    исследование, видно в исследовании кода."""
+    tasks = repos / "docs" / "tasks"
+    task_file(tasks, "ISS-0031", "deferred",
+              "# Кэш заявок\n\nЧтобы быстро.\n\n## Что сделать\n- Завести кэш.\n", ["ADR-0007"])
+    task_file(tasks, "ISS-0030", "open", "# Очередь заявок\n\nЗаявка ждёт сети.\n")
+    task_file(tasks, "ISS-0029", "done")
+    task_file(tasks, "ISS-0028", "cancelled")
+    task_file(tasks, "ISS-0027")
+    app.dependency_overrides[get_issues_of] = lambda: lambda council: tasks
+    try:
+        council_id = confirmed(store, projects)
+        code = starts(council_id, "code", {"repos": ["api"]}).json()["research"]["code"]
+        assert code["tasks"] == []                      # задачи ход читает в фоне
+        pool.run()
+    finally:
+        app.dependency_overrides.pop(get_issues_of)
+    assert research_of(council_id)["code"]["tasks"] == [
+        {"id": "ISS-0030", "status": "open"}, {"id": "ISS-0031", "status": "deferred"}]
+    wanted = [{"id": "ISS-0030", "title": "Очередь заявок", "status": "open", "adrs": [],
+               "to_do": ["Заявка ждёт сети."]},
+              {"id": "ISS-0031", "title": "Кэш заявок", "status": "deferred",
+               "adrs": ["ADR-0007"], "to_do": ["Завести кэш."]}]
+    assert planned_in(agents.prompts["repository_discovery"]) == wanted
+    assert planned_in(agents.prompts["repository_judge"]) == wanted
+    assert agents.seen == ["app.py"]
+
+    # Вернули к настройке — учтённых задач нет, пока код не исследуют снова.
+    assert acts(council_id, "code", "reset").json()["research"]["code"]["tasks"] == []
+
+
+def test_the_code_research_without_a_tasks_folder_sees_no_tasks(store, projects, agents, pool):
+    """У проекта нет папки задач — задач нет: моделям — пустой список."""
+    council_id = confirmed(store, projects)
+    assert researched_code(council_id, pool)["code"]["tasks"] == []
+    assert planned_in(agents.prompts["repository_discovery"]) == []
+
+
+def test_the_code_research_stops_when_the_tasks_folder_cannot_be_read(store, projects, agents,
+                                                                     pool, tmp_path):
+    """Папку задач не прочитать (два файла одной задачи) — исследование останавливается с
+    причиной, моделей не зовут: без задач они сочли бы запланированное пробелом в коде."""
+    tasks = tmp_path / "tasks"
+    task_file(tasks, "ISS-0030", "open")
+    (tasks / "copy.md").write_text((tasks / "ISS-0030.md").read_text(encoding="utf-8"),
+                                   encoding="utf-8")
+    app.dependency_overrides[get_issues_of] = lambda: lambda council: tasks
+    try:
+        council_id = confirmed(store, projects)
+        code = researched_code(council_id, pool)["code"]
+    finally:
+        app.dependency_overrides.pop(get_issues_of)
+    assert (code["state"], code["stopReason"], code["tasks"]) == ("setup", "failed", [])
+    scan = store.get_council(council_id).research.scan
+    assert "Папку задач" in scan.error and "Два файла задачи ISS-0030" in scan.error
+    assert agents.asked == []
 
 
 def test_a_copy_in_a_folder_is_researched_by_its_path(store, projects, agents, pool, repos):
@@ -754,7 +832,7 @@ def test_reset_research_drops_its_findings_and_keeps_its_choice(store, projects,
     assert research["code"] == {"state": "setup", "repos": [{"name": "api", "selected": True},
                                                             {"name": "front", "selected": False}],
                                 "runs": [], "minutes": 0, "scanned": [], "rounds": 0,
-                                "stopReason": None}
+                                "stopReason": None, "tasks": []}
     assert [f["source"] for f in research["findings"]] == ["design"] * 3
     assert (research["flows"], research["coverage"]) == ([], [])
     researched_code(council_id, pool)
@@ -1113,7 +1191,8 @@ def test_research_of_the_previous_version_opens_as_it_was_passed(store, projects
                                    {"name": "front", "selected": False}],
         "runs": [], "minutes": 0, "scanned": [
             {"name": "api", "commit": "7440e1a59acf61eafe9d13c2441b39a8ee72e73b", "files": 3}],
-        "rounds": 2, "stopReason": None}
+        # Задач прежняя версия исследованию не давала.
+        "rounds": 2, "stopReason": None, "tasks": []}
     assert view["design"] == {**SETUP_DESIGN, "state": "skipped"}
     assert view["findings"] == [
         {"id": "R1", "group": "A", "source": "code", "kind": "fact", "text": "Факт.",

@@ -114,6 +114,8 @@ export interface RepoView {
 export interface CodeBlockView extends BlockView {
   repos: RepoView[];
   toggleRepo: (name: string) => void;
+  /** Готово: «Учтены задачи: ISS-0030, ISS-0031 (отложена)»; задач не учтено — пусто. */
+  tasks: string;
 }
 
 export interface DesignBlockView extends BlockView {
@@ -228,7 +230,7 @@ export interface ResearchScreen {
 
 /** Исследование, которого ещё нет на экране: пока грузится. */
 const EMPTY: Research = {
-  code: { state: 'setup', repos: [], runs: [], minutes: 0, scanned: [], rounds: 0, stopReason: null },
+  code: { state: 'setup', repos: [], runs: [], minutes: 0, scanned: [], rounds: 0, stopReason: null, tasks: [] },
   design: { state: 'setup', link: '', runs: [], minutes: 0, frames: 0, stopReason: null },
   findings: [],
   flows: [],
@@ -443,6 +445,15 @@ export function useResearch(council: CouncilSummary): ResearchScreen {
             commit: shortCommit(scanned.commit),
             files: scanned.files,
             rounds: code.rounds,
+          })
+        : '',
+      // Какие задачи папки задач учло исследование (решение владельца к задаче «Бекенд · Задачи: статус во
+      // frontmatter…»; в макете строки нет).
+      tasks: code.tasks.length
+        ? t('research.code.tasks', {
+            tasks: code.tasks
+              .map((task) => (task.status === 'deferred' ? t('research.code.task.deferred', { id: task.id }) : task.id))
+              .join(', '),
           })
         : '',
       repos,

@@ -127,6 +127,8 @@ export const en = translation({
   'research.code.running': '{repos} repos · ~{minutes} min',
   'research.design.running': { one: '{count} frame · ~{minutes} min', other: '{count} frames · ~{minutes} min' },
   'research.code.scanned': '{repo} · commit {commit} · files: {files} · passes: {rounds}',
+  'research.code.tasks': 'Tasks taken into account: {tasks}',
+  'research.code.task.deferred': '{id} (deferred)',
   'research.findings.count': { one: '{count} finding', other: '{count} findings' },
   'research.results': 'Results below',
   'research.code.skipped': 'Skipped — streams go without a code map: questions and tasks won’t be tied to files.',

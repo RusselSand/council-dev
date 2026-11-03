@@ -137,6 +137,7 @@ from .models import (
     OutcomeDiscovery,
     OutcomeGap,
     OutcomeTouch,
+    PlannedIssue,
     ProjectDecision,
     Proposal,
     ProposalDiscovery,
@@ -1525,8 +1526,10 @@ class RepositoryRun(CouncilRun[RepositoryScan]):
     def __init__(self, council_id: str, idea: str, sources: Sequence[Source],
                  fragments: list[LabeledFragment], participants: list[str], judge: str,
                  runner: Runner, report: Callable[[RepositoryScan], None], *,
-                 copy: Copier = snapshot_all, groups: Collection[str] = ()) -> None:
-        """groups — буквы групп, под идеи которых скан: находка — к одной из них."""
+                 copy: Copier = snapshot_all, groups: Collection[str] = (),
+                 issues: Sequence[PlannedIssue] = ()) -> None:
+        """groups — буквы групп, под идеи которых скан: находка — к одной из них. issues —
+        запланированные задачи проекта: модели видят их отдельным входом, а не в коде."""
         super().__init__(council_id, participants, judge, runner, report,
                          start_scan(participants, judge, idea, sources))
         self.idea = idea
@@ -1534,6 +1537,7 @@ class RepositoryRun(CouncilRun[RepositoryScan]):
         self.fragments = fragments
         self.copy = copy
         self.groups = frozenset(groups)
+        self.state.issues = list(issues)
 
     def work(self) -> dict[str, Any]:
         with self._reading(self.sources, self.copy) as folder:
@@ -1543,6 +1547,7 @@ class RepositoryRun(CouncilRun[RepositoryScan]):
                 "fragments": fragments_prompt(self.fragments),
                 "inventory": sources_prompt(self.sources),
                 "commit_sha": commits_prompt(self.sources),
+                "planned_issues": planned_prompt(self.state.issues),
             }
             return self._explored(StepName.repository_discovery, StepName.repository_judge,
                                   values, partial(map_of, context=context),
@@ -1554,28 +1559,34 @@ class CodeResearchRun(RepositoryRun):
     репозиториев. Inventory каждой (read: git и файлы) — уже в ходе, в фоне: git на большой
     рабочей копии не держит ни ответ человеку, ни замок советов. Копию не прочитать, копии
     пересекаются или снимок вышел бы слишком большим — ход упал с причиной. Пока inventory не
-    готов, у скана рабочие копии — только по имени."""
+    готов, у скана рабочие копии — только по имени. Там же, в фоне, ход читает запланированные
+    задачи проекта (planned: открытые и отложенные из папки задач); папку задач не прочитать —
+    ход упал с причиной: без задач модели сочли бы запланированное пробелом в коде."""
 
     def __init__(self, council_id: str, idea: str, names: Sequence[str],
                  read: Callable[[str], Inventory], fragments: list[LabeledFragment],
                  participants: list[str], judge: str, runner: Runner,
                  report: Callable[[RepositoryScan], None], *, copy: Copier = snapshot_all,
-                 groups: Collection[str] = ()) -> None:
+                 groups: Collection[str] = (),
+                 planned: Callable[[], list[PlannedIssue]] = list) -> None:
         super().__init__(council_id, idea, [], fragments, participants, judge, runner, report,
                          copy=copy, groups=groups)
         self.names = list(names)
         self.read = read
+        self.planned = planned
         self.state.repositories = [ScannedRepository(path=name) for name in self.names]
 
     def work(self) -> dict[str, Any]:
         try:
             sources = sources_of([(name, self.read(name)) for name in self.names])
             fits(merged_inventory(sources))
+            issues = self.planned()
         except RepositoryError as exc:
             raise StageFailed(str(exc)) from exc
         self.sources = sources
         with self._lock:
             self.state.repositories = [scanned(source) for source in sources]
+            self.state.issues = issues
             self._publish()
         return super().work()
 
@@ -1597,6 +1608,12 @@ def accepted_prompt(decisions: Sequence[ProjectDecision],
 
 def fragments_prompt(fragments: Iterable[LabeledFragment]) -> str:
     return as_json([{"id": f"F{f.id}", "type": f.label, "text": f.text} for f in fragments])
+
+
+def planned_prompt(issues: Iterable[PlannedIssue]) -> str:
+    """Запланированные задачи проекта для исследования кода: номер, название, статус, решения
+    и что сделать."""
+    return as_json([issue.model_dump(mode="json") for issue in issues])
 
 
 class DesignRun(CouncilRun[DesignScan]):

@@ -5,7 +5,10 @@ import type { CodeBlockView } from '../useResearch';
 import styles from './CodeBlock.module.css';
 import { ResearchBlock } from './ResearchBlock';
 
-/** «Исследование кода»; в настройке — «Репозитории проекта» галочками и напоминание, что модели читают код. */
+/**
+ * «Исследование кода»; в настройке — «Репозитории проекта» галочками и напоминание, что модели читают код; готово —
+ * под строкой результата, какие задачи папки задач учло исследование (в макете строки нет).
+ */
 export function CodeBlock({ block }: { block: CodeBlockView }) {
   const { t } = useI18n();
   return (
@@ -15,6 +18,7 @@ export function CodeBlock({ block }: { block: CodeBlockView }) {
       title={t('research.code.title')}
       intro={t('research.code.intro')}
       skipped={t('research.code.skipped')}
+      done={block.tasks && <p className={styles.tasks}>{block.tasks}</p>}
       setup={
         <>
           <div className={styles.repos} role="group" aria-label={t('research.repos')}>

@@ -7,7 +7,8 @@ You are given:
 - the fragments of all groups;
 - the technical inventory of the repository;
 - read access to the repository;
-- the commit SHA of the version under investigation.
+- the commit SHA of the version under investigation;
+- the planned issues of the project — separately from the code (see «Planned issues»).
 
 ## Goal
 
@@ -156,7 +157,16 @@ Record a contradiction where the fragments (the request of the human) or the pro
 
 A contradiction is an observation: do not decide which side is right.
 
-## 8. Restrictions
+## 8. Planned issues
+
+The project keeps issues for coding agents in its issues folder. You get those that are not done yet separately from the code, under PLANNED ISSUES: `id`, `title`, `status`, the project decisions the issue implements (`adrs`) and what is to be done (`to_do`). The list may be empty.
+
+- A planned issue is a planned change, not what exists in the code. Do not describe it as the current behavior and do not take facts about the code from it: only the code shows how the system is built now.
+- `open` — planned and not done yet.
+- `deferred` — the work is postponed: it will not be in the code soon.
+- The absence in the code of what an issue only plans to do is not an unknown area and not a contradiction: do not record it as either. The same holds when the documentation (an ADR) says what a planned issue is going to implement and the code does not do it yet.
+
+## 9. Restrictions
 
 - Do not change the repository.
 - Do not create new files in the project.
@@ -265,6 +275,7 @@ Before answering, check:
 - Inferred facts are explicitly marked.
 - The absence of functionality is not claimed without sufficient checking.
 - Contradictions of the fragments and of the documentation with the code are recorded.
+- Planned issues are not described as existing code, and the absence of their work in the code is not recorded as an unknown area or a contradiction.
 - Unknown areas are listed.
 - Every finding, unknown area and contradiction has the letter of its group.
 - No new architectural decisions are proposed.
@@ -285,6 +296,10 @@ Before answering, check:
 ## COMMIT SHA
 
 {{commit_sha}}
+
+## PLANNED ISSUES
+
+{{planned_issues}}
 
 ## ADDITIONAL INVESTIGATION REQUESTS
 

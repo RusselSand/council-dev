@@ -53,9 +53,8 @@ from .notes import Catalog, NotesError, issues_in
 from .questions import same_question
 from .tasks import Names, Parent, line, parent_by_name, relabeled
 
-# Название задачи — заголовок её файла: первая строка «# …» (без закрывающих «#»). Первая
-# строка не заголовок (файл правили руками) — названия нет.
-TITLE = re.compile(r"[ ]{0,3}#[ \t]+(.+?)(?:[ \t]+#+)?[ \t\r]*(?=\n|\Z)")
+# Название задачи — заголовок её файла (issue_files.TITLE).
+TITLE = issue_files.TITLE
 # Заголовок раздела файла задачи «## …» — и с отступом до трёх пробелов, и с табуляцией.
 SECTION = re.compile(r"[ ]{0,3}##(?:[ \t\r]|$)")
 # Пункт списка задач, после которых делать эту: «- ISS-0012: название» (и с «*» или «+»; после

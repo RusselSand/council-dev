@@ -215,15 +215,20 @@ def test_the_last_stream_written_plans_the_tasks_and_they_are_written_to_the_tas
         ("tasks", "done", "done")
     assert written["activity"] == [] and written["summary"].startswith("1 задача и ")
     # Задача плана — подзадача родительской задачи своего итога: родитель и решения — только
-    # номерами, во frontmatter; итог плана в тексте — номером родительской задачи.
+    # номерами, во frontmatter; итог плана в тексте — номером родительской задачи. Совет пишет
+    # задачу открытой, а строка о финальном коммите просит поставить ей done в том же коммите
+    # (решение владельца к задаче «Бекенд · Задачи: статус во frontmatter…»).
     assert files_in(issues) == ["ISS-0001.md", "ISS-0002.md"]
     text = (issues / "ISS-0001.md").read_text(encoding="utf-8")
-    assert text.startswith("---\nid: ISS-0001\nparent: ISS-0002\nadrs: [ADR-0001, ADR-0002]\n"
-                           f"---\n\n# {TASK} ISS-0002\n")
+    assert text.startswith("---\nid: ISS-0001\nstatus: open\nparent: ISS-0002\n"
+                           f"adrs: [ADR-0001, ADR-0002]\n---\n\n# {TASK} ISS-0002\n")
     assert "Где хранить долю?" in text and "outcomes" not in text
+    assert text.endswith("\n\nВ финальном коммите укажите номер задачи — ISS-0001 — и поставьте "
+                         "`status: done` во frontmatter этой задачи в том же коммите.\n")
     # Родительская — итог: название, поведение и критерии; решения, что он реализует, — номерами.
+    # Она тоже открытая.
     assert (issues / "ISS-0002.md").read_text(encoding="utf-8") == (
-        f"---\nid: ISS-0002\nadrs: [ADR-0001, ADR-0002]\n---\n\n# {RESULT}\n\n"
+        f"---\nid: ISS-0002\nstatus: open\nadrs: [ADR-0001, ADR-0002]\n---\n\n# {RESULT}\n\n"
         "Доля отвеченных вопросов видна команде.\n\n## Критерии готовности\n"
         "- Доля считается по #help.\n")
     # Итогов в каталоге заметок нет: их подзадачам там ссылаться не на что.
@@ -1035,7 +1040,10 @@ def test_tasks_are_translated_with_the_words_of_the_streams_notes(english, base)
         task = (base / "issues" / "ISS-0001.md").read_text(encoding="utf-8")
         assert "- Подписать итог «Yardstick» в отчёте." in task
         assert "\n## Where to change\n- app.py\n" in task and "\n## What is there now\n" in task
-        assert task.endswith("\nPut the issue number ISS-0001 into the final commit.\n")
+        assert task.endswith("\nPut the issue number ISS-0001 into the final commit and set "
+                             "`status: done` in the frontmatter of this issue in the same "
+                             "commit.\n")
+        assert "\nstatus: open\n" in task
         parent = (base / "issues" / "ISS-0002.md").read_text(encoding="utf-8")
         assert "\n## Acceptance criteria\n" in parent
         assert council(council_id).tasks_export.glossary == {"Мерило": "Yardstick"}

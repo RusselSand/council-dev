@@ -12,3 +12,12 @@
   color: var(--color-text-subtle);
   text-wrap: pretty;
 }
+
+/* Под строкой готового исследования: «Учтены задачи: ISS-0030, ISS-0031 (отложена)»; длинный список переносится. */
+.tasks {
+  margin: 0;
+  font-size: var(--text-sm);
+  line-height: var(--leading-relaxed);
+  color: var(--color-text-subtle);
+  overflow-wrap: anywhere;
+}
