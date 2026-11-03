@@ -69,6 +69,8 @@ AFTER = re.compile(r"^([ \t]*[-*+][ \t]+(ISS-\d+)[ \t]*:[ \t]*).*$")
 # Номер итога, как его раздаёт совет, и он же в тексте.
 OUTCOME = re.compile(r"OUT-(\d+)")
 OUTCOME_ID = re.compile(r"(?<![\w-])OUT-\d+(?![\w-])")
+# Ключ в записи выгрузки у родительской задачи прежней версии — «p:» и её номер (parents_apart).
+PARENT = "p:"
 
 
 # Часть плана, которой нужен номер: имя в плане, вид («i» — задача, «o» — итог), название, суть
@@ -357,8 +359,20 @@ def vanished_of(shelf: Shelf, filed: Mapping[str, ExportedNote], notes: Sequence
 
 def parent_before(old: ExportedNote) -> bool:
     """Родительская задача, которую записала прежняя версия: итог файлом задачи (его ключ — итога,
-    numbers_of)."""
-    return old.type == "issue" and old.key.startswith("o:")
+    numbers_of, или уже свой, parents_apart)."""
+    return old.type == "issue" and old.key.startswith(("o:", PARENT))
+
+
+def parents_apart(previous: TasksExport) -> TasksExport:
+    """Запись прежней выгрузки, где у родительских задач прежней версии свой ключ — по номеру. Их
+    ключ — итога, а под ним теперь и файл итога в подпапке: запись, что ищет прежний файл по
+    ключу (export.written, previous_of), брала бы вместо итога родительскую задачу, что осталась
+    в папке (правленная руками), — и итог, правленный руками, потом перезаписали бы."""
+    if not any(parent_before(note) for note in previous.notes):
+        return previous
+    return previous.model_copy(update={"notes": [
+        note.model_copy(update={"key": f"{PARENT}{note.id}"}) if parent_before(note) else note
+        for note in previous.notes]})
 
 
 def aligned(notes: Sequence[NotePlan], texts: Mapping[str, str] | None = None,

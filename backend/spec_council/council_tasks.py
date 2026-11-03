@@ -83,7 +83,7 @@ from .tasks import (
     research_maps,
     research_texts,
 )
-from .tasks_export import aligned, drafted_tasks
+from .tasks_export import aligned, drafted_tasks, parents_apart
 from .translation import merged
 
 
@@ -510,10 +510,11 @@ def shelf_of(notes: Path, issues: Path) -> Shelf:
 
 
 def export_in(record: TasksExport | None, issues: Path | None) -> TasksExport | None:
-    """Запись плана — если она в эту папку задач: в другой её файлов нет."""
+    """Запись плана — если она в эту папку задач: в другой её файлов нет. Родительские задачи
+    прежней версии в ней — со своим ключом, не итога (parents_apart)."""
     if record is None or issues is None or record.root != str(issues):
         return None
-    return record
+    return parents_apart(record)
 
 
 def reserved_by_others(store: Store, council_id: str, issues: Path) -> set[str]:

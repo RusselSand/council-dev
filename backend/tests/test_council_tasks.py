@@ -709,6 +709,38 @@ def test_a_parent_task_of_the_previous_version_edited_by_hand_stays(agents, base
     assert files_in(issues) == ["ISS-0001.md"]
 
 
+def test_an_outcome_beside_a_staying_parent_task_keeps_its_edits(agents, base):
+    """Родительская задача прежней версии осталась (правили руками), а итог лёг в подпапку: у
+    обоих в записи — итог плана, но запись о файле итога — его, а не родительской задачи. Владелец
+    поставил итогу done — следующие записи итог не трогают."""
+    council_id = ready()
+    writes(council_id)
+    issues = base / "issues"
+    written_by_the_previous_version(council_id, issues)
+    parent = issues / "ISS-0002.md"
+    parent.write_text(parent.read_text(encoding="utf-8").replace("status: open", "status: done"),
+                      encoding="utf-8")
+
+    def written_again():
+        plan = council(council_id).tasks
+        get_store().update_council(council_id, {"tasks": plan.model_copy(update={"basis": {}})})
+        retries(council_id)
+        assert writes(council_id).status_code == 200
+
+    written_again()
+    outcome = issues / "outcomes" / "OUT-0001.md"
+    done = outcome.read_text(encoding="utf-8").replace("status: open", "status: done")
+    outcome.write_text(done, encoding="utf-8")
+    for _ in range(2):
+        written_again()
+        assert outcome.read_text(encoding="utf-8") == done
+        notes = council(council_id).tasks_export.notes
+        assert sorted(note.id for note in notes) == ["ISS-0001", "ISS-0002", "OUT-0001"]
+        [mine] = [note for note in notes if note.id == "OUT-0001"]
+        [kept] = [note for note in notes if note.id == "ISS-0002"]
+        assert mine.type == "outcome" and kept.kept and kept.key != mine.key
+
+
 def test_research_approved_again_builds_a_stale_plan_again(agents, base):
     council_id = ready()
     first = council(council_id).tasks
