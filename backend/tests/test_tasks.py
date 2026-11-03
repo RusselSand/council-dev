@@ -835,8 +835,8 @@ def test_each_approved_outcome_is_a_parent_task_and_its_plan_tasks_are_subtasks(
     assert cache.text.startswith("# Кэш ответов\n") and cache.links == []
     assert "коммит" not in measure.text.lower()
     rendered = issue_rendered(Note(one.id, "issue", one.text, tuple(one.links)))
-    assert rendered.startswith("---\nid: ISS-0001\nparent: ISS-0003\nadrs: [ADR-0001, ADR-0002]\n"
-                               "---\n")
+    assert rendered.startswith("---\nid: ISS-0001\nstatus: open\nparent: ISS-0003\n"
+                               "adrs: [ADR-0001, ADR-0002]\n---\n")
     assert "outcomes" not in rendered
 
 

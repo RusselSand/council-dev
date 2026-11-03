@@ -16,10 +16,10 @@ GIVEN = {
     "structure_judge": {"input", "fragments", "structure_options"},
     "idea_discovery": {"group"},
     "idea_judge": {"group", "idea_options"},
-    "repository_discovery": {"idea", "fragments", "inventory", "commit_sha",
+    "repository_discovery": {"idea", "fragments", "inventory", "commit_sha", "planned_issues",
                              "investigation_requests"},
-    "repository_judge": {"idea", "fragments", "inventory", "commit_sha", "discovery_results",
-                         "previous_findings"},
+    "repository_judge": {"idea", "fragments", "inventory", "commit_sha", "planned_issues",
+                         "discovery_results", "previous_findings"},
     "design_discovery": {"idea", "fragments", "figma_source", "investigation_requests"},
     "design_judge": {"idea", "fragments", "figma_source", "discovery_results",
                      "previous_findings"},
@@ -85,6 +85,16 @@ def test_every_step_after_the_scan_gets_the_repository_map(name):
     """Карта репозитория передаётся дальше: каждый следующий шаг её видит."""
     values = {key: f"<{key}>" for key in GIVEN[name]}
     assert "<repository>" in render(name, **values)
+
+
+@pytest.mark.parametrize("name", ["repository_discovery", "repository_judge"])
+def test_the_code_research_sees_the_planned_issues_apart_from_the_code(name):
+    """Исследование кода видит запланированные задачи проекта отдельным входом — как работу,
+    которой в коде ещё нет (решение владельца к задаче «Бекенд · Задачи: статус во
+    frontmatter…»)."""
+    text = render(name, **{key: f"<{key}>" for key in GIVEN[name]})
+    assert "## PLANNED ISSUES\n\n<planned_issues>" in text
+    assert "not an unknown area and not a contradiction" in text and "`deferred`" in text
 
 
 @pytest.mark.parametrize("name", [name for name, given in GIVEN.items() if "design" in given])

@@ -15,13 +15,15 @@ from spec_council.export import (
     phrases_of,
     renumbered,
     replacing,
+    settled,
     stream_texts,
     translations,
+    unmarked_digest,
     untranslated,
     words_for,
     written,
 )
-from spec_council.issue_files import loaded
+from spec_council.issue_files import loaded, planned
 from spec_council.issue_files import parsed as issue_parsed
 from spec_council.issue_files import rendered as issue_rendered
 from spec_council.models import (
@@ -29,6 +31,7 @@ from spec_council.models import (
     Decision,
     ExportedNote,
     LabeledFragment,
+    NotePlan,
     NotesExport,
     OpenQuestion,
     Outcome,
@@ -1026,12 +1029,106 @@ def test_an_issue_file_reads_back_as_written():
     links = ("parent:ISS-0010", "ADR-0007", "ISS-0011")
     note = Note("ISS-0012", "issue", "# Поиск\n\nИщется.", links)
     text = issue_rendered(note)
-    # Родитель и решения — только номерами, во frontmatter; поля итогов нет.
-    assert text.startswith("---\nid: ISS-0012\nparent: ISS-0010\nadrs: [ADR-0007]\n"
-                           "depends_on: [ISS-0011]\n---\n")
+    # Совет пишет задачу открытой (решение владельца к задаче «Бекенд · Задачи: статус во
+    # frontmatter…»); родитель и решения — только номерами, во frontmatter; поля итогов нет.
+    assert text.startswith("---\nid: ISS-0012\nstatus: open\nparent: ISS-0010\n"
+                           "adrs: [ADR-0007]\ndepends_on: [ISS-0011]\n---\n")
     back = issue_parsed(text)
-    assert (back.id, back.type, back.body, back.links) == (
-        "ISS-0012", "issue", "# Поиск\n\nИщется.", links)
+    assert (back.id, back.type, back.body, back.links, back.status) == (
+        "ISS-0012", "issue", "# Поиск\n\nИщется.", links, "open")
+    assert issue_rendered(back) == text
+
+
+def test_an_issue_file_keeps_the_status_it_was_given():
+    """done ставит тот, кто делает задачу, deferred и cancelled — владелец руками; статус
+    читается как записан, в любом регистре. У файла прежней версии статуса нет."""
+    for status in ("done", "deferred", "cancelled"):
+        back = issue_parsed(f"---\nid: ISS-0012\nstatus: {status.upper()}\n---\n\n# Поиск")
+        assert back.status == status
+        assert f"\nstatus: {status}\n" in issue_rendered(back)
+    assert issue_parsed("---\nid: ISS-0012\nstatus: 'deferred'\n---\n\n# Поиск").status == \
+        "deferred"
+    assert issue_parsed("---\nid: ISS-0012\nadrs: [ADR-0007]\n---\n\n# Поиск").status is None
+
+
+def issue_plan(note: Note) -> NotePlan:
+    return NotePlan(key="i:поиск", id=note.id, type="issue", text=note.body,
+                    generated=note.body, links=list(note.links), action="create")
+
+
+def test_an_issue_file_whose_status_changed_is_edited_by_hand(tmp_path, issues):
+    """Статус поменяли после записи — файл правили руками, как при любой правке: повторная запись
+    его не трогает."""
+    issues.mkdir()
+    note = Note("ISS-0012", "issue", "# Поиск\n\nИщется.", ("ADR-0007",))
+    path = issues / "ISS-0012.md"
+    path.write_text(issue_rendered(note), encoding="utf-8")
+    old = ExportedNote(key="i:поиск", id=note.id, type="issue", generated=note.body,
+                       written=note.body, links=list(note.links),
+                       digest=unmarked_digest(path, "issue"))
+
+    def action() -> str:
+        return settled(issue_plan(note), old,
+                       Shelf(Catalog({}), tmp_path / "notes", issues, loaded(issues))).action
+
+    assert action() == "same"
+    path.write_text(path.read_text(encoding="utf-8").replace("status: open", "status: done"),
+                    encoding="utf-8")
+    assert action() == "edited"
+
+
+def test_an_issue_file_of_the_old_version_gets_its_status_when_written_again(tmp_path, issues):
+    """Файл прежней версии — без статуса: запись с тем же текстом не оставляет его как есть, а
+    ставит ему status: open, как всем задачам, которые пишет совет."""
+    issues.mkdir()
+    note = Note("ISS-0012", "issue", "# Поиск\n\nИщется.", ("ADR-0007",))
+    path = issues / "ISS-0012.md"
+    path.write_text("---\nid: ISS-0012\nadrs: [ADR-0007]\n---\n\n# Поиск\n\nИщется.\n",
+                    encoding="utf-8")
+    old = ExportedNote(key="i:поиск", id=note.id, type="issue", generated=note.body,
+                       written=note.body, links=list(note.links),
+                       digest=unmarked_digest(path, "issue"))
+    shelf = Shelf(Catalog({}), tmp_path / "notes", issues, loaded(issues))
+    plan = settled(issue_plan(note), old, shelf)
+    assert plan.action == "update"
+    written([plan], [], {}, [], shelf, None)
+    assert issue_parsed(path.read_text(encoding="utf-8")).status == "open"
+
+
+def test_the_research_sees_the_open_and_deferred_issues_of_the_folder(issues):
+    """Исследование кода видит открытые и отложенные задачи папки задач: номер, название, статус,
+    решения и что сделать. Сделанные, отменённые, без статуса (файл прежней версии) и со
+    статусом, которого совет не знает, — нет."""
+    issues.mkdir()
+    files = {
+        "ISS-0031.md": "---\nid: ISS-0031\nstatus: deferred\nparent: ISS-0033\n"
+                       "adrs: [ADR-0007]\ndepends_on: [ISS-0030]\n---\n\n# Кэш\n\nЧтобы быстро."
+                       "\n\n## Where to change\n- app.py\n\n## To do\n- Завести кэш.\n"
+                       "- Сбрасывать его\n  по таймеру.\n\n## Risks\n- Память.\n",
+        "ISS-0030.md": "---\nid: ISS-0030\nstatus: open\n---\n\n# Индекс\n\nЧтобы искать.\n\n"
+                       "## Что сделать\n- Собрать индекс.\n\nВ финальном коммите…\n",
+        "ISS-0033.md": "---\nid: ISS-0033\nstatus: open\nadrs: [ADR-0007, ADR-0008]\n---\n\n"
+                       "# Быстрый поиск\n\nПоиск отвечает за секунду.\n\n"
+                       "## Критерии готовности\n- Отвечает за секунду.\n",
+        "ISS-0029.md": "---\nid: ISS-0029\nstatus: done\n---\n\n# Сделано\n",
+        "ISS-0028.md": "---\nid: ISS-0028\nstatus: cancelled\n---\n\n# Отменено\n",
+        "ISS-0027.md": "---\nid: ISS-0027\n---\n\n# Прежней версии\n",
+        "ISS-0026.md": "---\nid: ISS-0026\nstatus: in progress\n---\n\n# Неясно\n",
+    }
+    for name, text in files.items():
+        (issues / name).write_text(text, encoding="utf-8")
+    found = planned(loaded(issues), [words["scope"] for words in LANGUAGES.values()])
+    assert [issue.model_dump() for issue in found] == [
+        # Строка о финальном коммите после списка — не пункт.
+        {"id": "ISS-0030", "title": "Индекс", "status": "open", "adrs": [],
+         "to_do": ["Собрать индекс."]},
+        {"id": "ISS-0031", "title": "Кэш", "status": "deferred", "adrs": ["ADR-0007"],
+         "to_do": ["Завести кэш.", "Сбрасывать его по таймеру."]},
+        # Родительская задача: раздела «Что сделать» нет — что меняется.
+        {"id": "ISS-0033", "title": "Быстрый поиск", "status": "open",
+         "adrs": ["ADR-0007", "ADR-0008"], "to_do": ["Поиск отвечает за секунду."]},
+    ]
+    assert planned(loaded(issues / "нет"), ["Что сделать"]) == []
 
 
 def test_an_issue_file_of_the_old_version_reads_without_its_outcomes():

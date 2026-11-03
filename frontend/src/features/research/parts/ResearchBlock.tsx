@@ -24,16 +24,19 @@ interface ResearchBlockProps {
   skipped: string;
   /** Не начато: что выбрать — репозитории или ссылку. */
   setup: ReactNode;
+  /** Готово: что ещё сказать под строкой результата — у кода, какие задачи учтены. */
+  done?: ReactNode;
 }
 
 /**
  * Блок исследования, как в макете: подпись капсом и метка состояния, заголовок, пояснение; дальше — по состоянию:
  * не начато — настройка, «Пропустить» и «Начать исследование», а если исследование остановилось, над настройкой красная
- * плашка «Остановилось» и причина (в макете её нет); идёт — модели и «Остановить»; готово — что исследовано
- * и «Изменить и перезапустить»; пропущено — пунктирная плашка и «Вернуть исследование». Не вышло действие —
+ * плашка «Остановилось» и причина (в макете её нет); идёт — модели и «Остановить»; готово — что исследовано (и под этим
+ * то, что блок передал в done) и «Изменить и перезапустить»; пропущено — пунктирная плашка и «Вернуть исследование».
+ * Не вышло действие —
  * ошибка под кнопками и «Повторить».
  */
-export function ResearchBlock({ block, kicker, title, intro, skipped, setup }: ResearchBlockProps) {
+export function ResearchBlock({ block, kicker, title, intro, skipped, setup, done }: ResearchBlockProps) {
   const { t } = useI18n();
   const reset = (label: string) => (
     <Button variant="subtle" disabled={block.busy} onClick={block.reset}>
@@ -69,7 +72,10 @@ export function ResearchBlock({ block, kicker, title, intro, skipped, setup }: R
         ];
       case 'done':
         return [
-          <ResultLine result={block.result} count={block.count} />,
+          <>
+            <ResultLine result={block.result} count={block.count} />
+            {done}
+          </>,
           <span className={styles.note}>{t('research.results')}</span>,
           reset(t('research.reset')),
         ];

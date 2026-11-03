@@ -58,6 +58,16 @@ export interface ScannedRepo {
   files: number;
 }
 
+/**
+ * Задача папки задач проекта, которую учло исследование кода: стоит, но ещё не сделана (open), или отложена (deferred) —
+ * решение владельца к задаче «Бекенд · Задачи: статус во frontmatter…».
+ */
+export interface ResearchTask {
+  /** Номер задачи в папке задач: «ISS-0031». */
+  id: string;
+  status: 'open' | 'deferred';
+}
+
 /** Исследование кода. */
 export interface CodeResearch {
   state: ResearchState;
@@ -73,6 +83,8 @@ export interface CodeResearch {
   rounds: number;
   /** Почему остановилось — у кода только общая причина; не останавливалось — null. */
   stopReason: Extract<ResearchStop, 'failed'> | null;
+  /** Какие задачи учло готовое исследование, по номерам; иначе пусто. */
+  tasks: ResearchTask[];
 }
 
 /** Исследование макета Figma. */

@@ -24,6 +24,10 @@ from spec_council.translation import (
 
 RU = words_for("Russian")
 EN = words_for("English")
+# Строка о номере для финального коммита по-английски: номер задачи и статус done в том же
+# коммите (решение владельца к задаче «Бекенд · Задачи: статус во frontmatter…»).
+COMMIT = ("Put the issue number {} into the final commit and set `status: done` in the "
+          "frontmatter of this issue in the same commit.")
 
 
 def decision(text: str, why: str, *adrs: str) -> str:
@@ -74,7 +78,7 @@ def test_an_issue_shows_the_judge_its_headings_and_commit_line_as_markers():
         "# Индекс\n\nЧтобы искать.\n\n## Where to change\n- app.py\n\n## What is there now\n"
         "Индекса нет.\n\n```\n## Риски\n```\n\n## To do\n- Собрать индекс.\n\n## Risks\n"
         "- Медленно.\n\n## Open questions\n- Где хранить?\n\n## After the issues\n"
-        "- ISS-0007: Схема\n\nPut the issue number ISS-0008 into the final commit.")
+        "- ISS-0007: Схема\n\n" + COMMIT.format("ISS-0008"))
     parent = parent_text(Outcome(id="O1", title="Мерило", behavior="Видно.",
                                  acceptance_criteria=["Считается."]), RU)
     assert templated(parent, "issue", "ISS-0009", RU) == \
@@ -92,8 +96,7 @@ def test_a_marker_the_text_itself_has_stays_as_it_is():
     # Судья держит метки самого текста, как и связки, — а на их место связки не встают.
     assert filled(source.text, EN, "ISS-0008", source.kept) == (
         "# Метки\n\nЧтобы видеть ⟦now⟧.\n\n## What is there now\nПример:\n\n```\n"
-        "print(\"⟦now⟧\")\n```\n\n## To do\n- Метка ⟦commit⟧.\n\n"
-        "Put the issue number ISS-0008 into the final commit.")
+        "print(\"⟦now⟧\")\n```\n\n## To do\n- Метка ⟦commit⟧.\n\n" + COMMIT.format("ISS-0008"))
     texts, _ = translated(answer(source.text.replace("Пример", "Example")), {"n1": source.text},
                           {}, lambda key, text: filled(text, EN, "ISS-0008", source.kept))
     assert 'print("⟦now⟧")' in texts["n1"] and "## What is there now\nExample:" in texts["n1"]
@@ -102,15 +105,13 @@ def test_a_marker_the_text_itself_has_stays_as_it_is():
     assert filled(adr.text, EN, "ADR-0007", adr.kept) == "Писать ⟦because⟧, because так в коде."
     # Что за метками, судье сказано только про связки.
     assert legend([source], EN) == ("- ⟦now⟧ — “What is there now”\n- ⟦scope⟧ — “To do”\n"
-                                    "- ⟦commit⟧ — “Put the issue number <its issue number> into "
-                                    "the final commit.”")
+                                    f"- ⟦commit⟧ — “{COMMIT.format('<its issue number>')}”")
 
 
 def test_the_judge_is_told_what_stands_behind_the_markers():
     sources = [Template("## ⟦now⟧\nТекст"), Template("А, ⟦because⟧ Б\n\n⟦commit⟧")]
     assert legend(sources, EN) == ("- ⟦now⟧ — “What is there now”\n- ⟦because⟧ — “because”\n"
-                                   "- ⟦commit⟧ — “Put the issue number <its issue number> into "
-                                   "the final commit.”")
+                                   f"- ⟦commit⟧ — “{COMMIT.format('<its issue number>')}”")
     assert legend([Template("Текст")], EN) == "(none)"
 
 
@@ -126,8 +127,7 @@ def answer(*texts: str, glossary=()) -> dict:
 def test_a_translation_keeps_the_markers_in_place():
     sources = {"n1": "## ⟦now⟧\nИндекса нет.\n\n⟦commit⟧"}
     texts, _ = translated(answer("## ⟦now⟧\nNo index.\n\n⟦commit⟧"), sources, {}, fill)
-    assert texts == {"n1": "## What is there now\nNo index.\n\n"
-                           "Put the issue number ISS-0008 into the final commit."}
+    assert texts == {"n1": "## What is there now\nNo index.\n\n" + COMMIT.format("ISS-0008")}
     for broken in ("## What is there now\nNo index.\n\n⟦commit⟧",
                    "## ⟦now⟧\nNo index.\n\n⟦commit⟧\n\n⟦risks⟧",
                    "⟦commit⟧\n\n## ⟦now⟧\nNo index."):

@@ -67,7 +67,8 @@ class NotesError(ValueError):
 
 @dataclass(frozen=True)
 class Note:
-    """Заметка. superseded_by — у ADR, что записан заменённым: каким решением (frontmatter)."""
+    """Заметка. superseded_by — у ADR, что записан заменённым: каким решением (frontmatter).
+    status — у файла задачи: её статус из frontmatter (issue_files.STATUSES); нет поля — None."""
 
     id: str
     type: str
@@ -75,6 +76,7 @@ class Note:
     links: tuple[str, ...] = ()
     path: Path | None = field(default=None, compare=False)
     superseded_by: str | None = None
+    status: str | None = None
 
     def as_dict(self) -> dict[str, object]:
         return {"id": self.id, "type": self.type, "body": self.body, "links": list(self.links)}

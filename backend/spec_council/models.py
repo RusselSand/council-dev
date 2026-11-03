@@ -379,6 +379,19 @@ class ScannedRepository(BaseModel):
     skipped: list[str] = []
 
 
+class PlannedIssue(BaseModel):
+    """Задача из папки задач проекта, которую видит исследование кода, — запланированная
+    (open) или отложенная (deferred) работа, а не то, что есть в коде (решение владельца к задаче
+    «Бекенд · Задачи: статус во frontmatter…»): номер, название, статус, решения (adrs) и что
+    сделать — пункты раздела «Что сделать», а без него — текст под названием."""
+
+    id: str
+    title: str = ""
+    status: Literal["open", "deferred"]
+    adrs: list[str] = []
+    to_do: list[str] = []
+
+
 class RepositoryScan(BaseModel):
     """Скан репозиториев под идею потока: inventory каждой рабочей копии при запуске,
     участники исследуют их вместе, судья проверяет и, если пробелы существенны, отправляет их
@@ -389,6 +402,9 @@ class RepositoryScan(BaseModel):
     # К какой идее и каким рабочим копиям.
     idea: str = ""
     repositories: list[ScannedRepository] = []
+    # Задачи папки задач проекта, которые скан видел запланированными (PlannedIssue): их ход
+    # читает в фоне, вместе с inventory. У скана прежней версии и без папки задач — пусто.
+    issues: list[PlannedIssue] = []
     # Сколько проходов участников и судьи понадобилось.
     rounds: int = 0
     steps: list[Step]

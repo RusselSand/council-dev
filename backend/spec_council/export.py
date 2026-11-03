@@ -81,13 +81,15 @@ WORDS = {
                 "entry": "Где менять", "now": "Что там сейчас", "scope": "Что сделать",
                 "keep": "Соблюдать", "risks": "Риски", "after": "После задач",
                 "open": "Открытые вопросы",
-                "commit": "В финальном коммите укажите номер задачи — {id}.",
+                "commit": "В финальном коммите укажите номер задачи — {id} — и поставьте "
+                          "`status: done` во frontmatter этой задачи в том же коммите.",
                 "replaces": "Заменяет", "quote": "«{}»"},
     "english": {"because": "because", "criteria": "Acceptance criteria",
                 "entry": "Where to change", "now": "What is there now", "scope": "To do",
                 "keep": "Keep", "risks": "Risks", "after": "After the issues",
                 "open": "Open questions",
-                "commit": "Put the issue number {id} into the final commit.",
+                "commit": "Put the issue number {id} into the final commit and set "
+                          "`status: done` in the frontmatter of this issue in the same commit.",
                 "replaces": "Supersedes", "quote": "“{}”"},
 }
 ALIASES = {"русский": "russian", "ru": "russian", "en": "english", "английский": "english"}
@@ -1199,14 +1201,19 @@ def previous_of(plan: NotePlan, before: Mapping[str, ExportedNote]) -> ExportedN
 
 
 def settled(plan: NotePlan, old: ExportedNote | None, shelf: Shelf) -> NotePlan:
-    """Что будет с заметкой (или файлом задачи) при записи — по тому, что лежит там сейчас."""
+    """Что будет с заметкой (или файлом задачи) при записи — по тому, что лежит там сейчас.
+    Файл задачи, где статус поменяли после записи, — правленный руками, как при любой правке
+    (решение владельца к задаче «Бекенд · Задачи: статус во frontmatter…»). Файл задачи без
+    статуса (записан прежней версией) — не тот же: запись ставит ему статус open, как и всем
+    задачам, которые пишет."""
     held = shelf.held(plan.id, plan.type)
     if held is None:
         return plan.model_copy(update={"action": "create", "current": None})
     path = shelf.path(plan.id, plan.type)
     if old is not None and not written_as(path, old.digest, plan.type):
         return plan.model_copy(update={"action": "edited", "current": held.body})
-    if held.body == plan.text.strip() and list(held.links) == plan.links:
+    if held.body == plan.text.strip() and list(held.links) == plan.links \
+            and (plan.type != "issue" or held.status is not None):
         return plan.model_copy(update={"action": "same", "current": None})
     return plan.model_copy(update={"action": "update", "current": held.body})
 
