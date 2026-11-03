@@ -1,40 +1,40 @@
 import type { ReactNode } from 'react';
 import { DoneWhen } from '../../../components/DoneWhen';
 import { Panel } from '../../../ui/Panel';
-import type { ParentView } from '../useTasks';
-import styles from './ParentCard.module.css';
+import type { OutcomeView } from '../useTasks';
+import styles from './OutcomeCard.module.css';
 import { TaskHead } from './TaskHead';
 
-interface ParentCardProps {
-  parent: ParentView;
+interface OutcomeCardProps {
+  outcome: OutcomeView;
   onToggle: () => void;
-  /** Подзадачи — задачи плана этого итога. */
+  /** Задачи плана этого итога. */
   children?: ReactNode;
 }
 
 /**
- * Родительская задача — утверждённый итог (решение владельца к задаче «Бекенд · Итоги → родительские задачи…»; в
- * макете её нет): белый блок в рамке — строка, как у задачи, со счётом подзадач; мелко — итог и решения; у открытой —
- * что меняется и «Готово, когда». Ниже в том же блоке — её подзадачи.
+ * Итог — утверждённый итог потока (решение владельца к задаче «Бекенд · Задачи: итоги — файлы OUT в подпапке…»; в
+ * макете итогов на «Задачах» нет): белый блок в рамке — строка, как у задачи, со счётом задач; мелко — итог и решения; у
+ * открытого — что меняется и «Готово, когда». Ниже в том же блоке — его задачи.
  */
-export function ParentCard({ parent, onToggle, children }: ParentCardProps) {
+export function OutcomeCard({ outcome, onToggle, children }: OutcomeCardProps) {
   return (
     <Panel variant="outlined">
       <TaskHead
-        label={parent.label}
-        stream={parent.stream}
-        title={parent.title}
-        tag={parent.tag}
-        open={parent.open}
-        toggleLabel={parent.toggleLabel}
+        label={outcome.label}
+        stream={outcome.stream}
+        title={outcome.title}
+        tag={outcome.tag}
+        open={outcome.open}
+        toggleLabel={outcome.toggleLabel}
         onToggle={onToggle}
       />
-      <span className={styles.meta}>{parent.meta}</span>
-      {parent.open && (
+      <span className={styles.meta}>{outcome.meta}</span>
+      {outcome.open && (
         <>
-          <p className={styles.change}>{parent.change}</p>
-          {parent.criteria.length > 0 && (
-            <DoneWhen variant="muted" title={parent.criteriaTitle} criteria={parent.criteria} />
+          <p className={styles.change}>{outcome.change}</p>
+          {outcome.criteria.length > 0 && (
+            <DoneWhen variant="muted" title={outcome.criteriaTitle} criteria={outcome.criteria} />
           )}
         </>
       )}

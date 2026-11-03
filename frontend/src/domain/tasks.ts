@@ -13,13 +13,13 @@ export type TaskPhase = (typeof TASK_PHASES)[number];
 export type TaskStep = RunStep<TaskPhase>;
 
 /**
- * Родительская задача — утверждённый итог потока: задачи плана этого итога — её подзадачи (решение владельца к задаче
- * «Бекенд · Итоги → родительские задачи…»).
+ * Итог — утверждённый итог потока, к которому относятся задачи плана. В каталоге задач он не задача, а свой файл в
+ * подпапке (решение владельца к задаче «Бекенд · Задачи: итоги — файлы OUT в подпапке, в папке задач только ISS»).
  */
-export interface ParentTask {
-  /** id родительской задачи в плане: на него ссылается parent её подзадач; интерфейс его не разбирает. */
+export interface TaskOutcome {
+  /** id итога в плане: на него ссылается outcome его задач; интерфейс его не разбирает. */
   id: string;
-  /** Номер в каталоге задач: «ISS-0030»; номера ещё нет — null. */
+  /** Номер итога в каталоге задач: «OUT-0035»; номера ещё нет — null. */
   catalogId: string | null;
   /** Поток итога: «A». */
   stream: string;
@@ -35,7 +35,7 @@ export interface ParentTask {
   decisions: AdrRef[];
 }
 
-/** Задача для coding agent — подзадача родительской задачи своего итога. */
+/** Задача для coding agent — задача своего итога. */
 export interface Task {
   /** id задачи в плане: «I1»; на него ссылаются зависимости других задач (dependsOn). */
   id: string;
@@ -54,17 +54,17 @@ export interface Task {
   scope: string[];
   /** Открытые вопросы для агента; нет — пусто. */
   openQuestions: string[];
-  /** id родительской задачи (ParentTask) — итога потока, который задача реализует. */
-  parent: string;
+  /** id её итога (TaskOutcome) — итога потока, который задача реализует. */
+  outcome: string;
   /** Решения потока, на которых задача стоит; нет — пусто. */
   decisions: AdrRef[];
   /** id задач плана, после которых её брать; нет — пусто: можно брать. */
   dependsOn: string[];
 }
 
-/** Задача прошлой записи в каталог, которой нет в нынешнем плане: при записи её файл удалится. */
+/** Задача (или итог) прошлой записи в каталог, которой нет в нынешнем плане: при записи её файл удалится. */
 export interface VanishedTask {
-  /** Номер в каталоге задач: «ISS-0016». */
+  /** Номер в каталоге задач: «ISS-0016», у итога — «OUT-0035». */
   id: string;
   /** Заголовок задачи — как записан в каталоге. */
   title: string;
@@ -82,8 +82,8 @@ export interface TasksPlan {
   catalog: Catalog | null;
   /** Ход последней работы моделей над планом — части по порядку; моделей не звали — пусто. */
   progress: TaskStep[];
-  /** Родительские задачи — по одной на каждый утверждённый итог, по порядку потоков и итогов; плана нет — пусто. */
-  parents: ParentTask[];
+  /** Итоги — по одному на каждый утверждённый итог, по порядку потоков и итогов; плана нет — пусто. */
+  outcomes: TaskOutcome[];
   /** Задачи плана, по порядку сервера; плана нет (не все потоки готовы, модели его строят, он остановился) — пусто. */
   tasks: Task[];
   /** Задачи прошлой записи, которых нет в плане; нет или каталога нет — пусто. */
@@ -99,28 +99,25 @@ export interface TasksPlan {
 /** Номер задачи на экране — как в макете: в каталоге, а номера нет — в плане. */
 export const taskLabel = (task: Pick<Task, 'id' | 'catalogId'>): string => task.catalogId ?? task.id;
 
-/** Номер родительской задачи на экране: в каталоге, а номера нет — номер её итога. */
-export const parentLabel = (parent: Pick<ParentTask, 'outcome' | 'catalogId'>): string =>
-  parent.catalogId ?? parent.outcome;
+/** Номер итога на экране: в каталоге, а номера нет — в потоке. */
+export const outcomeLabel = (outcome: Pick<TaskOutcome, 'outcome' | 'catalogId'>): string =>
+  outcome.catalogId ?? outcome.outcome;
 
-/** Родительская задача и её подзадачи — задачи плана с её parent, в порядке плана. */
+/** Итог и его задачи — задачи плана с его outcome, в порядке плана. */
 export interface TaskBranch {
-  parent: ParentTask;
+  outcome: TaskOutcome;
   tasks: Task[];
 }
 
-/**
- * Задачи плана под родительскими, по порядку родительских; задачи, чьей родительской в плане нет, — отдельно, в порядке
- * плана.
- */
-export function taskBranches(parents: readonly ParentTask[], tasks: readonly Task[]): {
+/** Задачи плана под их итогами, по порядку итогов; задачи, чьего итога в плане нет, — отдельно, в порядке плана. */
+export function taskBranches(outcomes: readonly TaskOutcome[], tasks: readonly Task[]): {
   branches: TaskBranch[];
   orphans: Task[];
 } {
-  const known = new Set(parents.map((p) => p.id));
+  const known = new Set(outcomes.map((o) => o.id));
   return {
-    branches: parents.map((parent) => ({ parent, tasks: tasks.filter((t) => t.parent === parent.id) })),
-    orphans: tasks.filter((t) => !known.has(t.parent)),
+    branches: outcomes.map((outcome) => ({ outcome, tasks: tasks.filter((t) => t.outcome === outcome.id) })),
+    orphans: tasks.filter((t) => !known.has(t.outcome)),
   };
 }
 
