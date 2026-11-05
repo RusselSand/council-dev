@@ -1,8 +1,8 @@
-# Council Dev
+# Spec Council
 
 **Turn a rough brief into decisions, specifications, and tasks for coding agents.**
 
-Council Dev (Spec Council in the application) is a local planning tool. A council of language models breaks down your brief, investigates the existing code and an optional Figma design, surfaces open questions, and proposes options. You review the choices and approve the results before the council builds a task plan across all workstreams.
+Spec Council is a local planning tool. A council of language models breaks down your brief, investigates the existing code and an optional Figma design, surfaces open questions, and proposes options. You review the choices and approve the results before the council builds a task plan across all workstreams.
 
 [How it works](#how-it-works) · [Try the interface](#try-the-interface) · [Installation](#installation) · [Configuration](#configuration) · [Русская инструкция](README.ru.md)
 
