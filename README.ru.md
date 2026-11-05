@@ -36,22 +36,11 @@ CLAUDE.md                       правила для агента: фронт; 
 - Браузер на этой же машине: через него входят в модели.
 
 ### 2. Доступ к репозиториям
-Оба репозитория приватные: сам `RusselSand/council-dev` и пакет `RusselSand/agent-workers`, от
-которого зависит сервер. Своей учётной записи владельца хватает; другого человека владелец
-приглашает в оба (на GitHub: Settings → Collaborators), и тот принимает приглашения.
+Репозитории `RusselSand/council-dev` и `RusselSand/agent-workers` публичные. Вход в GitHub,
+приглашения и токен доступа не нужны. Сервер использует agent-workers как зависимость: `uv`
+скачивает закреплённый тег автоматически при установке.
 
-Git на машине должен ходить в оба репозитория по HTTPS: зависимость agent-workers uv забирает
-через него. Сначала вход в GitHub:
-- Windows — ничего делать заранее не нужно: Git Credential Manager из Git for Windows сам
-  спросит вход при первом обращении (проверка ниже) и запомнит его;
-- macOS и Linux — через [GitHub CLI](https://cli.github.com/), до проверки: без него git
-  спросит логин и пароль, а пароль GitHub по HTTPS не принимает:
-  ```bash
-  gh auth login
-  gh auth setup-git
-  ```
-
-Проверка — обе команды должны вывести список веток, а не ошибку доступа:
+Проверить доступ по HTTPS:
 ```bash
 git ls-remote https://github.com/RusselSand/council-dev.git
 git ls-remote https://github.com/RusselSand/agent-workers.git
@@ -63,14 +52,6 @@ git clone https://github.com/RusselSand/council-dev.git
 cd council-dev
 cp .env.example .env
 ```
-В `.env` впишите `AGENT_WORKERS_TOKEN` — токен только на чтение agent-workers. Он нужен
-сборке образов, в сами образы не попадает. Выпускает его владелец репозитория: на GitHub —
-Settings → Developer settings → Personal access tokens → Fine-grained tokens → Generate new
-token; Repository access — Only select repositories → `agent-workers`; Permissions →
-Contents: Read-only. Fine-grained токен другого человека к чужому личному репозиторию доступа
-не даст, даже если его пригласили: такой токен ему выпускает и передаёт владелец (или он
-выпускает classic token с правом `repo`, но тот открывает все его репозитории).
-
 На Linux в `.env` нужны ещё `COUNCIL_UID` и `COUNCIL_GID` — вывод `id -u` и `id -g`: иначе
 контейнеры оставят в `.accounts` файлы root. На Windows и macOS их не задают.
 
@@ -104,8 +85,8 @@ uv run --project backend python -m agent_workers login --provider claude --home 
 ```
 Задан в `.env` свой каталог учётных записей `COUNCIL_ACCOUNTS` — входите в него:
 `--home <COUNCIL_ACCOUNTS>/<имя>`, иначе сервер вход не найдёт; без докера у модели со своим
-`COUNCIL_<ИМЯ>_HOME` — в этот каталог. Первый `uv run` ставит зависимости — agent-workers через
-git из шага 2 — и занимает минуту.
+`COUNCIL_<ИМЯ>_HOME` — в этот каталог. Первый `uv run` ставит зависимости — публичный agent-workers через
+git — и занимает минуту.
 Каждая команда открывает браузер: войдите в аккаунт с подпиской (для Codex — «Sign in with
 ChatGPT»). Проверка — та же команда со `status` вместо `login`: покажет вход и расход подписки.
 Подробнее — «Вход в модели».
@@ -143,7 +124,7 @@ Collab Figma даёт 20 запросов в месяц, а исследован
 в Figma: Settings → Account; у админа — Admin → People, колонка Seat type.
 
 ### 7. Без докера
-Шаги 1–5 те же, только докер и `AGENT_WORKERS_TOKEN` не нужны. Дальше — «Запуск» → «Без
+Шаги 1–5 те же, только докер не нужен. Дальше — «Запуск» → «Без
 докера»: две консоли, сервер и фронт. Модели работают через CLI, поставленные в шаге 5.
 
 ### Обновление
@@ -155,11 +136,8 @@ docker compose up --build
 зависимости сервера `uv run` подтянет сам, фронта — `npm --prefix frontend install`.
 
 ### Если что-то не так
-- Сборка падает с «Нет токена agent-workers» — в `.env` рядом с `docker-compose.yml` нет
-  `AGENT_WORKERS_TOKEN`. Падает с ошибкой входа git (Authentication failed, 403) — у токена нет
-  доступа к agent-workers: шаг 3.
-- `uv` не может скачать agent-workers — git не вошёл в GitHub или нет доступа к репозиторию:
-  шаг 2.
+- `uv` или сборка Docker не могут скачать agent-workers — проверьте доступ к GitHub по сети
+  командой из шага 2. Репозиторий публичный, токен и вход в GitHub не нужны.
 - Модель «не подключена» — шаг 5, `status`; имя каталога в `--home` — то же, что у модели в
   `.env`.
 - Сервер не поднимается и пишет про модели — неверная строка в `COUNCIL_PARTICIPANT_*` или
@@ -184,11 +162,6 @@ docker compose up --build
 ```bash
 cp .env.example .env
 ```
-- `AGENT_WORKERS_TOKEN` — токен только на чтение приватного репо agent-workers:
-  fine-grained token с правом Contents: Read только на этот репо (как выпустить —
-  «Установка на новой машине», шаг 3). Он нужен сборке образов: compose берёт его из `.env` и
-  передаёт build secret'ом, в образ токен не попадает. Локальному `uv` токен не нужен: доступ он
-  берёт из git, как и `git clone`.
 - `COUNCIL_PARTICIPANT_1`, `COUNCIL_PARTICIPANT_2`, `COUNCIL_JUDGE` — необязательно: кто в
   совете, см. «Модели совета». Без них — Sol и Fable, судья Fable; `COUNCIL_PARTICIPANT_2=none`
   — участник один.

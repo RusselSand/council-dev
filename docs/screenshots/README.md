@@ -1,38 +1,40 @@
 # README screenshots
 
-These are captures of the React application running in mock mode, with the browser locale set to `en-US`. The sample briefs and model responses retain their original Russian text; interface language and council output language are independent settings.
+These images show the actual React application running in mock mode, with an English interface and English sample materials. They use no provider account, live model run, or private local council data.
 
-No provider account, live model run, or private local council data is used to create these images.
+`english-materials.json` contains translations of the bundled sample text used in these views. The capture script applies them to mock source modules through a temporary Vite plugin before the application renders. It does not edit the application sources, change normal mock mode, translate live council data, or alter the rendered page after loading. The translations cover the README views, rather than the entire demo application.
 
-From the repository root, install the frontend dependencies and Chromium:
+## Reproduce
+
+From the repository root:
 
 ```bash
 npm --prefix frontend ci
 ```
 
-Then, from `frontend/`:
+Install the browser from `frontend/`:
 
 ```bash
 npx playwright install chromium
 ```
 
-Return to the repository root and use the existing screenshot command. For example:
+Return to the repository root:
 
 ```bash
-npm --prefix frontend run shot -- --name readme-options --app /c/c1/streams/B/options --locale en-US --height 1100
+node frontend/scripts/readme-shots.mjs
 ```
 
-Copy the resulting `design/.shots/readme-options-app.png` to `docs/screenshots/options.png`.
+The script writes the PNGs directly to this directory. It waits for fonts, expands task ISS-0026, and checks for browser errors and untranslated Russian text in the captured viewport. If the fixtures change, update the translations and capture again.
+
+For an existing Chromium installation, optionally set `PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH` to its executable path.
 
 | Image | App route | Viewport |
 | --- | --- | --- |
 | `overview.png` | `/home` | 1680 × 1000 |
 | `slices.png` | `/c/c1/slices` | 1440 × 1100 |
 | `research.png` | `/c/g1/research` | 1440 × 1100 |
-| `options.png` | `/c/c1/streams/B/options` | 1440 × 1100 |
+| `options.png` | `/c/c1/streams/B/options` | 1440 × 1250 |
 | `outcomes.png` | `/c/g1/streams/A/outcomes` | 1440 × 1100 |
-| `tasks.png` | `/c/g1/tasks` | 1440 × 1100 |
-
-For `overview.png`, use a 1680 px wide browser to include every Kanban column. For `tasks.png`, expand the first task (ISS-0026) before capturing; with the existing command, add `--app-click "css:button:has-text(ISS-0026)"`.
+| `tasks.png` | `/c/g1/tasks` | 1440 × 1250 |
 
 Screenshots show the initial viewport rather than the entire page, to keep text readable in GitHub's README view.

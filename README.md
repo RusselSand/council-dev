@@ -22,7 +22,7 @@ The application runs locally. Model work goes through the configured providers' 
 
 The six stages are **Brief → Slices → Groups → Research → Streams → Tasks**. Each group becomes a stream with its own review process; the final task plan brings the streams back together.
 
-> Screenshots below show the actual React application using bundled demonstration data. The interface is in English; sample briefs and model responses retain their original Russian text. In a live council, set `COUNCIL_LANGUAGE=English` for English output. Interface language follows your browser.
+> Screenshots show the actual React application with English translations of the bundled sample materials. In a live council, set `COUNCIL_LANGUAGE=English` for English output. Interface language follows your browser.
 
 ### 1. Start with a brief
 
@@ -94,20 +94,7 @@ Install Git, [uv](https://docs.astral.sh/uv/getting-started/installation/), Node
 
 For model work, you need an account with a subscription supported by the Codex or Claude Code CLI. The default council uses both providers; you can configure a council using just one.
 
-The backend depends on [`RusselSand/agent-workers`](https://github.com/RusselSand/agent-workers), a **private repository**. Access to Council Dev alone is not enough to install or build the backend. Ask its owner for access to that dependency before proceeding.
-
-Make sure Git can access it over HTTPS:
-
-```bash
-git ls-remote https://github.com/RusselSand/agent-workers.git
-```
-
-If needed, sign in using Git Credential Manager or [GitHub CLI](https://cli.github.com/):
-
-```bash
-gh auth login
-gh auth setup-git
-```
+The backend depends on the public [`RusselSand/agent-workers`](https://github.com/RusselSand/agent-workers) repository, pinned to a release tag. `uv` downloads it automatically during installation. No GitHub login or repository access token is required.
 
 ### 2. Create your configuration
 
@@ -116,8 +103,6 @@ git clone https://github.com/RusselSand/council-dev.git
 cd council-dev
 cp .env.example .env
 ```
-
-For Docker builds, set `AGENT_WORKERS_TOKEN` in `.env` to a token with read access to the private `agent-workers` repository. Compose passes it as a build secret; it is not stored in the image. The repository owner can issue a fine-grained token scoped to that repository with **Contents: Read-only**. An invited collaborator's fine-grained token cannot access another user's personally owned repository; arrange access with the owner.
 
 On Linux, also set `COUNCIL_UID` and `COUNCIL_GID` to the output of `id -u` and `id -g`. Leave them unset on Windows and macOS.
 
@@ -195,7 +180,7 @@ After dependency changes, use `docker compose up --build -V` to refresh the anon
 <details>
 <summary><strong>Run without Docker</strong></summary>
 
-Follow steps 1–4, omitting Docker and `AGENT_WORKERS_TOKEN`. Local `uv` uses your Git credentials to fetch the private dependency.
+Follow steps 1–4, omitting Docker. Local `uv` fetches the public dependency automatically without GitHub credentials.
 
 Start the backend in one terminal:
 
@@ -248,7 +233,24 @@ Projects hold the settings reused by councils: repositories to research, a docum
 
 Paths shown in Docker are relative to `COUNCIL_REPOS`. Docker mounts that directory with write access for notes and tasks; models research a snapshot of the selected repositories. Use repositories you trust. Without Docker and without `COUNCIL_REPOS`, project paths are absolute.
 
-For optional Figma research, add `FIGMA_TOKEN` to `.env` and restart. Use a personal access token with **File content: Read-only** and access to the design. See the [Russian setup guide](README.ru.md) for token and seat-limit details.
+### Optional Figma research
+
+Create a personal access token from an account that can open the design:
+
+1. In Figma, open your avatar menu → **Settings** → **Security** → **Personal access tokens** → **Generate new token**.
+2. Grant **File content: Read-only** access and select an expiry date.
+3. Copy the token immediately; Figma shows it only once. Add it to the root `.env`:
+
+```dotenv
+FIGMA_TOKEN=your-personal-access-token
+```
+
+4. Restart Compose, or restart the backend if running without Docker.
+5. Open the council's **Research** stage, enter the Figma file link, and start design research.
+
+The token reads files as its owner and uses that account's rate limit. Use an account with a Dev or Full seat for regular research: View and Collab seats have a much smaller allowance, and a scan makes several requests. Check your seat under **Settings → Account**; administrators can check **Admin → People → Seat type**. Renew the token when it expires, replace it in `.env`, and restart the backend. A token cannot grant access to a file its owner cannot open.
+
+Design research is optional; skip it when you do not have a design or suitable Figma access.
 
 ## Configuration
 
@@ -256,7 +258,6 @@ Secrets and local settings live in the root `.env`, which is excluded from Git. 
 
 | Variable | Purpose / default |
 | --- | --- |
-| `AGENT_WORKERS_TOKEN` | Private dependency access for Docker builds. |
 | `COUNCIL_PARTICIPANT_1`, `COUNCIL_PARTICIPANT_2`, `COUNCIL_JUDGE` | Council lineup; see installation step 3. |
 | `COUNCIL_ACCOUNTS` | Model login directory; defaults to `.accounts`. For a direct, non-Docker launch, `COUNCIL_<NAME>_HOME` can override a single model's directory. |
 | `COUNCIL_REPOS` | Existing directory containing project working copies and export folders. |
@@ -267,7 +268,22 @@ Secrets and local settings live in the root `.env`, which is excluded from Git. 
 | `AGENT_TIMEOUT`, `AGENT_IDLE_TIMEOUT` | Total model-turn and CLI inactivity timeouts, in seconds; defaults are 3600 and 900. An explicitly empty value removes the corresponding limit. |
 | `COUNCIL_UID`, `COUNCIL_GID` | Required on Linux for container file ownership; leave unset on Windows/macOS. |
 
-`COUNCIL_NOTES` is obsolete: configure the documentation folder on the project instead. Frontend settings are documented in [`frontend/README.md`](frontend/README.md).
+`COUNCIL_NOTES` is obsolete: configure the documentation folder on the project instead.
+
+### Frontend settings
+
+The default settings work for the standard installation. To override them, create `frontend/.env` using `frontend/.env.example`, or set environment variables before starting Vite.
+
+| Variable | Purpose | Default |
+| --- | --- | --- |
+| `VITE_DATA_SOURCE` | `http` for the backend; `mock` for bundled demonstration data. | `http` |
+| `VITE_API_URL` | API base URL used by the frontend in HTTP mode. | `/api` |
+| `VITE_API_PROXY` | Backend address to which the Vite development server forwards `/api` requests. | `http://localhost:8420` |
+| `VITE_USE_POLLING` | Set to `1` if file changes are not detected, for example with Docker on Windows. | Unset |
+
+Restart the frontend development server after changing these settings. `dev:mock` selects mock mode automatically. The normal production build uses the backend on the same origin; when FastAPI serves the built frontend, `/api` resolves to that server.
+
+The interface supports English and Russian and chooses its language from the browser's language preferences. This is separate from `COUNCIL_LANGUAGE`, which controls generated material, and `COUNCIL_NOTES_LANGUAGE`, which controls exports. Put English first in the browser's preferred languages and reload for an English interface.
 
 ## Data and agent handoff
 
@@ -289,8 +305,7 @@ uv --directory backend run python -m spec_council.notes <notes-directory> valida
 
 | Symptom | Check |
 | --- | --- |
-| Docker build cannot fetch `agent-workers` | Set `AGENT_WORKERS_TOKEN` and verify its read access to the private repository. |
-| Local `uv` cannot fetch the dependency | Confirm that Git is signed in and `git ls-remote` succeeds. |
+| Docker or local `uv` cannot fetch `agent-workers` | Check network access to GitHub. Run `git ls-remote https://github.com/RusselSand/agent-workers.git`; the repository is public and requires no credentials. |
 | A model is not connected | Run `status`; its `--home` directory must match its configured name and account path. |
 | Backend rejects the council configuration | Check the `name=provider/model` format and judge name. Restart after changing `.env`. |
 | Linux permission errors | Set `COUNCIL_UID`/`COUNCIL_GID`, and check ownership of the mounted directories. |
@@ -305,7 +320,6 @@ uv --directory backend run python -m spec_council.notes <notes-directory> valida
 | [`backend/`](backend/) | FastAPI server, council pipeline, prompts, note and task exports. |
 | [`frontend/`](frontend/) | React, TypeScript, and Vite application; HTTP and mock data sources. |
 | [`docs/api-contract.md`](docs/api-contract.md) | Backend/frontend API contract, in Russian. |
-| [`frontend/README.md`](frontend/README.md) | Frontend structure, localization, and screenshot tooling, in Russian. |
 | [`docs/old/arch.md`](docs/old/arch.md) | Earlier architecture notes; frontend sections describe the old UI. |
 | [`docs/screenshots/`](docs/screenshots/) | README screenshots and capture instructions. |
 
