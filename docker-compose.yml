@@ -37,7 +37,6 @@ services:
   backend:
     build:
       context: ./backend
-      secrets: [agent_workers_token]
     # agent-workers после хода снимает всю группу процессов CLI; без init убитые потомки
     # остались бы зомби до перезапуска контейнера.
     init: true
@@ -102,7 +101,6 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
-      secrets: [agent_workers_token]
     init: true
     user: *user
     ports:
@@ -131,9 +129,3 @@ services:
         target: /repos
         bind: { create_host_path: false }
     environment: *paths
-
-# Токен только на чтение приватного agent-workers: нужен сборке образов, в образ не попадает.
-# Compose берёт AGENT_WORKERS_TOKEN из .env рядом с этим файлом (образец — .env.example).
-secrets:
-  agent_workers_token:
-    environment: AGENT_WORKERS_TOKEN
