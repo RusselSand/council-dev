@@ -1,428 +1,319 @@
-# Spec Council
+# Council Dev
 
-Локальный инструмент подготовки ТЗ: от брифа до задач для coding agents. Совет из моделей
-разбирает текст, раскладывает его по идеям, исследует код и макет, с человеком проходит цепочку
-каждого потока — открытые вопросы, варианты, решения, итоги — и строит по итогам всех потоков один
-план задач.
+**Turn a rough brief into decisions, specifications, and tasks for coding agents.**
 
-Команды ниже даны по одной на строку и из корня репозитория: так они одинаково работают в bash и
-в PowerShell.
+Council Dev (Spec Council in the application) is a local planning tool. A council of language models breaks down your brief, investigates the existing code and an optional Figma design, surfaces open questions, and proposes options. You review the choices and approve the results before the council builds a task plan across all workstreams.
 
-## Что где лежит
+[How it works](#how-it-works) · [Try the interface](#try-the-interface) · [Installation](#installation) · [Configuration](#configuration) · [Русская инструкция](README.ru.md)
 
-```
-backend/                        сервер: FastAPI, совет, модели; правила для агента — backend/CLAUDE.md
-frontend/                       фронт: React, Vite; как он устроен — frontend/README.md
-docs/api-contract.md            контракт API между ними
-docs/old/arch.md                как устроен совет внутри (про бекенд верен, про старый фронт — нет)
-design/Совет - прототип.html    макет
-Dockerfile, docker-compose.yml  докер: разработка и один контейнер
-CLAUDE.md                       правила для агента: фронт; бекенд — backend/CLAUDE.md
-.github/workflows/ci.yml        проверки PR
-```
+![Council overview: work organized by stage, with councils waiting for review or running model steps](docs/screenshots/overview.png)
 
-## Установка на новой машине
-От чистой машины до первого совета. Сервер и фронт работают в докере, на самой машине —
-только вход в модели. Без докера — шаг 7.
+## What you get
 
-### 1. Что поставить
-- Git.
-- Docker: Docker Desktop на Windows и macOS, Docker Engine с compose v2 на Linux.
-- [uv](https://docs.astral.sh/uv/getting-started/installation/) — нужный Python 3.14 он
-  скачает сам.
-- Node.js 24 с npm — ради CLI моделей (фронту хватает 20.19).
-- Подписку хотя бы одного провайдера: ChatGPT — для моделей Codex, Claude — для моделей Claude
-  Code. Совет по умолчанию берёт по модели от каждого; с одной подпиской — см. шаг 4.
-- Браузер на этой же машине: через него входят в модели.
+- **A guided planning process.** Separate ideas, constraints, risks, questions, and proposals before turning them into a specification.
+- **Multiple perspectives.** One or two participant models, plus a judge that reviews their results. Use Codex, Claude Code, or both.
+- **Context from your project.** Optional repository and Figma research, plus earlier project decisions, inform the discussion.
+- **Explicit human choices.** Edit questions, choose or write options, finalize decisions, and approve outcomes with acceptance criteria.
+- **A handoff for coding agents.** Export linked Markdown notes and a shared task plan with dependencies and code context.
 
-### 2. Доступ к репозиториям
-Оба репозитория приватные: сам `RusselSand/council-dev` и пакет `RusselSand/agent-workers`, от
-которого зависит сервер. Своей учётной записи владельца хватает; другого человека владелец
-приглашает в оба (на GitHub: Settings → Collaborators), и тот принимает приглашения.
+The application runs locally. Model work goes through the configured providers' CLIs and uses your signed-in accounts and subscription limits. Council Dev prepares the implementation handoff; the coding agent carries out the tasks separately.
 
-Git на машине должен ходить в оба репозитория по HTTPS: зависимость agent-workers uv забирает
-через него. Сначала вход в GitHub:
-- Windows — ничего делать заранее не нужно: Git Credential Manager из Git for Windows сам
-  спросит вход при первом обращении (проверка ниже) и запомнит его;
-- macOS и Linux — через [GitHub CLI](https://cli.github.com/), до проверки: без него git
-  спросит логин и пароль, а пароль GitHub по HTTPS не принимает:
-  ```bash
-  gh auth login
-  gh auth setup-git
-  ```
+## How it works
 
-Проверка — обе команды должны вывести список веток, а не ошибку доступа:
+The six stages are **Brief → Slices → Groups → Research → Streams → Tasks**. Each group becomes a stream with its own review process; the final task plan brings the streams back together.
+
+> Screenshots below show the actual React application using bundled demonstration data. The interface is in English; sample briefs and model responses retain their original Russian text. In a live council, set `COUNCIL_LANGUAGE=English` for English output. Interface language follows your browser.
+
+### 1. Start with a brief
+
+Create a council, give it a name, and paste your requirements in free form. Select a project if you want repository research and file exports, then choose the participants and judge from the models configured on your server.
+
+You can start with incomplete requirements: unresolved questions are part of the process.
+
+### 2. Separate the input, then organize it around ideas
+
+The council splits the brief into fragments and labels them by role: idea, constraint, risk, question, or proposal. Review the labels, then ask it to propose groups. Rename, merge, or split groups before confirming them.
+
+![Slices: fragments of a brief classified as constraints, risks, ideas, questions, and proposals](docs/screenshots/slices.png)
+
+### 3. Ground the discussion in code and design
+
+Optionally investigate repositories attached to the project and a Figma design. Review the findings and decide what to bring into the streams. Both kinds of research can be skipped.
+
+![Research: repository and design research, findings, and existing code context](docs/screenshots/research.png)
+
+### 4. Work through questions and choices
+
+Each stream follows the same sequence:
+
+| Step | What happens |
+| --- | --- |
+| **Project decisions** | Select earlier decisions and context that this stream should consider. |
+| **Questions** | Review the council's open questions; remove questions or add your own. |
+| **Options** | Compare proposed answers, their rationale, costs, and dependencies. Choose, edit, or write an option; leave a question unresolved when needed. |
+| **Decisions** | Review the resulting decisions and consistency checks, address problems, and finalize them or leave them open. |
+| **Outcomes** | Review the intended behavior, acceptance criteria, constraints, and any remaining gaps or blockers. |
+| **Documentation** | Preview the linked notes and write the stream to the project's documentation folder. |
+
+The judge's recommendation is visible alongside the alternatives. You make the choice.
+
+![Options: a question, the judge's recommendation, alternatives, and controls for your own choice](docs/screenshots/options.png)
+
+### 5. Approve outcomes and export the handoff
+
+Outcomes connect the agreed behavior and acceptance criteria to the decisions behind them. Review gaps and blockers before approving them.
+
+![Outcomes: agreed behavior, acceptance criteria, supporting decisions, and constraints](docs/screenshots/outcomes.png)
+
+Once every stream has been written to the documentation catalog, the council builds **one task plan across all streams**. Review each task's dependencies, code locations, current behavior, required changes, and open questions, then write the tasks to the project's tasks folder.
+
+![Tasks: the combined implementation plan with dependencies and per-task details](docs/screenshots/tasks.png)
+
+Model steps run on the server, so you can close the page while they work. Failed steps can be retried, reusing already completed model responses where available.
+
+## Try the interface
+
+Explore the bundled examples without a backend, provider login, or model subscription. Requires Node.js 20.19 or newer and npm:
+
 ```bash
-git ls-remote https://github.com/RusselSand/council-dev.git
+git clone https://github.com/RusselSand/council-dev.git
+cd council-dev
+npm --prefix frontend ci
+npm --prefix frontend run dev:mock
+```
+
+Open **http://localhost:5420**. This is a UI demonstration with mock data and actions; running a real council requires the setup below.
+
+## Installation
+
+Run the following commands from the repository root unless stated otherwise.
+
+### 1. Prerequisites and repository access
+
+Install Git, [uv](https://docs.astral.sh/uv/getting-started/installation/), Node.js 24 with npm, and Docker with Compose v2. `uv` installs the required Python 3.14 automatically. Docker is optional if you run the services directly.
+
+For model work, you need an account with a subscription supported by the Codex or Claude Code CLI. The default council uses both providers; you can configure a council using just one.
+
+The backend depends on [`RusselSand/agent-workers`](https://github.com/RusselSand/agent-workers), a **private repository**. Access to Council Dev alone is not enough to install or build the backend. Ask its owner for access to that dependency before proceeding.
+
+Make sure Git can access it over HTTPS:
+
+```bash
 git ls-remote https://github.com/RusselSand/agent-workers.git
 ```
 
-### 3. Клонировать и заполнить `.env`
+If needed, sign in using Git Credential Manager or [GitHub CLI](https://cli.github.com/):
+
+```bash
+gh auth login
+gh auth setup-git
+```
+
+### 2. Create your configuration
+
 ```bash
 git clone https://github.com/RusselSand/council-dev.git
 cd council-dev
 cp .env.example .env
 ```
-В `.env` впишите `AGENT_WORKERS_TOKEN` — токен только на чтение agent-workers. Он нужен
-сборке образов, в сами образы не попадает. Выпускает его владелец репозитория: на GitHub —
-Settings → Developer settings → Personal access tokens → Fine-grained tokens → Generate new
-token; Repository access — Only select repositories → `agent-workers`; Permissions →
-Contents: Read-only. Fine-grained токен другого человека к чужому личному репозиторию доступа
-не даст, даже если его пригласили: такой токен ему выпускает и передаёт владелец (или он
-выпускает classic token с правом `repo`, но тот открывает все его репозитории).
 
-На Linux в `.env` нужны ещё `COUNCIL_UID` и `COUNCIL_GID` — вывод `id -u` и `id -g`: иначе
-контейнеры оставят в `.accounts` файлы root. На Windows и macOS их не задают.
+For Docker builds, set `AGENT_WORKERS_TOKEN` in `.env` to a token with read access to the private `agent-workers` repository. Compose passes it as a build secret; it is not stored in the image. The repository owner can issue a fine-grained token scoped to that repository with **Contents: Read-only**. An invited collaborator's fine-grained token cannot access another user's personally owned repository; arrange access with the owner.
 
-### 4. Выбрать модели
-По умолчанию совет — `sol` (Codex) и `fable` (Claude Code), судья `fable`: нужны обе подписки.
-Другой состав — строками в `.env`, например только с подпиской Claude:
-```bash
-COUNCIL_PARTICIPANT_1=fable=claude/claude-fable-5-1
-COUNCIL_PARTICIPANT_2=opus=claude/claude-opus-5-5
-COUNCIL_JUDGE=fable
+On Linux, also set `COUNCIL_UID` and `COUNCIL_GID` to the output of `id -u` and `id -g`. Leave them unset on Windows and macOS.
+
+For English model output and exported notes:
+
+```dotenv
+COUNCIL_LANGUAGE=English
+COUNCIL_NOTES_LANGUAGE=English
 ```
-Или совет из одного участника — он же и судья:
-```bash
-COUNCIL_PARTICIPANT_1=fable=claude/claude-fable-5-1
-COUNCIL_PARTICIPANT_2=none
-```
-Формат и правила — «Модели совета» ниже.
 
-### 5. Войти в модели
-CLI моделей — тех же версий, что в образе (разбор ответов завязан на их вывод); ставить только
-те, чей провайдер есть в совете:
-```bash
-npm i -g @openai/codex@0.162.1
-npm i -g @anthropic-ai/claude-code@2.1.282
-```
-На Linux с системным Node `npm i -g` идёт через `sudo`. Затем вход — по разу на каждую модель
-совета, `--home .accounts/<имя>` с именем из шага 4. Для состава по умолчанию:
-```bash
-uv run --project backend python -m agent_workers login --provider codex --home .accounts/sol
-uv run --project backend python -m agent_workers login --provider claude --home .accounts/fable
-```
-Задан в `.env` свой каталог учётных записей `COUNCIL_ACCOUNTS` — входите в него:
-`--home <COUNCIL_ACCOUNTS>/<имя>`, иначе сервер вход не найдёт; без докера у модели со своим
-`COUNCIL_<ИМЯ>_HOME` — в этот каталог. Первый `uv run` ставит зависимости — agent-workers через
-git из шага 2 — и занимает минуту.
-Каждая команда открывает браузер: войдите в аккаунт с подпиской (для Codex — «Sign in with
-ChatGPT»). Проверка — та же команда со `status` вместо `login`: покажет вход и расход подписки.
-Подробнее — «Вход в модели».
+### 3. Choose your council
 
-### 6. Запустить и проверить
-```bash
-docker compose up --build
-```
-Первая сборка — несколько минут. Откройте http://localhost:5420 (API — http://localhost:8420);
-остановить — Ctrl+C или `docker compose down`. Дальше:
-1. «+ Новый совет»: на «Вводе» в блоке «Совет» у моделей не должно быть пометки «не
-   подключена». Есть — вход не прошёл, или имя в `--home` не совпало с именем модели в `.env`:
-   проверьте `status` из шага 5.
-2. Вставьте пару абзацев текста и нажмите «Нарезать →»: через минуту-две на «Нарезке» появятся
-   фрагменты. Дальше — «Как работать» ниже.
+The defaults are defined in [`.env.example`](.env.example):
 
-Проекты — репозитории, папка документации и папка задач, которые совет берёт по проекту (см.
-«Проекты»), — необязательны, но без них нет ни исследования кода, ни выгрузки заметок и задач.
-Чтобы совет видел ваши репозитории, впишите в `.env` `COUNCIL_REPOS` — каталог, где лежат рабочие
-копии всех ваших проектов (прямо в нём или в папках в нём), например `COUNCIL_REPOS=..`, — и
-перезапустите compose. Докер монтирует его на запись: в нём же папки документации и задач
-проектов. Исследуйте только свои, доверенные репозитории.
-
-«Исследование макета» Figma тоже необязательно. Ему нужен персональный токен Figma в `.env`:
-`FIGMA_TOKEN=…`. Выпускает его тот, у кого есть доступ к макетам и место Dev или Full (у View и
-Collab Figma даёт 20 запросов в месяц, а исследование тратит 3–4):
-1. Figma → аватар слева вверху → Settings → вкладка Security → Personal access tokens →
-   Generate new token.
-2. Права — только File content: Read-only; срок — до 90 дней (дольше Figma не даёт: потом
-   выпустить новый).
-3. Скопировать токен сразу — Figma показывает его один раз, — вписать в `.env` и перезапустить
-   compose.
-
-Токен читает файлы от имени того, кто его выпустил, и тратит его лимит. Свой тип места видно
-в Figma: Settings → Account; у админа — Admin → People, колонка Seat type.
-
-### 7. Без докера
-Шаги 1–5 те же, только докер и `AGENT_WORKERS_TOKEN` не нужны. Дальше — «Запуск» → «Без
-докера»: две консоли, сервер и фронт. Модели работают через CLI, поставленные в шаге 5.
-
-### Обновление
-```bash
-git pull
-docker compose up --build
-```
-Поменялись `package.json` или `pyproject.toml` — `docker compose up --build -V`. Без докера
-зависимости сервера `uv run` подтянет сам, фронта — `npm --prefix frontend install`.
-
-### Если что-то не так
-- Сборка падает с «Нет токена agent-workers» — в `.env` рядом с `docker-compose.yml` нет
-  `AGENT_WORKERS_TOKEN`. Падает с ошибкой входа git (Authentication failed, 403) — у токена нет
-  доступа к agent-workers: шаг 3.
-- `uv` не может скачать agent-workers — git не вошёл в GitHub или нет доступа к репозиторию:
-  шаг 2.
-- Модель «не подключена» — шаг 5, `status`; имя каталога в `--home` — то же, что у модели в
-  `.env`.
-- Сервер не поднимается и пишет про модели — неверная строка в `COUNCIL_PARTICIPANT_*` или
-  `COUNCIL_JUDGE`: формат `имя=провайдер/модель`.
-- Linux: нет прав на `.accounts` или `.data`, или заметки не пишутся в папку документации
-  проекта — не заданы `COUNCIL_UID` и `COUNCIL_GID`: шаг 3.
-- Фронт на http://localhost:5420 открывается, но экраны пишут «Что-то пошло не так», а vite в
-  консоли — `http proxy error` — сервер на 8420 не запущен: «Запуск».
-- Заняты порты 5420 и 8420 — их держит другой процесс.
-- «Исследование макета» снова «не начато», а на красной плашке «Остановилось» под ним —
-  «Токен Figma не подходит» — токен истёк (живёт до 90 дней), отозван или без права File
-  content; «Figma ограничила запросы» — лимит владельца токена, у места View или Collab это 20
-  запросов в месяц; «Файла Figma нет» — файла нет или у владельца токена нет к нему доступа.
-  «Исследование остановилось — начните его снова или пропустите.» — другая причина: например,
-  в `.env` нет `FIGMA_TOKEN` (шаг 6), Figma недоступна или модели не справились; подробности
-  — в `.data/<id>.json` совета, в `design_scan.error`. Так же у «Исследования кода» — его
-  причина всегда эта, подробности — в `scan.error`.
-
-## Настройки в `.env`
-Секреты и настройки для локальной работы лежат в `.env` в корне репозитория. Он не
-коммитится, образец — `.env.example`:
-```bash
-cp .env.example .env
-```
-- `AGENT_WORKERS_TOKEN` — токен только на чтение приватного репо agent-workers:
-  fine-grained token с правом Contents: Read только на этот репо (как выпустить —
-  «Установка на новой машине», шаг 3). Он нужен сборке образов: compose берёт его из `.env` и
-  передаёт build secret'ом, в образ токен не попадает. Локальному `uv` токен не нужен: доступ он
-  берёт из git, как и `git clone`.
-- `COUNCIL_PARTICIPANT_1`, `COUNCIL_PARTICIPANT_2`, `COUNCIL_JUDGE` — необязательно: кто в
-  совете, см. «Модели совета». Без них — Sol и Fable, судья Fable; `COUNCIL_PARTICIPANT_2=none`
-  — участник один.
-- `COUNCIL_ACCOUNTS` — необязательно: каталог учётных записей моделей вместо `.accounts`, см.
-  «Вход в модели»; без докера свой каталог одной модели — `COUNCIL_<ИМЯ>_HOME`.
-- `AGENT_TIMEOUT`, `AGENT_IDLE_TIMEOUT` — необязательно: пределы хода модели в секундах, весь
-  ход и молчание CLI. По умолчанию час и 15 минут; пустое значение снимает предел.
-- `COUNCIL_DATA` — необязательно: другой каталог советов вместо `.data`, только вне
-  репозитория, см. «Где хранятся советы».
-- `COUNCIL_REPOS` — необязательно: каталог с рабочими копиями репозиториев. Из него проекты
-  берут репозитории для исследования кода, папку документации для заметок и папку задач, пути
-  на экране — от него; см. «Проекты». Docker монтирует его на запись: туда шаг «Документация»
-  кладёт заметки, а «Задачи» — задачи; модели читают не сами рабочие копии, а их снимок. Docker
-  его не создаёт: укажите существующий каталог (на Linux созданный docker'ом принадлежал бы
-  root). Без него docker берёт пустой `.repos` в корне, а без docker пути — абсолютные.
-- `FIGMA_TOKEN` — необязательно: персональный токен Figma для «Исследования макета», только
-  File content: Read-only; как выпустить — «Установка на новой машине», шаг 6.
-- `COUNCIL_NOTES` больше не читается: папка документации теперь у проекта. Задан — сервер
-  предупредит об этом при старте; перенесите путь в проект и уберите строку из `.env`.
-- `COUNCIL_LANGUAGE` — язык, на котором совет пишет для человека (вопросы, варианты, решения,
-  итоги, задачи), как его поймёт модель: `Russian`, `English`… По умолчанию — `Russian`.
-  Промпты — на английском, это только язык вывода. Язык интерфейса — свой: его берут из языков
-  браузера.
-- `COUNCIL_NOTES_LANGUAGE` — язык заметок, по умолчанию — язык работы. Другой — заметки и задачи
-  переводит судья, прежде чем их показать. Связки в заметках («потому что», «Критерии
-  готовности», «Задачи») совет знает по-русски и по-английски; на другом языке их так же доводит
-  судья.
-- `COUNCIL_UID`, `COUNCIL_GID` — только Linux, обязательно: под кем работают контейнеры, чтобы
-  файлы в `.accounts`, `.data` и папках проектов были ваши, а не root (`id -u`, `id -g`). На
-  Windows и macOS не задавать; см. шаг 3.
-
-Настройки фронта — в `frontend/.env`, см. `frontend/README.md`, «Настройки». Для обычной работы
-их задавать не нужно.
-
-## Модели совета
-Совет — два участника или один, и судья; их задают в `.env` (пусто — по умолчанию):
-```bash
+```dotenv
 COUNCIL_PARTICIPANT_1=sol=codex/gpt-5.6-sol
 COUNCIL_PARTICIPANT_2=fable=claude/claude-fable-5-1
 COUNCIL_JUDGE=fable
 ```
-Участник — `имя=провайдер/модель`: имя латиницей с маленькой буквы, провайдер `codex`
-(подписка ChatGPT) или `claude` (подписка Claude), модель — как её называет CLI. Судья — имя
-одного из участников или третья модель в том же виде; не задан — второй участник. Например,
-только с подпиской Claude — `fable=claude/claude-fable-5-1` и `opus=claude/claude-opus-5-5`:
-две модели одной подписки делят её лимиты. Участник один — `COUNCIL_PARTICIPANT_2=none`; судья
-не задан — он же, и тогда хватает одной подписки. Сравнивать одному не с кем, поэтому судья
-проверяет каждый его ответ, и там, где при двух сошедшихся участниках он не нужен. В нарезке и
-раскладке по группам судья своих границ и групп не придумывает: принимает, объединяет
-фрагменты или отклоняет — тогда участника спрашивают заново. Пустой `COUNCIL_PARTICIPANT_2` —
-по-прежнему второй по умолчанию. Состав каждого совета можно и сузить на «Вводе»: хоть до
-одного из заданных. Настройку читают при старте; неверную сервер не примет и не поднимется.
-Поменяли модели — у советов, сохранённых с прежними, при старте место участника, которого
-больше нет, занимает заданный, а судьёй становится заданный, если их прежнего больше нет; состав
-из моделей, что остались, не меняется.
 
-## Вход в модели
-Совет работает через CLI с подпиской: `codex` — через Codex (подписка ChatGPT), `claude` —
-через Claude Code (подписка Claude). Каждой модели совета нужен свой каталог учётной записи:
-туда CLI кладёт токены входа. По умолчанию это `.accounts/<имя>` в корне репозитория (имя —
-как в «Модели совета»: `sol`, `fable`…), а весь каталог — `COUNCIL_ACCOUNTS`. `.accounts/` уже
-в `.gitignore` и `.dockerignore`: в гит и в образы токены не попадут. Создавать каталоги руками
-не нужно, их создаёт вход.
+A participant is `name=provider/model`. Providers are `codex` and `claude`; model identifiers must be recognized by the corresponding CLI. The judge can be a participant's name or a separate `name=provider/model` definition.
 
-Вход — один раз на каждую модель, на хосте, из корня репозитория. Нужны установленные
-`codex` и `claude` тех же версий, что в образе (команды — «Установка на новой машине», шаг 5),
-и браузер. Для моделей по умолчанию:
+For a single participant that also acts as judge, for example:
+
+```dotenv
+COUNCIL_PARTICIPANT_1=fable=claude/claude-fable-5-1
+COUNCIL_PARTICIPANT_2=none
+COUNCIL_JUDGE=fable
+```
+
+With two participants, the judge defaults to the second; with one, it defaults to that participant. An empty `COUNCIL_PARTICIPANT_2` keeps the default second participant; use `none` to disable it. Models on the same subscription share its limits. You can narrow the configured lineup for an individual council on the Brief screen.
+
+### 4. Sign in to the model CLIs
+
+Install only the providers you use. These versions match the repository's Docker images:
+
+```bash
+npm i -g @openai/codex@0.162.1
+npm i -g @anthropic-ai/claude-code@2.1.282
+```
+
+Sign in once per model, using its configured name as the account directory. For the default lineup:
+
 ```bash
 uv run --project backend python -m agent_workers login --provider codex --home .accounts/sol
 uv run --project backend python -m agent_workers login --provider claude --home .accounts/fable
 ```
-Каждая команда открывает браузер: войдите в аккаунт с подпиской (для Codex — «Sign in with
-ChatGPT»). Лимиты подписки общие для всего аккаунта: если войти своим основным, совет будет
-тратить то же окно, что и вы. Проверить вход и увидеть расход подписки:
+
+The commands open a browser. For Codex, choose **Sign in with ChatGPT**. Check the connection and subscription usage with:
+
 ```bash
 uv run --project backend python -m agent_workers status --provider codex --home .accounts/sol
 uv run --project backend python -m agent_workers status --provider claude --home .accounts/fable
 ```
-Для других моделей — `--provider` их провайдер и `--home .accounts/<имя>`. Две модели одной
-подписки — два каталога и два входа в один и тот же аккаунт. После входа модель в совете
-перестаёт быть «не подключена». Docker монтирует каталог учётных записей в контейнер целиком,
-второй раз входить не нужно. Каталог в другом месте — `COUNCIL_ACCOUNTS` в `.env`
-(относительный путь считается от каталога `.env`); без докера у одной модели может быть свой —
-`COUNCIL_<ИМЯ>_HOME`, например `COUNCIL_SOL_HOME`. Тогда и вход — в него: `--home` с тем же
-каталогом, иначе сервер вход не найдёт и модель останется «не подключена».
-На Linux впишите в `.env` свои `id -u` и `id -g` как `COUNCIL_UID` и `COUNCIL_GID`:
-контейнеры пишут в `.accounts`, и под вашим пользователем всё созданное останется вашим.
-Без них контейнеры работают под root — так нужно на Windows и macOS, где Docker Desktop
-показывает эти каталоги принадлежащими root.
-Выйти — та же команда с `logout`. У Gemini подключения пока нет: в agent-workers нет её
-провайдера.
 
-## Запуск
-### В докере
-Сервер и фронт — в контейнерах, оба с hot reload; на хосте нужны только `.env` и вход в модели
-(uv и CLI моделей — см. «Вход в модели»).
+Use the same provider and directory for `logout`. Each model needs its own directory, even when two models use the same account. If you set `COUNCIL_ACCOUNTS`, use that location instead of `.accounts`; otherwise the server will not find the login. Docker mounts these account directories, so no additional login inside a container is needed.
+
+### 5. Start the application
+
 ```bash
 docker compose up --build
 ```
-Фронт — http://localhost:5420, API — http://localhost:8420: фронт передаёт запросы `/api`
-серверу.
 
-Правка кода сервера перезапускает его, и идущие ходы моделей обрываются: шаг останавливается с
-«сервер перезапускался посреди хода». Править код во время исследования или работы моделей не
-стоит; остановившийся шаг запускают снова.
+Open **http://localhost:5420**; the API is at **http://localhost:8420**. Create a council and check that its models are connected on the Brief screen. Paste a short brief and start slicing.
 
-После правок `package.json` или `pyproject.toml` пересоберите образы и обновите
-анонимные тома (в них лежит `node_modules`):
+Stop with Ctrl+C or `docker compose down`. To update:
+
 ```bash
-docker compose up --build -V
+git pull
+docker compose up --build
 ```
 
-### Без докера
-Две консоли. `uv` сам поставит зависимости и при необходимости скачает Python 3.14
-(версия задана в `backend/.python-version`).
+After dependency changes, use `docker compose up --build -V` to refresh the anonymous dependency volumes.
+
+<details>
+<summary><strong>Run without Docker</strong></summary>
+
+Follow steps 1–4, omitting Docker and `AGENT_WORKERS_TOKEN`. Local `uv` uses your Git credentials to fetch the private dependency.
+
+Start the backend in one terminal:
+
 ```bash
 uv --directory backend run uvicorn spec_council.app:app --reload --port 8420
 ```
+
+Start the frontend in another:
+
 ```bash
-npm --prefix frontend install
+npm --prefix frontend ci
 npm --prefix frontend run dev
 ```
-Фронт — http://localhost:5420, запросы `/api` он передаёт серверу на `localhost:8420`.
 
-### Один процесс
-Фронт собирается в `frontend/dist`, и дальше его отдаёт сам FastAPI — включая прямые ссылки на
-страницы вроде `/c/<совет>/brief`. Собранный фронт ходит в этот же сервер.
+Open http://localhost:5420. The Vite development server proxies `/api` to the backend on port 8420.
+
+</details>
+
+<details>
+<summary><strong>Serve the built frontend and API together</strong></summary>
+
+With Docker:
+
 ```bash
 docker compose --profile prod up app --build
 ```
-Открывается на http://localhost:8080. То же самое без докера, на http://localhost:8420:
+
+Open http://localhost:8080.
+
+Without Docker:
+
 ```bash
-npm --prefix frontend install
+npm --prefix frontend ci
 npm --prefix frontend run build
 uv --directory backend run uvicorn spec_council.app:app --port 8420
 ```
 
-### Фронт на моках
-Для работы над экранами сервер не нужен: `npm --prefix frontend run dev:mock` — тот же фронт на
-http://localhost:5420 с данными из макета. Снимки для сверки с макетом (`npm --prefix frontend run
-shot`) всегда на моках. Подробнее — `frontend/README.md`.
+Open http://localhost:8420.
 
-## Проекты
-Проект — рабочие копии, папка документации и папка задач, которые совет берёт по проекту, а не
-вводит в каждом потоке. Заводят его на экране «Проекты». Названия не повторяются без учёта
-регистра и пробелов по краям: «Кромка» и «кромка » — одно название, и проект с ним второй раз не
-создать и другой в него не переименовать. Проекты, которые уже лежат с одинаковыми названиями,
-открываются и работают. В проекте:
-- **репозитории** — рабочие копии git из `COUNCIL_REPOS`, их отмечают в окне проекта, до 10. Совет находит их
-  в самом `COUNCIL_REPOS` и в папках в нём — на 2 уровня вглубь; имя — путь от него: `kromka-api` или
-  `work/kromka-api`. Внутрь найденной рабочей копии, в скрытые папки и в `node_modules` он не заглядывает;
-- **папка документации** — куда шаг «Документация» выгружает заметки и откуда «Решения
-  проекта» берут прошлые решения. Обычно папка в репозитории проекта, например
-  `kromka-api/docs/reasoning`; её может ещё не быть — появится при первой выгрузке. Пусто —
-  без папки: потоки не выгрузить;
-- **папка задач** — куда «Записать в каталог» на «Задачах» кладёт файл на каждую задачу для
-  coding agent, например `kromka-api/docs/tasks`. Только вместе с папкой документации и не внутри
-  неё: без папки документации задачи тоже не записываются. Пусто — без папки: задачи видны, но не
-  записываются.
+</details>
 
-Проект совета выбирают на «Вводе». Проект, выбранный у советов, не удалить — сначала выберите
-им другой.
+## Connect a project
 
-## Как работать
-Совет проходит этапы слева направо: Ввод → Нарезка → Группы → Исследование → Потоки → Задачи.
-Действие человека («Нарезать →», «Предложить группы →», «К потокам →», утверждение шага потока)
-само запускает следующую работу моделей на сервере. Исследование кода и макета начинают сами —
-«Начать исследование». Пока модели работают, страницу можно
-закрыть: работа идёт на сервере. Ход модели упал — «Запустить снова»: ответы, за которые уже
-заплачено, возьмутся даром.
+Projects hold the settings reused by councils: repositories to research, a documentation folder, and a tasks folder.
 
-1. **Ввод** — название, текст в свободной форме, проект и совет: участники и судья из моделей,
-   заданных на сервере. «Нарезать →».
-2. **Нарезка** — совет режет текст на фрагменты и размечает их; тип фрагмента можно поменять.
-   «Предложить группы →».
-3. **Группы** — совет раскладывает фрагменты по группам вокруг идей; группы правят, объединяют и
-   делят. «Подтвердить →»; у групп без идеи совет ищет её сам.
-4. **Исследование** — код и макет под идеи всех групп, оба необязательны; по находкам решают,
-   что пойдёт в потоки. «К потокам →» — каждая группа становится потоком.
-5. **Потоки** — у каждого потока шаги: «Решения проекта», «Вопросы», «Варианты», «Решения»,
-   «Итоги», «Документация». Последний шаг записывает поток в папку документации проекта.
-6. **Задачи** — когда все потоки записаны, совет строит один план задач для coding agents по
-   итогам всех потоков. «Записать в каталог» кладёт их в папку задач проекта.
+1. Set `COUNCIL_REPOS` in `.env` to an existing directory containing your Git working copies, for example `COUNCIL_REPOS=..`, and restart Compose.
+2. Create a project on the **Projects** screen and select up to 10 repositories. The app discovers working copies up to two directory levels below `COUNCIL_REPOS`.
+3. Set a documentation folder, such as `my-app/docs/reasoning`, and optionally a separate tasks folder, such as `my-app/docs/tasks`. The tasks folder requires a documentation folder and must not be inside it.
+4. Select the project on the council's Brief screen.
 
-Как совет работает на каждом шаге — `docs/old/arch.md`.
+Paths shown in Docker are relative to `COUNCIL_REPOS`. Docker mounts that directory with write access for notes and tasks; models research a snapshot of the selected repositories. Use repositories you trust. Without Docker and without `COUNCIL_REPOS`, project paths are absolute.
 
-Агентам, которые пишут код, заметки отдаёт команда только на чтение, ответом в JSON:
+For optional Figma research, add `FIGMA_TOKEN` to `.env` and restart. Use a personal access token with **File content: Read-only** and access to the design. See the [Russian setup guide](README.ru.md) for token and seat-limit details.
+
+## Configuration
+
+Secrets and local settings live in the root `.env`, which is excluded from Git. See [`.env.example`](.env.example) for examples.
+
+| Variable | Purpose / default |
+| --- | --- |
+| `AGENT_WORKERS_TOKEN` | Private dependency access for Docker builds. |
+| `COUNCIL_PARTICIPANT_1`, `COUNCIL_PARTICIPANT_2`, `COUNCIL_JUDGE` | Council lineup; see installation step 3. |
+| `COUNCIL_ACCOUNTS` | Model login directory; defaults to `.accounts`. For a direct, non-Docker launch, `COUNCIL_<NAME>_HOME` can override a single model's directory. |
+| `COUNCIL_REPOS` | Existing directory containing project working copies and export folders. |
+| `COUNCIL_DATA` | Alternate council storage directory. If overridden, use a directory outside this repository and create it before starting Docker. |
+| `COUNCIL_LANGUAGE` | Model output language; defaults to `Russian`. |
+| `COUNCIL_NOTES_LANGUAGE` | Export language; defaults to the council output language. The judge translates notes and tasks when needed. |
+| `FIGMA_TOKEN` | Optional Figma personal access token. |
+| `AGENT_TIMEOUT`, `AGENT_IDLE_TIMEOUT` | Total model-turn and CLI inactivity timeouts, in seconds; defaults are 3600 and 900. An explicitly empty value removes the corresponding limit. |
+| `COUNCIL_UID`, `COUNCIL_GID` | Required on Linux for container file ownership; leave unset on Windows/macOS. |
+
+`COUNCIL_NOTES` is obsolete: configure the documentation folder on the project instead. Frontend settings are documented in [`frontend/README.md`](frontend/README.md).
+
+## Data and agent handoff
+
+Councils are stored as individual JSON files in `.data/`; projects are stored in `.data/projects/`. Docker mounts this directory so the data survives restarts and rebuilds. Account credentials live separately in `.accounts/`. Both default directories are excluded from Git and Docker build contexts. Back up your council data and exported project files as needed.
+
+Coding agents can query the exported notes with a read-only CLI that returns JSON:
+
 ```bash
-uv --directory backend run python -m spec_council.notes <каталог заметок> chain IDEA-0002
-uv --directory backend run python -m spec_council.notes <каталог заметок> get ADR-0003
-uv --directory backend run python -m spec_council.notes <каталог заметок> list --type adr
-uv --directory backend run python -m spec_council.notes <каталог заметок> search "офлайн"
-uv --directory backend run python -m spec_council.notes <каталог заметок> validate
+uv --directory backend run python -m spec_council.notes <notes-directory> chain IDEA-0002
+uv --directory backend run python -m spec_council.notes <notes-directory> get ADR-0003
+uv --directory backend run python -m spec_council.notes <notes-directory> list --type adr
+uv --directory backend run python -m spec_council.notes <notes-directory> search "offline"
+uv --directory backend run python -m spec_council.notes <notes-directory> validate
 ```
-`chain` — всё, что растёт из идеи; `get` — заметка и её статус; `list --type adr` — все решения;
-`validate` — граф по правилам. Относительный `<каталог заметок>` — от `backend`.
 
-## Где хранятся советы
-Каждый совет со всеми этапами — текст, нарезка, группы, потоки, задачи — лежит отдельным файлом
-`<id>.json` в `.data` в корне репозитория, проекты — так же, в `.data/projects` (другой каталог —
-`COUNCIL_DATA` в `.env`, относительный путь считается от каталога `.env`). `.data` в `.gitignore`
-и `.dockerignore`, докер монтирует каталог в контейнер, так что советы переживают перезапуск,
-пересборку и hot reload. Советы, сохранённые прежней версией, открываются и в этой.
+`chain` retrieves the notes linked to an idea; `get` returns a note and its status; `validate` checks the note graph. Relative note paths in these commands resolve from `backend/`.
 
-Свой каталог — только вне репозитория: внутри от git и сборки докера прикрыт лишь `.data`, и
-советы из другого каталога попали бы в коммит или в контекст сборки. Сервер, запущенный из
-репозитория, такой путь не примет и не запустится. В докере он видит только смонтированный
-`/data/councils` и проверить этого не может — так что и для compose держите `COUNCIL_DATA` вне
-репозитория.
+## Troubleshooting
 
-Каталог `.data` лежит в репозитории пустым (`.gitkeep`), и docker его не создаёт: на Linux
-созданный им каталог принадлежал бы root, а сервер под `COUNCIL_UID` не смог бы в него
-писать. Свой каталог в `COUNCIL_DATA` создайте заранее от своего имени, иначе на Linux
-`docker compose up` скажет, что его нет (Docker Desktop на Windows и macOS создаст его сам —
-там владелец не важен). Если писать в каталог всё же нельзя, сервер не запустится и в логе
-объяснит почему.
+| Symptom | Check |
+| --- | --- |
+| Docker build cannot fetch `agent-workers` | Set `AGENT_WORKERS_TOKEN` and verify its read access to the private repository. |
+| Local `uv` cannot fetch the dependency | Confirm that Git is signed in and `git ls-remote` succeeds. |
+| A model is not connected | Run `status`; its `--home` directory must match its configured name and account path. |
+| Backend rejects the council configuration | Check the `name=provider/model` format and judge name. Restart after changing `.env`. |
+| Linux permission errors | Set `COUNCIL_UID`/`COUNCIL_GID`, and check ownership of the mounted directories. |
+| UI opens but API requests fail | Confirm the backend is running on 8420 and both configured ports are free. |
+| A model step stops after a backend restart | Retry the step. Hot reload interrupts active model work. |
+| Research stops | Check the displayed reason; inspect `scan.error` or `design_scan.error` in the council's JSON file for details. Check Figma token access, expiry, and rate limits if applicable. |
 
-Ходы моделей, которые шли, когда сервер остановили, при следующем старте помечаются
-упавшими: «прерван: сервер остановился». Их можно запустить снова, и ответы, за которые уже
-заплачено, возьмутся из лотка даром. Файл, который не читается (правили руками), пропускается
-с предупреждением в логе и остаётся на месте. Удалить совет — удалить его файл при
-остановленном сервере.
+## Development
 
-## Тесты и проверки
+| Location | Contents |
+| --- | --- |
+| [`backend/`](backend/) | FastAPI server, council pipeline, prompts, note and task exports. |
+| [`frontend/`](frontend/) | React, TypeScript, and Vite application; HTTP and mock data sources. |
+| [`docs/api-contract.md`](docs/api-contract.md) | Backend/frontend API contract, in Russian. |
+| [`frontend/README.md`](frontend/README.md) | Frontend structure, localization, and screenshot tooling, in Russian. |
+| [`docs/old/arch.md`](docs/old/arch.md) | Earlier architecture notes; frontend sections describe the old UI. |
+| [`docs/screenshots/`](docs/screenshots/) | README screenshots and capture instructions. |
+
+Checks, from the repository root:
+
 ```bash
 uv --directory backend run ruff check .
 uv --directory backend run pytest
 npm --prefix frontend run typecheck
 npm --prefix frontend run build
 ```
-Или в контейнерах, если локальных зависимостей нет:
-```bash
-docker compose run --rm backend ruff check .
-docker compose run --rm backend pytest
-docker compose run --rm --no-deps frontend npm run build
-```
-Те же проверки CI прогоняет на каждом PR.
