@@ -7,7 +7,8 @@ from fastapi.testclient import TestClient
 
 from spec_council import web
 from spec_council.app import app
-from spec_council.deps import get_store
+from spec_council.deps import get_launcher, get_store
+from spec_council.models import Group, LabeledFragment, Slicing, Structure
 from spec_council.spa import STATIC, mount_spa
 from spec_council.store import InMemoryStore
 
@@ -81,6 +82,31 @@ def test_the_built_frontend_talks_to_the_api_of_the_same_server(built):
         res = built.get(url)
         assert res.status_code == 404, url
         assert res.json()["error"]["code"] == "not_found", url
+
+
+def test_the_start_seeks_the_ideas_a_person_erased():
+    # Решение владельца к задаче «Бекенд · Группы: стёртая идея…»: человек стёр идею, а совет
+    # её не искал (так сохраняла прежняя версия) — при старте сервера совет её ищет. Модели и
+    # пул старт берёт подменённые: CLI тест не зовёт.
+    store = get_store()
+    council = store.create_council(participants=["sol"], judge="sol")
+    fragment = LabeledFragment(id=1, text="Заявка уходит сама.", label="idea", reason="",
+                               council_label="idea")
+    group = Group(id="A", title="Очередь", fragment_ids=[1], idea_fragment_ids=[1],
+                  missing_idea=False, idea="", idea_by="user")
+    store.update_council(council.id, {
+        "slicing": Slicing(state="done", run="s1", steps=[], fragments=[fragment]),
+        "structure": Structure(state="done", run="g1", slicing_run="s1", labels={1: "idea"},
+                               steps=[], groups=[group])})
+    jobs = []
+    app.dependency_overrides[get_launcher] = lambda: jobs.append
+    try:
+        with TestClient(app):
+            pass
+    finally:
+        app.dependency_overrides.pop(get_launcher)
+    assert jobs
+    assert store.get_council(council.id).structure.groups[0].discovery.state == "running"
 
 
 def test_a_replaced_store_is_left_to_the_requests():

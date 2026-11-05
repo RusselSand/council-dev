@@ -1049,6 +1049,20 @@ def test_research_is_not_approved_while_a_group_has_no_idea(store, projects, poo
         "Заявка уходит сама.", "human", IDEA_B, "human")
 
 
+def test_a_stream_takes_the_idea_by_the_types_the_fragments_have_now(store, projects, pool):
+    """Решение владельца к задаче «Бекенд · Группы: стёртая идея…»: F1 поставили «предложение»,
+    F2 — «идея»: идея потока A из текста — F2, и опирается она на него."""
+    council_id = confirmed(store, projects)
+    for fragment_id, label in (("F1", "proposal"), ("F2", "idea")):
+        assert client.patch(f"/api/councils/{council_id}/fragments/{fragment_id}",
+                            json={"label": label}).status_code == 200
+    acts(council_id, "code", "skip")
+    acts(council_id, "design", "skip")
+    assert approves(council_id).status_code == 200
+    a = store.get_council(council_id).streams[0]
+    assert (a.idea.text, a.idea.by, a.idea.evidence) == (TEXTS[2], "text", [2])
+
+
 def test_slicing_again_takes_the_approval_back_and_it_makes_the_new_groups_streams(
         store, projects, pool):
     """Решение q-003 бекенда: новая нарезка снимает утверждение, находки и решения по ним

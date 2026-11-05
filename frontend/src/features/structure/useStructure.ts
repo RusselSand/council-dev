@@ -140,7 +140,8 @@ export function useStructure(council: CouncilSummary): StructureScreen {
   const { t } = useI18n();
   const running = council.stages.structure === 'running';
   const done = council.stages.structure === 'done';
-  const structure = useCouncilStructure(council.id, running);
+  // Пока у группы нет идеи, раскладка опрашивается: ИИ найдёт идею (и ту, что человек стёр), и она встанет на карточку.
+  const structure = useCouncilStructure(council.id, running, true);
   const edits = useGroupEdits(council.id, running);
   const confirmAction = useConfirmStructure();
   const retryAction = useRetryStructure();

@@ -47,7 +47,7 @@ from ..deps import (
 )
 from ..export import WORDS
 from ..figma import FigmaError, Tokenless, links_of
-from ..groups import IdeaBy, fragments_in, idea_of, without_idea
+from ..groups import IdeaBy, fragments_in, idea_fragments, idea_of, without_idea
 from ..models import (
     Council,
     DesignScan,
@@ -702,7 +702,7 @@ def streams_made(council: Council, research: Stored) -> dict:
             "title": group.title, **copy,
             "idea": stream.idea or StreamIdea(
                 text=idea.text, by=STREAM_IDEA[idea.by],
-                evidence=group.idea_fragment_ids if idea.by == "text" else [])}))
+                evidence=idea_fragments(council, group) if idea.by == "text" else [])}))
     changes: dict = {"streams": streams}
     if council.structure is not None:
         changes["structure"] = council.structure.model_copy(update={"stream_groups": {}})

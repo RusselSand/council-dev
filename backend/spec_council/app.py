@@ -8,8 +8,9 @@ from fastapi import FastAPI
 
 from . import web
 from .agents import shutdown
-from .deps import get_projects, get_store, retired
+from .deps import get_agents, get_launcher, get_projects, get_store, retired
 from .spa import mount_spa
+from .web.structure import sought_at_start
 
 
 @asynccontextmanager
@@ -17,9 +18,13 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     # Советы с диска — сразу при старте: каталог проверен и прерванные ходы отмечены до
     # запросов. Подменённое хранилище старт не трогает — ни его, ни настоящий каталог: его
     # получает на запрос сам FastAPI, со всем жизненным циклом зависимости (async, yield),
-    # которого здесь не повторить.
+    # которого здесь не повторить. Идеи, которые человек стёр, а совет не искал, ищутся сразу:
+    # модели и пул — подменённые, если их подменили (тесты), — без них такой поиск звал бы CLI.
     if get_store not in app.dependency_overrides:
-        get_store()   # заодно и модели совета: неверно заданные — сервер не поднимется
+        overrides = app.dependency_overrides
+        # заодно и модели совета: неверно заданные — сервер не поднимется
+        sought_at_start(get_store(), overrides.get(get_agents, get_agents)(),
+                        overrides.get(get_launcher, get_launcher)())
     if get_projects not in app.dependency_overrides:
         get_projects()
     retired()
