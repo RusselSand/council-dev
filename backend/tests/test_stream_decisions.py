@@ -44,6 +44,7 @@ from tests.test_stream_options import (
     watched,
 )
 from tests.test_stream_options import Agents as OptionAgents
+from tests.test_stream_options import analysis as council_analysis
 from tests.test_stream_options import approves as approves_choice
 from tests.test_stream_options import edits as rewrites
 from tests.test_stream_questions import (
@@ -67,6 +68,9 @@ HEADERS = "Искать по заголовкам и первым сообщен
 PROBLEM = "P1 ищет по всем тредам, а бюджет F3 этого не выдержит."
 CORRECTED = "Поиск остаётся в одном месте, как решает ADR-3."
 ARCHIVE = "Искать по заголовкам тредов; треды старше года уходят в архив, как и прежде."
+# Черновик «почему», который сужает решение ARCHIVE: старые треды оно не удаляет, а держит в архиве.
+NARROWING = "Искать только по свежим тредам: старые удаляются и в поиск не попадают."
+FITTING = "Заголовки находят тред дешевле всего, а старые треды остаются в архиве, как и прежде."
 LACKING = "Не хватает данных о нагрузке."
 RESULT = "Мерило идеи"
 
@@ -77,12 +81,14 @@ def section(prompt, title):
 
 class Agents(OptionAgents):
     """Модели совета, как на «Вариантах»; судья проверки решений по вопросу из judged отвечает
-    так, как там записано; на вопросе из stuck проверка не справляется. Итоги — один итог на все
-    решения, его держат открытые вопросы."""
+    так, как там записано, а модели совета по вопросу из drafted пишут черновик «почему», как там
+    записано; на вопросе из stuck проверка не справляется. Итоги — один итог на все решения, его
+    держат открытые вопросы."""
 
     def __init__(self):
         super().__init__()
         self.judged: dict[str, dict] = {}
+        self.drafted: dict[str, str] = {}
         self.stuck: set[str] = set()
 
     def ask(self, model, prompt, key, workspace=None, stop=None):
@@ -94,6 +100,10 @@ class Agents(OptionAgents):
             if step == "decision_judge" and question in self.judged:
                 self.prompts.setdefault(step, []).append(prompt)
                 return json.dumps(self.judged[question])
+            if step == "decision_analysis" and question in self.drafted:
+                self.prompts.setdefault(step, []).append(prompt)
+                return json.dumps({**council_analysis(prompt, judge=False), "adr_draft": {
+                    "rationale": self.drafted[question], "rationale_source": "ai_suggested"}})
         if step.startswith("outcome_"):
             self.prompts.setdefault(step, []).append(prompt)
             return json.dumps(outcomes(prompt))
@@ -358,6 +368,36 @@ def test_the_judge_corrects_the_decision_text_and_it_goes_with_the_decision(stor
     adrs = json.loads(section(agents.prompts["outcome_discovery"][-1], "ACCEPTED ADRS"))
     assert {adr["id"]: adr["decision"] for adr in adrs} == {
         "ADR-1": ARCHIVE, "ADR-2": option_at(council_id, "Q2", "P2")["text"], "ADR-3": OWN}
+
+
+def test_the_judge_corrects_a_rationale_that_argues_against_the_decision(store, pool, agents):
+    """Решение владельца к задаче «…судья сверяет «почему» с текстом решения»: судья сверяет
+    «почему» и с текстом самого решения — вариантом или текстом, который поправил сам. Черновик
+    моделей совета сужает решение — это неправда, как неправда о коде: судья пишет исправленное
+    «почему» сам, а решение остаётся, каким он его дал. Это не проблема: решение проверено, «почему»
+    — от ИИ, его фиксируют, как обычно, и оно уходит с решением вместе с текстом."""
+    agents.drafted["Q1"] = NARROWING
+    agents.judged["Q1"] = {"status": "validated", "proposal_id": "P1", "decision": ARCHIVE,
+                           "rationale": {"text": FITTING, "source": "ai"}}
+    council_id, _ = checked(store, pool)
+    prompt = judged_prompt(agents, "Q1")
+    # Судья видит вариант решения и черновик, который с решением спорит, — и правило сверки.
+    assert option_at(council_id, "Q1", "P1")["text"] in [
+        proposal["text"] for proposal in json.loads(section(prompt, "PROPOSALS"))]
+    assert NARROWING in section(prompt, "INDEPENDENT DECISION ANALYSES")
+    assert "the rationale must not argue against the decision itself" in " ".join(prompt.split())
+    q1 = decisions_of(council_id)["Q1"]
+    assert (q1["text"], q1["verdict"], q1["note"], q1["problem"], q1["fixes"]) == (
+        ARCHIVE, "validated", None, None, [])
+    assert (q1["rationale"], q1["rationaleBy"], q1["status"], q1["recheck"]) == (
+        FITTING, "ai", "draft", None)
+    fixed = edits(council_id, "Q1", FITTING, "fixed").json()["decision"]
+    assert (fixed["text"], fixed["rationale"], fixed["rationaleBy"], fixed["status"]) == (
+        ARCHIVE, FITTING, "ai", "fixed")
+    assert approves(council_id).status_code == 200
+    decision = stored(store, council_id).decisions[0]
+    assert (decision.question_id, decision.text, decision.rationale, decision.rationale_by) == (
+        "Q1", ARCHIVE, FITTING, "ai")
 
 
 def test_a_question_the_council_could_not_pick_for_is_blocked_without_an_option(store, pool,
@@ -987,6 +1027,37 @@ def test_a_new_text_of_ones_own_option_is_a_new_choice_too(store, pool, agents):
     assert (q3["option"]["text"], q3["recheck"], q3["unchecked"]) == (HEADERS, None, False)
     assert [c.text for c in stored(store, council_id).choices if c.question_id == "Q3"] == [
         HEADERS]
+
+
+def test_a_recheck_of_a_new_choice_checks_the_rationale_against_the_new_decision(store, pool,
+                                                                                agents):
+    """Как в совете из задачи «…судья сверяет «почему» с текстом решения»: свой вариант поправили
+    на готовых «Вариантах», и «Пересчитать» проверяет новый текст. Прежнее «почему» — и то, что
+    написал человек, — к новому выбору не идёт: его снова пишет ИИ, и судья сверяет его с новым
+    текстом решения. Черновик моделей совета спорит с ним — судья пишет исправленное сам, и это
+    не проблема: решение проверено, и его фиксируют, как обычно."""
+    council_id, own = checked(store, pool)
+    assert edits(council_id, "Q3", MINE, "fixed").status_code == 200
+    assert rewrites(council_id, "Q3", own, HEADERS).status_code == 200
+    narrowing = "Хватает заголовков: первые сообщения тредов искать незачем."
+    fitting = "В первых сообщениях тредов есть то, чего нет в заголовках."
+    agents.drafted["Q3"] = narrowing
+    agents.judged["Q3"] = {"status": "validated", "proposal_id": own,
+                           "rationale": {"text": fitting, "source": "ai"}}
+    asked = len(agents.prompts["decision_judge"])
+    assert rechecks(council_id, "Q3").status_code == 200
+    pool.run()
+    prompt = judged_prompt(agents, "Q3", asked)
+    assert json.loads(section(prompt, "USER SELECTION"))["proposal_id"] == own
+    assert {"id": own, "source": "user", "text": HEADERS} in json.loads(
+        section(prompt, "PROPOSALS"))
+    assert narrowing in section(prompt, "INDEPENDENT DECISION ANALYSES")
+    q3 = decisions_of(council_id)["Q3"]
+    assert (q3["option"]["text"], q3["text"], q3["verdict"], q3["problem"], q3["fixes"]) == (
+        HEADERS, None, "validated", None, [])
+    assert (q3["rationale"], q3["rationaleBy"], q3["status"], q3["recheck"], q3["unchecked"]) == (
+        fitting, "ai", "draft", None, False)
+    assert edits(council_id, "Q3", fitting, "fixed").json()["decision"]["status"] == "fixed"
 
 
 def test_a_stopped_recheck_of_a_new_choice_keeps_the_old_check(store, pool, agents):
