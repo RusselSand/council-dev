@@ -36,7 +36,15 @@ from uuid import uuid4
 
 from . import issue_files
 from .background import Slot, halt, held, launched, reporter, running
-from .cancels import cancelled_of, done_of, folder_of, stale_of, swaps_of, written_others
+from .cancels import (
+    cancelled_of,
+    done_of,
+    folder_of,
+    linked_after,
+    stale_of,
+    swaps_of,
+    written_others,
+)
 from .chain import resumed
 from .deps import Launcher
 from .export import (
@@ -94,7 +102,7 @@ from .tasks import (
     with_replacements,
     with_stale,
 )
-from .tasks_export import aligned, drafted_tasks, parents_apart
+from .tasks_export import aligned, drafted_tasks, parents_apart, vanished_of
 from .translation import merged
 
 
@@ -340,9 +348,10 @@ def stale_for_plan(council: Council, notes: Path,
         raise PlanRefused(f"Папка задач {issues}: {exc} — почините её и запустите план "
                           "снова") from None
     folder = folder_of(files, outcomes, export_in(council.tasks_export, issues))
-    stale = with_replacements(stale_of(folder, swaps_of(council, catalog, notes)),
+    decisions = {note.id: note.body for note in catalog.notes.values() if note.type == "adr"}
+    stale = with_replacements(stale_of(folder, swaps_of(council, catalog, notes), decisions),
                               plan_outcomes(council))
-    return stale, {note.id: note.body for note in catalog.notes.values() if note.type == "adr"}
+    return stale, decisions
 
 
 def cancels_for(council: Council, plan: TaskPlan, shelf: Shelf, previous: TasksExport | None,
@@ -353,9 +362,20 @@ def cancels_for(council: Council, plan: TaskPlan, shelf: Shelf, previous: TasksE
         return [], []
     swaps = swaps_of(council, shelf.catalog, shelf.root)
     folder = folder_of(shelf.files, shelf.outcomes, previous, (item.id for item in numbers))
-    stale = with_replacements(stale_of(folder, swaps), plan_outcomes(council))
+    decisions = [note.id for note in shelf.catalog.notes.values() if note.type == "adr"]
+    stale = with_replacements(stale_of(folder, swaps, decisions), plan_outcomes(council))
     return (cancelled_of(stale, plan.issues, folder, {item.id for item in plan.stale}),
             done_of(folder, swaps))
+
+
+def relinked_shelf(shelf: Shelf, cancelled: Sequence[CancelledIssue],
+                   previous: TasksExport | None, numbers: Sequence[IssueNumber]) -> Shelf:
+    """Папка задач, какой её увидит запись: живые задачи, что ждали отменённые, — уже со ссылками
+    на их замену (cancels.linked_after). Так исчезнувшая задача совета, которую ждали только как
+    прежнюю замену, уходит из каталога этой же записью."""
+    folder = folder_of(shelf.files, shelf.outcomes, previous, (item.id for item in numbers))
+    after = linked_after(cancelled, folder, {item.issue_id: item.id for item in numbers})
+    return replace(shelf, files={**shelf.files, **after}) if after else shelf
 
 
 def code_of(research: Research, repositories: Path | None,
@@ -457,11 +477,17 @@ def draft_of(council: Council, plan: TaskPlan, notes: Path, issues: Path,
     shelf = shelf_of(notes, issues)
     fragments = {f.id: f for f in council.slicing.fragments} if council.slicing else {}
     previous = export_in(council.tasks_export, issues)
+    reserved = reserved_by_others(store, council.id, issues) | outcomes_before(store, notes)
     files, vanished, numbers = drafted_tasks(
-        plan, fragments, shelf, previous, words_for(language()),
-        notes_language(), reserved_by_others(store, council.id, issues) | outcomes_before(
-            store, notes), outcome_names(council, fragments, plan.cited), plan_outcomes(council))
+        plan, fragments, shelf, previous, words_for(language()), notes_language(), reserved,
+        outcome_names(council, fragments, plan.cited), plan_outcomes(council))
     cancelled, done = cancels_for(council, plan, shelf, previous, numbers)
+    after = relinked_shelf(shelf, cancelled, previous, numbers)
+    if after is not shelf:
+        # Живые задачи, что ждали отменённые, после записи ждут их замену: исчезнувшие задачи
+        # совета, что они ждали раньше, — уже не держат.
+        vanished = vanished_of(after, {note.id: note for note in previous.notes}
+                               if previous else {}, files, numbers, reserved)
     return TasksDraft(state="done", run=uuid4().hex[:8], plan=plan.run,
                       language=notes_language(), root=str(issues), notes=files,
                       vanished=vanished, numbers=numbers,

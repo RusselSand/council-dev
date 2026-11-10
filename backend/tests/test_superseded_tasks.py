@@ -14,10 +14,12 @@ import pytest
 
 from spec_council import council_tasks
 from spec_council.app import app
+from spec_council.cancels import Folder, Relink, relinks_of, waiting
 from spec_council.deps import get_agents, get_launcher, get_repositories
 from spec_council.export import digest_of, written_as
 from spec_council.issue_files import cancelled, marks_of, recancelled, relinked, uncancelled
 from spec_council.issue_files import rendered as issue_rendered
+from spec_council.models import CancelledIssue
 from spec_council.notes import Note, path_of, rendered
 from tests.test_council_tasks import (
     council,
@@ -26,6 +28,7 @@ from tests.test_council_tasks import (
     files_in,
     plan_of,
     project_of,
+    retries,
     single,
     tasks_of,
     writes,
@@ -40,12 +43,13 @@ class Replacing(Agents):
     """План пишет задачам прежних советов, у которых заменена часть решений, замену: новую задачу
     к первому итогу, что реализует решение-замену, на решениях этого итога и живых решениях задачи.
     covering — вместо замены их работу делает первая задача плана; keeping — замена оставляет у
-    себя заменённое решение."""
+    себя заменённое решение; unpadded — живые решения задачи замена называет без нулей (ADR-2)."""
 
-    def __init__(self, *, covering=False, keeping=False):
+    def __init__(self, *, covering=False, keeping=False, unpadded=False):
         super().__init__()
         self.covering = covering
         self.keeping = keeping
+        self.unpadded = unpadded
 
     def task_plan(self, prompt):
         plan = Agents.task_plan(prompt)
@@ -57,12 +61,14 @@ class Replacing(Agents):
                 continue
             outcome = outcomes[item["outcomes"][0]]
             kept = [swap["id"] for swap in item["superseded"]] if self.keeping else []
+            live = [f"ADR-{int(adr['id'][4:])}" if self.unpadded else adr["id"]
+                    for adr in item["live"]]
             plan["issues"].append({
                 "id": f"I{len(plan['issues']) + 1}", "title": f"{TASK}: замена {item['id']}",
                 "user_story": "As a team, I want search kept, so that answers are found.",
                 "main_entry_points": ["app.py"], "current_state": "Поиск по всей базе.",
                 "scope": ["Искать по заголовкам тредов."], "outcome_id": outcome["id"],
-                "adr_ids": [*outcome["implements"], *(adr["id"] for adr in item["live"]), *kept],
+                "adr_ids": [*outcome["implements"], *live, *kept],
                 "constraint_ids": [], "risk_ids": [], "depends_on": [], "open_questions": [],
                 "replaces": [item["id"]]})
         return plan
@@ -269,6 +275,83 @@ def test_issues_whose_work_the_plan_already_does_need_no_replacement(base):
         app.dependency_overrides.pop(get_launcher)
 
 
+def test_issues_waiting_for_a_cancelled_one_follow_its_new_replacement(base):
+    """Запись поставила ISS-0003 ждать замену ISS-0002 — ISS-0006. План построили заново, и работу
+    ISS-0002 теперь делает задача плана ISS-0005: ISS-0003 ждёт её, а ISS-0006, которую больше
+    никто не ждёт, уходит из каталога этой же записью."""
+    agents = serving(Replacing())
+    try:
+        council_id, _, paths = superseding(base)
+        assert writes(council_id).status_code == 200
+        assert "depends_on: [ISS-0006]\n" in frontmatter(paths["ISS-0003"])
+        agents.covering = True
+        plan = council(council_id).tasks
+        get_store().update_council(council_id, {"tasks": plan.model_copy(update={"basis": {}})})
+        retries(council_id)
+        shown = plan_of(council_id)
+        assert [task["catalogId"] for task in shown["tasks"]] == ["ISS-0005"]
+        assert [task["id"] for task in shown["vanished"]] == ["ISS-0006"]
+        # ISS-0001 без замены: ISS-0003 её ждала и не будет ждать и после этой записи.
+        assert [(task["id"], task["replacedBy"], task["coveredBy"], task["unlinked"])
+                for task in shown["cancelled"]] == [
+            ("ISS-0001", None, [], ["ISS-0003"]), ("ISS-0002", None, ["I1"], [])]
+        assert writes(council_id).status_code == 200
+        assert files_in(base / "issues") == [f"ISS-000{n}.md" for n in range(1, 6)]
+        assert frontmatter(paths["ISS-0003"]) == (
+            "id: ISS-0003\nstatus: open\noutcome: OUT-0002\nadrs: [ADR-0002]\n"
+            "depends_on: [ISS-0005]\n")
+        assert frontmatter(paths["ISS-0002"]).endswith(
+            "cancelled: ADR-0001 → ADR-0003\ncovered_by: [ISS-0005]\n")
+    finally:
+        app.dependency_overrides.pop(get_agents)
+        app.dependency_overrides.pop(get_launcher)
+
+
+def test_an_issue_that_lost_its_link_waits_for_a_replacement_found_later():
+    """Прошлая запись отменила ISS-0001 без замены, и ISS-0003 её больше не ждёт. Новый план её
+    заменил — ISS-0003 ждёт замену; поправила ссылку на прежнюю замену человек — её не трогают."""
+    live = Note("ISS-0003", "issue", "# Ответ", ("OUT-0002", "ADR-0002"), status="open")
+    folder = Folder({"ISS-0003": live}, before={"ISS-0001": CancelledIssue(
+        id="ISS-0001", status="open", unlinked=["ISS-0003"])}, was={"ISS-0001": ()})
+    assert waiting(folder, "ISS-0001", set()) == ["ISS-0003"]
+    item = CancelledIssue(id="ISS-0001", status="open", replaced_by="I2", relinked=["ISS-0003"])
+    assert relinks_of([item], folder, {"I2": "ISS-0006"}) == {
+        "ISS-0003": Relink({}, ["ISS-0006"])}
+    text = "---\nid: ISS-0003\nstatus: open\nadrs: [ADR-0002]\n---\n\n# Ответ\n"
+    assert relinked(text, {}, added=["ISS-0006"]) == (
+        "---\nid: ISS-0003\nstatus: open\nadrs: [ADR-0002]\ndepends_on: [ISS-0006]\n---\n\n"
+        "# Ответ\n")
+    # Прошлая запись поставила ISS-0003 ждать ISS-0006, а человек эту ссылку убрал.
+    moved = Folder({"ISS-0003": live}, before={"ISS-0001": item}, was={"ISS-0001": ("ISS-0006",)})
+    assert waiting(moved, "ISS-0001", set()) == []
+
+
+def test_decisions_named_without_zeros_are_the_catalog_decisions(base):
+    """В файле задачи прежнего совета решения — без нулей (ADR-1, ADR-2): заменённое узнаётся по
+    номеру, а живое модели видят, как оно в каталоге, и замена пишет его так же — как бы его ни
+    назвал ответ."""
+    agents = serving(Replacing(unpadded=True))
+    try:
+        _, paths = earlier_council(base)
+        path = paths["ISS-0002"]
+        path.write_text(path.read_text(encoding="utf-8").replace(
+            "adrs: [ADR-0001, ADR-0002]", "adrs: [ADR-1, ADR-2]"), encoding="utf-8", newline="\n")
+        council_id = single()
+        free_c(council_id)
+        replacing(council_id, "ADR-0001")
+        exported(council_id)
+        [entry] = stale_in(agents.prompts["task_plan"])
+        assert entry["superseded"][0]["id"] == "ADR-0001"
+        assert entry["live"] == [{"id": "ADR-0002", "decision": OTHER_PAST}]
+        assert writes(council_id).status_code == 200
+        assert frontmatter(base / "issues" / "ISS-0006.md") == (
+            "id: ISS-0006\nstatus: open\noutcome: OUT-0003\nadrs: [ADR-0003, ADR-0004, ADR-0002]\n")
+        assert frontmatter(path).endswith("cancelled: ADR-0001 → ADR-0003\nreplaced_by: ISS-0006\n")
+    finally:
+        app.dependency_overrides.pop(get_agents)
+        app.dependency_overrides.pop(get_launcher)
+
+
 @pytest.mark.parametrize(("models", "reason"), [
     # Замена оставила у себя заменённое решение — ответ отброшен.
     (Replacing(keeping=True), "I2 заменяет ISS-0002, а стоит на заменённых решениях ADR-0001"),
@@ -311,6 +394,11 @@ def test_a_status_the_council_changed_is_no_hand_edit(agents, base):
                                             ("OUT-0001", "ADR-0001"))), text)
     assert again.startswith("---\nid: ISS-0001\nstatus: cancelled\n")
     assert again.split("---\n")[1].endswith("cancelled: ADR-0001 → ADR-0003\n")
+    # Человек потом поставил отменённой done, а строки отмены оставил: это его правка, и прежний
+    # совет её видит — файл правлен руками.
+    paths["ISS-0001"].write_text(text.replace("status: cancelled", "status: done"),
+                                 encoding="utf-8", newline="\n")
+    assert not written_as(paths["ISS-0001"], digest, "issue")
 
 
 def test_the_cancel_marks_keep_the_file_and_come_off_as_written():
@@ -326,6 +414,11 @@ def test_the_cancel_marks_keep_the_file_and_come_off_as_written():
     # Человек отменил сам — причины нет, и файл правлен руками.
     by_hand = text.replace("status: open", "status: cancelled")
     assert uncancelled(by_hand) == by_hand
+    # Совет отменил, а человек потом поставил done или deferred: статус — его, отмены уже нет.
+    for status in ("done", "deferred"):
+        later = marked.replace("status: cancelled", f"status: {status}")
+        assert uncancelled(later) == later
+        assert recancelled(text, later) == text
     # Задачи, после которых делать эту: отменённая — её заменой, без замены — убрана.
     waits = "---\nid: ISS-0003\nstatus: open\ndepends_on: [ISS-0001, ISS-2]\n---\n\n# Ответ\n"
     assert relinked(waits, {"ISS-0001": [], "ISS-0002": ["ISS-0006"]}) == (

@@ -53,7 +53,8 @@ status: cancelled на месте прежнего статуса и допис�
 
 Остальное в файле — как было: и в файле, который правил человек. Статус, который поменял совет, не
 делает файл правленным руками (uncancelled: отпечаток считается без этих строк, со статусом open,
-каким совет пишет задачу), а запись, что переписывает такой файл, их не теряет (recancelled).
+каким совет пишет задачу), а запись, что переписывает такой файл, их не теряет (recancelled). Это —
+пока статус тот, что поставил совет: человек потом поставил done или deferred — это его правка.
 
 Папка задач — не каталог заметок: Causa читает заметкой каждый .md в своей папке, и файл задачи
 там сломал бы ей весь каталог. Задачи читаются только с верхнего уровня папки, итоги — только из
@@ -227,28 +228,39 @@ def cancelled(text: str, marks: Mapping[str, str], path: Path | None = None) -> 
     return text[:start] + "".join(rows) + added + text[end:]
 
 
+def _cancelled_rows(rows: list[str]) -> bool:
+    """Строки frontmatter файла, который отменил совет: строка причины и статус — cancelled (как
+    его читает parsed — последний). Статус после отмены поменял человек — уже не отменён советом."""
+    if not any((found := MARK_ROW.match(row)) and found.group(1) == CANCELLED for row in rows):
+        return False
+    status = [row for row in rows if STATUS_ROW.match(row)]
+    return bool(status) and scalar(status[-1].split(":", 1)[1].strip()).lower() == CANCELLED
+
+
 def uncancelled(text: str) -> str:
     """Файл, каким он был, пока совет его не отменил (cancelled): без строк отмены и со статусом
-    open — каким совет пишет задачу и итог. Совет его не отменял (строки причины нет) или нет
-    frontmatter — как есть."""
+    open — каким совет пишет задачу и итог. Совет его не отменял (строки причины нет), статус
+    после отмены поменял человек или нет frontmatter — как есть: это правка руками."""
     try:
         start, end, rows, newline = _block(text, None)
     except NotesError:
         return text
-    if not any((found := MARK_ROW.match(row)) and found.group(1) == CANCELLED for row in rows):
+    if not _cancelled_rows(rows):
         return text
     rows = _status(_without(rows, _marked_rows(rows)), OPEN, newline)
     return text[:start] + "".join(rows) + text[end:]
 
 
 def cancel_marks(text: str) -> dict[str, str]:
-    """Строки отмены в файле, как они записаны; совет файл не отменял — пусто."""
+    """Строки отмены в файле, как они записаны; совет файл не отменял (или статус после отмены
+    поменял человек) — пусто."""
     try:
         rows = _block(text, None)[2]
     except NotesError:
         return {}
-    marks = {found.group(1): found.group(2) for row in rows if (found := MARK_ROW.match(row))}
-    return marks if CANCELLED in marks else {}
+    if not _cancelled_rows(rows):
+        return {}
+    return {found.group(1): found.group(2) for row in rows if (found := MARK_ROW.match(row))}
 
 
 def recancelled(text: str, before: str) -> str:
@@ -258,14 +270,20 @@ def recancelled(text: str, before: str) -> str:
     return cancelled(text, marks) if marks else text
 
 
-def relinked(text: str, links: Mapping[str, Sequence[str]], path: Path | None = None) -> str:
+def relinked(text: str, links: Mapping[str, Sequence[str]], path: Path | None = None,
+             added: Sequence[str] = ()) -> str:
     """Файл задачи, где задачи, после которых её делать (depends_on), — другие: отменённая
-    задача — её заменой (links: номер → номера замены), без замены — убрана; список опустел —
-    строки нет. Остальное — как было."""
-    start, end, rows, _ = _block(text, path)
+    задача — её заменой (links: номер → номера замены), без замены — убрана; added — дописаны в
+    конец списка (строки нет — она встаёт в конец frontmatter); список опустел — строки нет.
+    Остальное — как было."""
+    start, end, rows, newline = _block(text, path)
     found = [n for n, row in enumerate(rows) if DEPENDS_ROW.match(row)]
     if not found:
-        return text
+        fresh = list(dict.fromkeys(added))
+        if not fresh:
+            return text
+        row = f"depends_on: [{', '.join(fresh)}]"
+        return text[:start] + "".join(rows) + (newline if rows else "") + row + text[end:]
     at = found[-1]
     row = DEPENDS_ROW.match(rows[at])
     value = row.group(1)
@@ -273,10 +291,10 @@ def relinked(text: str, links: Mapping[str, Sequence[str]], path: Path | None = 
         return text
     before = [scalar(item) for item in value[1:-1].split(",") if item.strip()]
     keys = {number_key(item): item for item in links}
-    after = list(dict.fromkeys(
-        new for item in before
-        for new in (links[keys[number_key(item)]] if ISSUE.fullmatch(item)
-                    and number_key(item) in keys else [item])))
+    after = list(dict.fromkeys([
+        *(new for item in before
+          for new in (links[keys[number_key(item)]] if ISSUE.fullmatch(item)
+                      and number_key(item) in keys else [item])), *added]))
     if after == before:
         return text
     if after:

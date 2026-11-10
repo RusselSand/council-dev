@@ -465,9 +465,12 @@ def with_stale(inputs: Inputs, stale: Sequence[StaleIssue],
         "outcome": ({"id": item.outcome, "text": item.outcome_text}
                     if item.outcome is not None else None),
         "outcomes": item.outcomes} for item in shown]
+    # Замена стоит только на живых решениях, что есть в каталоге: на удалённое файл задачи
+    # сослался бы впустую.
     context = replace(inputs.context, stale={item.id: Stale(
-        frozenset(swap.adr for swap in item.swaps), frozenset(item.live),
-        frozenset(item.outcomes)) for item in shown})
+        frozenset(swap.adr for swap in item.swaps),
+        frozenset(adr for adr in item.live if adr in texts), frozenset(item.outcomes))
+        for item in shown})
     return replace(inputs, values={**inputs.values, "stale_issues": as_json(entries)},
                    context=context, stale=list(shown))
 
@@ -648,8 +651,11 @@ def replacement_adrs(issue_id: str, outcome_id: str, answered: Sequence[str],
     if left:
         raise BadAnswer(f"{issue_id} заменяет {', '.join(replaces)}, а стоит на заменённых "
                         f"решениях {', '.join(dict.fromkeys(left))}: их в adr_ids замены нет")
-    live = frozenset(adr for item in stale for adr in item.live)
-    return [adr for adr in answered if adr in allowed | live]
+    # Живое решение задачи — по номеру, с нулями или без, а в замену — как оно в каталоге.
+    live = {number_of(adr): adr for item in stale for adr in item.live}
+    return list(dict.fromkeys(adr if adr in allowed else live[number_of(adr)]
+                              for adr in answered
+                              if adr in allowed or number_of(adr) in live))
 
 
 def resolved(issues: Sequence[Issue], stale: Mapping[str, Stale]) -> None:

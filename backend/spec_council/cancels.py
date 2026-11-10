@@ -17,14 +17,15 @@ scope.»
 «Записать в каталог» на «Задачах» (cancelled_of — что отменит запись, written_others — новые тексты
 чужих файлов): отменённым — status: cancelled и причина во frontmatter, у заменённой — номер замены
 (issue_files.cancelled); живые задачи, что ждали отменённую (depends_on), ждут её замену, а нет
-замены — больше её не ждут (unlinked — это видно на «Задачах» до записи); итог прежнего совета, у
-которого не осталось открытых и отложенных задач и который сам не done, — тоже cancelled. Сделанные
-задачи на заменённых решениях (done_of) не трогают — их только показывают. Остальное в файлах — как
-было, и в файлах, которые правил человек.
+замены — больше её не ждут (unlinked — это видно на «Задачах» до записи), а новый план поменял
+замену — идут за новой (relinks_of); итог прежнего совета, у которого не осталось открытых и
+отложенных задач и который сам не done, — тоже cancelled. Сделанные задачи на заменённых решениях
+(done_of) не трогают — их только показывают. Остальное в файлах — как было, и в файлах, которые
+правил человек.
 """
 
 from collections.abc import Callable, Collection, Iterable, Mapping, Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 
 from . import issue_files
@@ -53,22 +54,37 @@ def swaps_of(council: Council, catalog: Catalog, notes: Path | str) -> dict[str,
 @dataclass(frozen=True)
 class Folder:
     """Папка задач, как её видит отмена: задачи и итоги по номеру; own — номера, что пишет сам
-    совет (его задачи и итоги — их ведёт план); before — что совет уже отменил прошлой записью."""
+    совет (его задачи и итоги — их ведёт план); before — что совет уже отменил прошлой записью,
+    а was — что та запись поставила вместо каждой отменённой задачи в depends_on задач, что её
+    ждали (instead_of; без замены — пусто)."""
 
     files: Mapping[str, Note]
     outcomes: Mapping[str, Note] = field(default_factory=dict)
     own: frozenset[str] = frozenset()
     before: Mapping[str, CancelledIssue] = field(default_factory=dict)
+    was: Mapping[str, tuple[str, ...]] = field(default_factory=dict)
 
 
 def folder_of(files: Mapping[str, Note], outcomes: Mapping[str, Note],
               record: TasksExport | None, own: Iterable[str] = ()) -> Folder:
     """Папка задач с номерами совета — его прошлой записи (record — запись в эту папку) и плана
-    (own) — и с тем, что он отменил прошлой записью."""
-    mine = {*(note.id for note in record.notes), *(item.id for item in record.numbers)} \
-        if record else set()
-    before = {item.id: item for item in record.cancelled} if record else {}
-    return Folder(files, outcomes, frozenset({*mine, *own}), before)
+    (own) — и с тем, что он отменил прошлой записью и что поставил вместо отменённых."""
+    if record is None:
+        return Folder(files, outcomes, frozenset(own))
+    mine = {*(note.id for note in record.notes), *(item.id for item in record.numbers)}
+    numbers = {item.issue_id: item.id for item in record.numbers}
+    return Folder(files, outcomes, frozenset({*mine, *own}),
+                  {item.id: item for item in record.cancelled},
+                  {item.id: tuple(instead_of(item, numbers)) for item in record.cancelled
+                   if item.type == "issue"})
+
+
+def instead_of(item: CancelledIssue, numbers: Mapping[str, str]) -> list[str]:
+    """Что встаёт в depends_on вместо отменённой задачи у задач, что её ждали: номер её замены или
+    задач плана, что делают её работу (numbers: задача плана → номер в каталоге); без замены —
+    ничего."""
+    by = numbers.get(item.replaced_by) if item.replaced_by else None
+    return [by] if by else [numbers[name] for name in item.covered_by if name in numbers]
 
 
 def parents_in(files: Mapping[str, Note]) -> set[str]:
@@ -89,9 +105,13 @@ def status_of(note: Note, before: Mapping[str, CancelledIssue]) -> str | None:
     return None
 
 
-def _swapped(links: Iterable[str], swaps: Mapping[str, str]) -> tuple[list[Swap], list[str]]:
-    """Решения файла (adrs): какие заменены и чем — и какие ещё действуют."""
+def _swapped(links: Iterable[str], swaps: Mapping[str, str],
+             decisions: Iterable[str] = ()) -> tuple[list[Swap], list[str]]:
+    """Решения файла (adrs): какие заменены и чем — и какие ещё действуют. Номер с нулями или без
+    — одно решение: и те и другие — номерами, как они в каталоге (decisions — номера его
+    решений); решения в каталоге нет — как в файле."""
     by_number = {number_of(adr): (adr, by) for adr, by in swaps.items()}
+    spelled = {number_of(adr): adr for adr in decisions}
     hit: list[Swap] = []
     live: list[str] = []
     for link in links:
@@ -99,7 +119,9 @@ def _swapped(links: Iterable[str], swaps: Mapping[str, str]) -> tuple[list[Swap]
             continue
         found = by_number.get(number_of(link))
         if found is None:
-            live.append(link)
+            adr = spelled.get(number_of(link), link)
+            if adr not in live:
+                live.append(adr)
         elif all(swap.adr != found[0] for swap in hit):
             hit.append(Swap(adr=found[0], by=found[1]))
     return hit, live
@@ -124,18 +146,21 @@ def outcome_note(folder: Folder, outcome: str | None) -> Note | None:
     return None
 
 
-def stale_of(folder: Folder, swaps: Mapping[str, str]) -> list[StaleIssue]:
+def stale_of(folder: Folder, swaps: Mapping[str, str],
+             decisions: Iterable[str] = ()) -> list[StaleIssue]:
     """Задачи папки на решениях, которые заменил совет (swaps_of): открытые, отложенные и те, что
-    совет уже отменил прошлой записью, — по номерам. Итоги плана для замены (outcomes) они не
-    знают: их ставит tasks.with_replacements."""
+    совет уже отменил прошлой записью, — по номерам. Решения, что ещё действуют (live), — номерами,
+    как они в каталоге (decisions — номера его решений): на них стоит замена. Итоги плана для
+    замены (outcomes) они не знают: их ставит tasks.with_replacements."""
     found: list[StaleIssue] = []
     if not swaps:
         return found
+    decisions = list(decisions)
     for note in _tasks(folder):
         status = status_of(note, folder.before)
         if status is None:
             continue
-        hit, live = _swapped(note.links, swaps)
+        hit, live = _swapped(note.links, swaps, decisions)
         if not hit:
             continue
         outcome = issue_files.outcome_or_parent(note)
@@ -182,8 +207,9 @@ def cancelled_of(stale: Sequence[StaleIssue], issues: Sequence[Issue], folder: F
     """Что отменит запись плана. Задачи stale (к папке, какая она сейчас): заменены все решения или
     замене некуда встать — без замены; заменена часть, и план её видел (planned — TaskPlan.stale) —
     с её заменой (Issue.replaces) или задачами плана, что делают её работу (covers); план её не
-    видел — её не трогают. У отменённой без замены — живые задачи, что её ждали (unlinked). Потом
-    — итоги отменённых задач, у которых не осталось открытых и отложенных задач (outcomes_of)."""
+    видел — её не трогают. Живые задачи, что её ждали (waiting), у отменённой без замены — unlinked,
+    а с заменой — relinked. Потом — итоги отменённых задач, у которых не осталось открытых и
+    отложенных задач (outcomes_of)."""
     replaced = {number_key(old): issue.id for issue in issues for old in issue.replaces}
     covered: dict[str, list[str]] = {}
     for issue in issues:
@@ -198,16 +224,81 @@ def cancelled_of(stale: Sequence[StaleIssue], issues: Sequence[Issue], folder: F
             id=item.id, title=item.title, status=item.status, swaps=item.swaps, replaced_by=by,
             covered_by=covered.get(item.id, []) if partial(item) and by is None else []))
     gone = {task.id for task in tasks}
-    tasks = [task.model_copy(update={"unlinked": waiting(folder, task.id, gone)})
-             if task.replaced_by is None and not task.covered_by else task for task in tasks]
+    tasks = [task.model_copy(update={
+        "unlinked" if task.replaced_by is None and not task.covered_by else "relinked":
+        waiting(folder, task.id, gone)}) for task in tasks]
     return [*tasks, *outcomes_of(tasks, folder)]
 
 
 def waiting(folder: Folder, task_id: str, gone: Collection[str]) -> list[str]:
-    """Живые задачи папки (открытые и отложенные, не те, что отменят), что ждут задачу task_id."""
-    return [note.id for note in _tasks(folder)
-            if note.status in PLANNED and note.id not in gone
-            and task_id in {number_key(link) for link in issue_files.depends_of(note)}]
+    """Живые задачи папки (открытые и отложенные, не те, что отменят), что ждут задачу task_id: она
+    в их depends_on. Её уже отменила прошлая запись — и те, что ждали её тогда (relinked,
+    unlinked): ждут то, что та запись поставила вместо неё (Folder.was), а без замены — уже
+    ничего. Так задачи, что её ждали, идут за её заменой и тогда, когда новый план её поменял."""
+    before = folder.before.get(task_id)
+    then = {*before.relinked, *before.unlinked} if before is not None else set()
+    was = set(folder.was.get(task_id, ()))
+    found: list[str] = []
+    for note in _tasks(folder):
+        if note.status not in PLANNED or note.id in gone:
+            continue
+        links = {number_key(link) for link in issue_files.depends_of(note)}
+        if task_id in links or (note.id in then and (not was or links & was)):
+            found.append(note.id)
+    return found
+
+
+@dataclass(frozen=True)
+class Relink:
+    """Как запись поправит depends_on живой задачи: swap — номер, что уйдёт (отменённая задача
+    или то, что прошлая запись поставила вместо неё), → номера, что встанут на его место; add —
+    номера, что допишутся (прошлая запись ссылку убрала: замены не было, — а теперь она есть)."""
+
+    swap: dict[str, list[str]] = field(default_factory=dict)
+    add: list[str] = field(default_factory=list)
+
+
+def relinks_of(cancelled: Sequence[CancelledIssue], folder: Folder,
+               numbers: Mapping[str, str]) -> dict[str, Relink]:
+    """Живые задачи, что ждали отменённые задачи (CancelledIssue.relinked, unlinked), — как запись
+    поправит их depends_on: вместо отменённой — её замена (instead_of; numbers — задача плана →
+    номер в каталоге), а без замены — ничего. Отменила её прошлая запись — уходит и то, что та
+    запись поставила вместо неё (Folder.was), если сейчас там другое."""
+    found: dict[str, Relink] = {}
+    for item in cancelled:
+        if item.type != "issue":
+            continue
+        now = instead_of(item, numbers)
+        old = {item.id, *folder.was.get(item.id, ())}
+        for task_id in [*item.relinked, *item.unlinked]:
+            note = folder.files.get(task_id)
+            if note is None:
+                continue
+            relink = found.setdefault(task_id, Relink())
+            hit = [key for link in issue_files.depends_of(note)
+                   if (key := number_key(link)) in old]
+            for key in hit:
+                relink.swap.setdefault(key, []).extend(now)
+            if not hit:
+                relink.add.extend(now)
+    return found
+
+
+def linked_after(cancelled: Sequence[CancelledIssue], folder: Folder,
+                 numbers: Mapping[str, str]) -> dict[str, Note]:
+    """Живые задачи, чьи depends_on поправит запись (relinks_of), — с их ссылками после записи:
+    по ним видно, какую исчезнувшую задачу совета ещё ждут, а какую — уже нет."""
+    found: dict[str, Note] = {}
+    for task_id, relink in relinks_of(cancelled, folder, numbers).items():
+        note = folder.files[task_id]
+        links = [new for link in note.links
+                 for new in (relink.swap[number_key(link)]
+                             if issue_files.ISSUE.fullmatch(link)
+                             and number_key(link) in relink.swap else [link])]
+        links = tuple(dict.fromkeys([*links, *relink.add]))
+        if links != note.links:
+            found[task_id] = replace(note, links=links)
+    return found
 
 
 def outcomes_of(tasks: Sequence[CancelledIssue], folder: Folder) -> list[CancelledIssue]:
@@ -246,9 +337,9 @@ def written_others(cancelled: Sequence[CancelledIssue], folder: Folder,
     status: cancelled и причина, у заменённой — номер замены, у той, чью работу делают задачи
     плана, — их номера (numbers: задача плана → номер в каталоге); живым задачам, что ждали
     отменённую, — её замена в depends_on (или задачи, что делают её работу), а без замены —
-    ничего. Файл уже такой — его нет в ответе. read — текст файла, path_of — где он."""
+    ничего (relinks_of). Файл уже такой — его нет в ответе. read — текст файла, path_of — где
+    он."""
     found: list[tuple[Path, str]] = []
-    instead: dict[str, list[str]] = {}
     for item in cancelled:
         # Итог — файл OUT, а у задач прежней версии — родительская задача ISS в самой папке.
         note = (folder.outcomes.get(item.id) if item.type == "outcome" else None) \
@@ -256,26 +347,17 @@ def written_others(cancelled: Sequence[CancelledIssue], folder: Folder,
         if note is None:
             continue
         by = numbers.get(item.replaced_by) if item.replaced_by else None
-        covered = [numbers[name] for name in item.covered_by if name in numbers]
-        if item.type == "issue":
-            instead[item.id] = [by] if by else covered
+        covered = [] if by else instead_of(item, numbers)
         path = path_of(note)
         text = read(path)
         new = issue_files.cancelled(text, issue_files.marks_of(
             issue_files.reason_of((swap.adr, swap.by) for swap in item.swaps), by, covered), path)
         if new != text:
             found.append((path, new))
-    gone = set(instead)
-    for note in _tasks(folder):
-        if note.status not in PLANNED or note.id in gone:
-            continue
-        waits = {link: instead[number_key(link)] for link in issue_files.depends_of(note)
-                 if number_key(link) in instead}
-        if not waits:
-            continue
-        path = path_of(note)
+    for task_id, relink in relinks_of(cancelled, folder, numbers).items():
+        path = path_of(folder.files[task_id])
         text = read(path)
-        new = issue_files.relinked(text, waits, path)
+        new = issue_files.relinked(text, relink.swap, path, relink.add)
         if new != text:
             found.append((path, new))
     return found

@@ -1157,8 +1157,10 @@ class CancelledIssue(BaseModel):
     записи — status: cancelled и причина во frontmatter. status — каким он был до отмены, swaps —
     причина: какие её решения заменил совет и чем. Задача заменена — replaced_by (задача плана, I4);
     её работу делают задачи плана — covered_by (I2, I3); ни того ни другого — без замены, и живые
-    задачи, что её ждали (unlinked), больше её не ждут. Итог — у него не осталось открытых и
-    отложенных задач: swaps — причины его отменённых задач."""
+    задачи, что её ждали (unlinked), больше её не ждут. Живые задачи, что её ждали, а теперь ждут
+    её замену, — relinked: запись помнит их, и новый план, что поменял замену, переводит их на
+    новую (cancels.relinks_of). Итог — у него не осталось открытых и отложенных задач: swaps —
+    причины его отменённых задач."""
 
     id: str
     type: Literal["issue", "outcome"] = "issue"
@@ -1168,6 +1170,7 @@ class CancelledIssue(BaseModel):
     replaced_by: str | None = None
     covered_by: list[str] = []
     unlinked: list[str] = []
+    relinked: list[str] = []
 
 
 class DoneIssue(BaseModel):
