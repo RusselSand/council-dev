@@ -976,6 +976,35 @@ def test_a_judge_rewrites_a_false_rationale_and_it_is_no_problem():
     assert "## REPOSITORY CONTEXT" in judge_prompt and "Rationale written by AI" in judge_prompt
 
 
+def test_a_judge_rewrites_a_rationale_that_argues_against_the_decision_itself():
+    """Решение владельца: судья сверяет «почему» и с текстом самого решения — с тем, что он
+    даёт: вариантом или своей правкой его текста. «Почему», которое спорит с решением или
+    сужает его, — неправда, как неправда о коде: судья пишет исправленное сам, а решение — и
+    текст, который он поправил, — остаётся, каким его дал судья. Проблемой это не становится."""
+    narrowing = "Переранжирование не нужно: хватает полнотекстового отбора."
+    told = {**checked_by("P1"), "adr_draft": {"rationale": narrowing,
+                                              "rationale_source": "ai_suggested"}}
+    corrected = f"{HYBRID}; страницы spec и result — как раньше."
+    true = "Отбор находит треды по словам, а переранжирование ставит выше точные ответы."
+    judge = {"status": "validated", "proposal_id": "P1", "validation": {},
+             "decision": corrected, "rationale": {"text": true, "source": "ai"}}
+    result, runner, _ = check({("decision_analysis", "sol"): told,
+                               ("decision_analysis", "fable"): told,
+                               ("decision_judge", "fable"): judge},
+                              choices=[("Q1", "P1")], scope=[SEARCH])
+    [found] = result.analyses
+    assert (found.verdict, found.reason, found.fixes, found.decision, found.rationale) == (
+        "validated", None, [], corrected, true)
+    judge_prompt = runner.asked["decision_judge", "fable"]
+    # Судья видит текст решения, который проверяет, и черновик, который с ним спорит.
+    proposals = json.loads(section(judge_prompt, "PROPOSALS"))
+    assert next(p["text"] for p in proposals if p["id"] == "P1") == HYBRID
+    assert narrowing in section(judge_prompt, "INDEPENDENT DECISION ANALYSES")
+    rules = " ".join(section(judge_prompt, "Rationale written by AI").split())
+    assert "the rationale must not argue against the decision itself" in rules
+    assert "never the decision text to fit the rationale" in rules
+
+
 def test_a_judge_corrects_the_decision_text_and_sees_what_the_question_revisits():
     """Решение владельца: вопрос пересматривает решение проекта — его решение то заменяет, и
     судья видит это у вопроса; участники — нет, им промпт тот же. Поправленный судьёй текст

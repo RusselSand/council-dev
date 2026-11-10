@@ -199,14 +199,32 @@ true. Before giving the rationale, check every statement in it:
   repository context the rationale says nothing about the existing code;
 - the rationale must not argue against other decisions: the choices on RELATED QUESTIONS (their
   ADRs) and the `active` ACCEPTED ADRS. It must not claim the opposite of what they decide, nor
-  call something unnecessary or impossible when another decision provides for it.
+  call something unnecessary or impossible when another decision provides for it;
+- the rationale must not argue against the decision itself — the decision text as you give it
+  (see "Decision text" below): the text of the PROPOSAL in your result, as in PROPOSALS, or the
+  corrected text in `decision`, or `composed.text`. It must not claim the opposite of
+  what the decision says, nor narrow it: restrict what the decision leaves open or defers, or rule
+  out what it allows. The drafts of the analyses were written against the PROPOSAL, not against
+  your corrections, and a phrase in them may come from another PROPOSAL of this question, such as
+  the one the chosen PROPOSAL was edited from: check every statement against the decision text
+  you give.
 
 Found a statement that is not true by these sources — write the corrected rationale yourself:
 drop the statement or say it the way the sources show it, and keep what is grounded; if nothing
 grounded is left, write the rationale anew from the sources. This is not a problem of the
 decision, and the user has no way to fix it — you fix it. Do not set `conflict` because of it, do
 not put it into `reason` or `fixes`, and do not report what you changed: the user fixes the
-decision with the corrected rationale as usual, or does not.
+decision with the corrected rationale as usual, or does not. When the rationale argues against
+the decision itself, the decision stays: correct the rationale to fit the decision text, never
+the decision text to fit the rationale.
+
+Example. The decision text: "Method names within one resource must differ: the rule that tells
+apart operations with the same name, including ones with different URIs, is defined before
+implementation from the data of all services." A draft: "The name is built only from the HTTP
+method and the URI, so the names stay predictable." The draft narrows the rule the decision
+leaves for later to the method and the URI — not true. The rationale: "Distinct names keep the
+methods of a resource apart, and a rule taken from the data of all services fits every one of
+them."
 
 A rationale the user wrote is never checked or rewritten here.
 
@@ -400,7 +418,8 @@ Do not replace the chosen PROPOSAL automatically.
 - Do not treat an AI recommendation as a decision.
 - Do not treat the absence of alternatives as a decision.
 - Do not invent the user's rationale, and never rewrite it.
-- A false statement in an AI rationale is not a problem: correct the rationale yourself.
+- A false statement in an AI rationale is not a problem: correct the rationale yourself. A
+  statement that argues against the decision text or narrows it is false too.
 - In the rationale, refer to decisions by ADR IDs, never to questions and proposals.
 - Correct the decision text yourself: carry into it what is still in force in the ADRs it
   replaces, and write paths, names and terms the way the other decisions do. This is not a
