@@ -8,7 +8,7 @@ import {
 } from '../../data';
 import { cleanName, type CouncilSummary } from '../../domain/council';
 import { hasRejected, progressRows, type ProgressRow } from '../../domain/run';
-import { canSplit, type Group, type GroupLink, type StructurePhase } from '../../domain/structure';
+import { canSearchIdea, canSplit, type Group, type GroupLink, type StructurePhase } from '../../domain/structure';
 import { useI18n, type Translate } from '../../i18n';
 import { navigate, routePath } from '../../router';
 
@@ -34,6 +34,18 @@ export interface MergeTarget {
   label: string;
 }
 
+/** Поиск идеи группы на плашке идеи: «ИИ работает», почему не вышло и «Перезапустить». */
+export interface IdeaSearchView {
+  /** Совет ищет идею: рядом с «ИИ» — «ИИ работает». */
+  running: boolean;
+  /** Поиск упал: под идеей — почему, красным. */
+  failed: boolean;
+  /** Под идеей: «Поиск идеи остановился: …», «ИИ не нашёл идею — …»; ищет или нашёл — пусто. */
+  note: string;
+  /** «Перезапустить» недоступна: совет ищет, перезапуск ждёт ответа или правки групп не действуют. */
+  restartDisabled: boolean;
+}
+
 /** Группа на экране. */
 export interface GroupView {
   id: string;
@@ -45,6 +57,8 @@ export interface GroupView {
   idea: string;
   /** Откуда идея: «из текста», «ИИ», «вы». */
   ideaBy: string;
+  /** Поиск идеи — у идеи от ИИ, которую совет искал; своя идея, из текста или человек её правит — null. */
+  ideaSearch: IdeaSearchView | null;
   fragments: GroupFragment[];
   /** Связи с другими группами одной строкой: «зависит от A · F5 — копия, общий с C»; нет — пусто. */
   links: string;
@@ -106,6 +120,8 @@ export interface StructureScreen {
   /** «Отмена»: закрыть «Объединить с» или «Разделить». */
   cancel: () => void;
   editIdea: (groupId: string, idea: string) => void;
+  /** «Перезапустить»: совет ищет идею группы заново. */
+  restartIdea: (groupId: string) => void;
 
   /** «Подтвердить →» или, когда группы уже подтверждены, «К исследованию →». */
   confirmLabel: string;
@@ -118,13 +134,33 @@ export interface StructureScreen {
 /** Что делают с группами на карточке. */
 export type GroupHandlers = Pick<
   StructureScreen,
-  'rename' | 'editTitle' | 'endRename' | 'merge' | 'mergeInto' | 'split' | 'toggleFragment' | 'splitOff' | 'cancel' | 'editIdea'
+  | 'rename'
+  | 'editTitle'
+  | 'endRename'
+  | 'merge'
+  | 'mergeInto'
+  | 'split'
+  | 'toggleFragment'
+  | 'splitOff'
+  | 'cancel'
+  | 'editIdea'
+  | 'restartIdea'
 >;
 
 /** Связь группы словами: «зависит от A», «F5 — копия, общий с C». */
 function linkText(link: GroupLink, t: Translate): string {
   if (link.kind === 'shared') return t('structure.link.shared', { fragment: link.fragment ?? '', group: link.group });
   return t(`structure.link.${link.kind}`, { group: link.group });
+}
+
+/** Что под идеей о поиске: упал — почему; не нашёл — вписать свою или перезапустить; ищет или нашёл — ничего. */
+function searchNote(group: Group, t: Translate): string {
+  const search = group.ideaSearch;
+  if (search?.state === 'failed') {
+    return search.error ? t('structure.ideaSearch.failed', { reason: search.error }) : t('structure.ideaSearch.stopped');
+  }
+  if (search?.state === 'done' && group.idea.trim() === '') return t('structure.ideaSearch.empty');
+  return '';
 }
 
 /**
@@ -265,12 +301,20 @@ export function useStructure(council: CouncilSummary): StructureScreen {
       const groupMode = mode?.group === group.id ? mode.kind : null;
       const picked = groupMode === 'split' ? group.fragments.filter((f) => selected[f.id]).length : 0;
       const ideaEdited = ideas[group.id] !== undefined || edits.pending[group.id]?.idea !== undefined;
+      // Своя идея человека — кнопки нет, пока он её правит, тоже: идея на экране уже его.
+      const search = ideaEdited ? null : group.ideaSearch;
       return {
         id: group.id,
         title: titleOf(group),
         mode: groupMode,
         idea: ideas[group.id] ?? savedIdeaOf(group),
         ideaBy: t(`structure.ideaBy.${ideaEdited ? 'user' : group.ideaBy}`),
+        ideaSearch: search && {
+          running: search.state === 'running',
+          failed: search.state === 'failed',
+          note: searchNote(group, t),
+          restartDisabled: locked || !canSearchIdea(search) || Boolean(edits.searching[group.id]),
+        },
         fragments: group.fragments.map((f) => ({
           id: f.id,
           text: f.text,
@@ -346,6 +390,13 @@ export function useStructure(council: CouncilSummary): StructureScreen {
     },
     editIdea: (groupId, idea) => {
       if (!locked) setIdeas((current) => ({ ...current, [groupId]: idea }));
+    },
+    restartIdea: (groupId) => {
+      const group = groups.find((g) => g.id === groupId);
+      if (locked || !group || !canSearchIdea(group.ideaSearch) || edits.searching[groupId]) return;
+      // Перезапуск — после того, что человек ввёл до него.
+      commitIdeas();
+      edits.searchIdea(groupId);
     },
 
     confirmLabel: done ? t('structure.confirm.next') : t('structure.confirm.button'),

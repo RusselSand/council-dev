@@ -61,6 +61,8 @@ import {
   noStructure,
   relabeled,
   retriedStructure,
+  searchedAgain,
+  seekingIdea,
   splitGroup,
   startedStructure,
   STRUCTURES,
@@ -762,18 +764,29 @@ export const mockSource: DataSource = {
     const structure = structureOf(id);
     const at = structure.groups.findIndex((g) => g.id === groupId);
     if (at < 0) throw new ApiError('not_found', `Группы ${groupId} у совета ${id} нет`, 404);
-    const group = { ...structure.groups[at] };
+    let group = { ...structure.groups[at] };
     if (fields.title !== undefined) group.title = cleanName(fields.title);
-    // Идею вписал человек — она его, как в макете («вы»). Стёр — идеи нет, её ищет совет (решение владельца к задаче
-    // «Бекенд · Группы: стёртая идея…»); в моках ИИ идей не находит.
+    // Идею вписал человек — она его, как в макете («вы»), и поиска у неё нет. Стёр — идеи нет, её ищет совет (решение
+    // владельца к задаче «Бекенд · Группы: стёртая идея…»); моки проще сервера: ищут и тогда, когда ИИ уже искал, а
+    // поиск в моках не кончается.
     if (fields.idea !== undefined) {
-      const erased = fields.idea.trim() === '';
-      group.idea = erased ? '' : fields.idea;
-      group.ideaBy = erased ? 'ai' : 'user';
+      group =
+        fields.idea.trim() === '' ? seekingIdea(group) : { ...group, idea: fields.idea, ideaBy: 'user', ideaSearch: null };
     }
     structure.groups[at] = group;
     groupsEdited(index);
     return copy(group);
+  },
+  async searchGroupIdea(id, groupId) {
+    const index = councilAt(id);
+    checkNotStructuring(councils[index]);
+    const structure = structureOf(id);
+    const at = structure.groups.findIndex((g) => g.id === groupId);
+    if (at < 0) throw new ApiError('not_found', `Группы ${groupId} у совета ${id} нет`, 404);
+    // «Перезапустить» (решение владельца к задаче «Бекенд · Группы: «Перезапустить» поиск идеи группы»).
+    structure.groups[at] = searchedAgain(structure.groups[at]);
+    groupsEdited(index);
+    return copy(structure.groups[at]);
   },
   async mergeGroup(id, groupId, into) {
     const index = councilAt(id);

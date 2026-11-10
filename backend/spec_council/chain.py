@@ -60,6 +60,7 @@ from .pipeline import (
     Runner,
     design_of,
     repository_of,
+    salt_of,
 )
 from .project import checks_of, issue_decisions, own_ids, project_catalog
 from .standing import STEP_RUNS, STEPS, Step, passed, stream_standing
@@ -302,12 +303,6 @@ def followed(report: Report, finished: Callable[[], None]) -> Report:
         if state.state != "running":
             finished()
     return report_then
-
-
-def salt_of(search: int) -> str:
-    """Ключ ответов поиска: у первого — как всегда (и у отбора прежней версии), у каждого
-    следующего — свой: ответ прежнего поиска ему не годится."""
-    return f"поиск {search}" if search > 1 else ""
 
 
 def rechecking(council: Council, stream: Stream, question_id: str, runner: Runner, store: Store,

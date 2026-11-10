@@ -31,6 +31,7 @@ export function GroupGrid({ groups, titleDraft, locked, handlers }: GroupGridPro
           onSplitOff={handlers.splitOff}
           onCancel={handlers.cancel}
           onIdeaChange={(idea) => handlers.editIdea(group.id, idea)}
+          onIdeaRestart={() => handlers.restartIdea(group.id)}
         />
       ))}
     </CardGrid>

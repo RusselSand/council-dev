@@ -44,6 +44,8 @@ export interface DataSource {
   mergeGroup(id: string, groupId: string, into: string): Promise<Structure>;
   /** POST /api/councils/<id>/groups/<groupId>/split — вынести фрагменты в новую группу title; ответ — раскладка. */
   splitGroup(id: string, groupId: string, fragmentIds: string[], title: string): Promise<Structure>;
+  /** POST /api/councils/<id>/groups/<groupId>/idea/search — «Перезапустить»: совет ищет идею группы заново; ответ — группа. */
+  searchGroupIdea(id: string, groupId: string): Promise<Group>;
   /** POST /api/councils/<id>/structure/confirm — «Подтвердить группы»; ответ — совет. */
   confirmStructure(id: string): Promise<CouncilSummary>;
   /** POST /api/councils/<id>/structure/retry — «Запустить снова» остановившуюся раскладку; ответ — совет. */

@@ -150,6 +150,9 @@ class IdeaDiscovery(BaseModel):
 
     state: Literal["running", "done", "failed"]
     run: str = ""
+    # Который это поиск идеи группы: «Перезапустить» начинает следующий, и ответы прежних ему не
+    # годятся (CouncilRun.salt); повтор упавшего — тот же поиск. Поиск прежней версии — первый.
+    search: int = 1
     steps: list[Step]
     options: list[IdeaOption] = []
     proposal: IdeaProposal | None = None

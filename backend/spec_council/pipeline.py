@@ -279,10 +279,16 @@ def start_structure(participants: list[str], judge: str, slicing: Slicing) -> St
                                  (StepName.structure, StepName.structure_judge)))
 
 
-def start_idea(participants: list[str], judge: str) -> IdeaDiscovery:
-    return IdeaDiscovery(state="running", run=uuid4().hex[:8],
+def start_idea(participants: list[str], judge: str, search: int = 1) -> IdeaDiscovery:
+    return IdeaDiscovery(state="running", run=uuid4().hex[:8], search=search,
                          steps=steps(participants, judge,
                                      (StepName.idea_discovery, StepName.idea_judge)))
+
+
+def salt_of(search: int) -> str:
+    """Ключ ответов поиска: у первого — как всегда (и у поиска прежней версии), у каждого
+    следующего — свой: ответ прежнего поиска ему не годится."""
+    return f"поиск {search}" if search > 1 else ""
 
 
 # Сколько проходов участников и судьи у скана: первый и до двух доисследований.
@@ -929,15 +935,18 @@ def final_structure(option: StructureOption, decisions: list[StructureDecision])
 class IdeaRun(CouncilRun[IdeaDiscovery]):
     """Идея группы, которой нет в тексте: участники восстанавливают её по фрагментам группы,
     судья выбирает, если вариантов несколько. Название группы модели не видят: это лишь
-    метка для навигации, а идея должна опираться на фрагменты."""
+    метка для навигации, а идея должна опираться на фрагменты. search — который это поиск:
+    у следующего («Перезапустить») ответы прежних из лотка не берутся."""
 
     what = "поиск идеи"
 
     def __init__(self, council_id: str, fragments: list[LabeledFragment], participants: list[str],
-                 judge: str, runner: Runner, report: Callable[[IdeaDiscovery], None]) -> None:
+                 judge: str, runner: Runner, report: Callable[[IdeaDiscovery], None],
+                 search: int = 1) -> None:
         super().__init__(council_id, participants, judge, runner, report,
-                         start_idea(participants, judge))
+                         start_idea(participants, judge, search))
         self.fragments = fragments
+        self.salt = salt_of(search)
 
     def work(self) -> dict[str, Any]:
         known = {f.id for f in self.fragments}
