@@ -1,4 +1,5 @@
 import type { DecisionState, StreamDecision } from '../../domain/decisions';
+import { COMPOSED_REASON } from './options';
 import { streamKey } from './streams';
 
 /**
@@ -195,10 +196,29 @@ const proto = (status: (question: string) => DecisionState): Record<string, Mock
   ),
 });
 
+/** Решения готового совета-примера: зафиксированы, а Q4 с противоречием оставлен открытым. */
+const finished = (question: string): DecisionState => (question === 'Q4' ? 'open' : 'fixed');
+
+/**
+ * Решения потока A Сайта (c7): Q1 передан как unresolved, и судья собрал ему вариант P43 из P13 и P12 (options.ts) —
+ * решение берёт его, как рекомендацию судьи, и он зафиксирован. В макете такого нет.
+ */
+const composed = (): Record<string, MockDecision> => ({
+  ...proto(finished),
+  Q1: decision(
+    'ADR-1',
+    'P43',
+    'Правка мастера не теряется, а вопрос ему задают только про поле, которое поменяли оба.',
+    'fixed',
+    { verdict: 'recommended', note: COMPOSED_REASON, dependsOn: ['Q2'] },
+  ),
+});
+
 /**
  * Решения по совету и потоку (streamKey), по id вопроса. g1 — из data-1.json. Поток A c1 — как в макете: «Решения»
  * готовы, а решения — черновики (в макете dec у советов-примеров пустой), у Q4 — противоречие. У готовых c4 и c7 решения
- * зафиксированы, а Q4 с противоречием оставлен открытым. У потоков, где «Решения» не начаты, решений нет.
+ * зафиксированы, а Q4 с противоречием оставлен открытым; у потока A Сайта (c7) решение Q1 — вариант, который собрал
+ * судья. У потоков, где «Решения» не начаты, решений нет.
  */
 export const DECISIONS: Record<string, Record<string, MockDecision>> = {
   [streamKey('g1', 'A')]: G1,
@@ -208,11 +228,8 @@ export const DECISIONS: Record<string, Record<string, MockDecision>> = {
       ['c4', 'A'],
       ['c4', 'B'],
       ['c4', 'C'],
-      ['c7', 'A'],
       ['c7', 'B'],
-    ].map(([council, stream]) => [
-      streamKey(council, stream),
-      proto((question) => (question === 'Q4' ? 'open' : 'fixed')),
-    ]),
+    ].map(([council, stream]) => [streamKey(council, stream), proto(finished)]),
   ),
+  [streamKey('c7', 'A')]: composed(),
 };

@@ -236,9 +236,10 @@ def test_options_come_by_question_the_group_ones_first_with_what_the_judge_says(
         "question": questions[0], "summary": ONE_LEFT, "dropped": [],
         "options": [
             {"id": "F2", "text": TEXTS[2], "source": "group", "recommended": False,
-             "reason": None, "cost": None, "dependsOn": [], "basedOn": None},
+             "reason": None, "cost": None, "dependsOn": [], "basedOn": None, "composedOf": [],
+             "additions": []},
             {"id": "P1", "text": ONE, "source": "ai", "recommended": True, "reason": "так проще",
-             "cost": None, "dependsOn": [], "basedOn": None}],
+             "cost": None, "dependsOn": [], "basedOn": None, "composedOf": [], "additions": []}],
         "choice": None, "unchecked": False, "cycle": []}
     assert (q2["summary"], q2["dropped"], q2["choice"]) == (BOTH, [], None)
     assert [(o["id"], o["text"], o["recommended"], o["dependsOn"]) for o in q2["options"]] == [
@@ -395,7 +396,8 @@ def test_an_own_option_goes_last_with_the_next_number_and_changes_no_choice(stor
     assert res.status_code == 201, res.text
     assert res.json()["option"] == {"id": "P5", "text": OWN, "source": "user",
                                     "recommended": False, "reason": None, "cost": None,
-                                    "dependsOn": [], "basedOn": None}
+                                    "dependsOn": [], "basedOn": None, "composedOf": [],
+                                    "additions": []}
     q2 = sets_of(council_id)["Q2"]
     assert ids(q2) == ["P2", "P3", "P5"] and q2["options"][-1] == res.json()["option"]
     assert q2["choice"] == {"kind": "option", "option": "P2"}
@@ -837,7 +839,8 @@ def test_a_stream_of_the_prior_version_shows_its_approved_choice_and_own_options
     assert (ids(q1), q1["choice"]) == (["F2", "P1"], {"kind": "option", "option": "F2"})
     assert ids(q2) == ["P2", "P3", "P4"]
     assert q2["options"][-1] == {"id": "P4", "text": OWN, "source": "user", "recommended": False,
-                                 "reason": None, "cost": None, "dependsOn": [], "basedOn": "P2"}
+                                 "reason": None, "cost": None, "dependsOn": [], "basedOn": "P2",
+                                 "composedOf": [], "additions": []}
     assert q2["choice"] == {"kind": "option", "option": "P4"}
     options = steps_of(stream_of(council_id))["options"]
     assert (options["state"], options["note"]) == ("done", "выбрано 2 из 2")

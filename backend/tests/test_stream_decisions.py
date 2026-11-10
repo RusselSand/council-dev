@@ -23,7 +23,9 @@ from spec_council.models import (
     QuestionAnalysis,
     QuestionDiscovery,
     QuestionOptions,
+    Stream,
 )
+from spec_council.options import composed_into
 from spec_council.pipeline import ModelFailed
 from spec_council.projects import Projects
 from spec_council.store import InMemoryStore, interrupted
@@ -237,7 +239,8 @@ def test_checked_decisions_are_drafts_with_the_councils_rationale(store, pool):
         questions["Q2"], "ADR-2", option_at(council_id, "Q2", "P2"), "recommended", "проще")
     # Свой вариант — как на «Вариантах».
     assert q3["option"] == {"id": own, "text": OWN, "source": "user", "recommended": False,
-                            "reason": None, "cost": None, "dependsOn": [], "basedOn": None}
+                            "reason": None, "cost": None, "dependsOn": [], "basedOn": None,
+                            "composedOf": [], "additions": []}
     assert (q3["adr"], q3["status"]) == ("ADR-3", "draft")
     decisions = steps_of(stream_of(council_id))["decisions"]
     assert (decisions["note"], decisions["text"]) == ("решено 0 из 3", None)
@@ -1485,6 +1488,157 @@ def test_a_stream_of_the_prior_version_has_no_changed_choice(store):
     assert steps_of(stream_of(council_id))["decisions"]["rechecks"] == []
     assert {q: item["unchecked"] for q, item in sets_of(council_id).items()} == {
         "Q1": False, "Q2": False}
+
+
+# --- судья собирает вариант unresolved-вопроса из нескольких
+
+COMPOSED = "Считать долю вопросов, на которые ответила база, и раз в месяц спрашивать команду."
+GAP = "Опрос — только среди тех, кто задавал вопросы."
+JOINED = "Ни один вариант не мерит идею целиком: P2 — ответы базы, P3 — мнение команды."
+
+
+def composing(*sources, depends=()) -> dict:
+    """Ответ судьи: ни один вариант не отвечает целиком, и он собрал их в один."""
+    return {"status": "composed", "reason": JOINED,
+            "composed": {"text": COMPOSED, "from_proposal_ids": list(sources),
+                         "additions": [GAP]},
+            "depends_on_question_ids": list(depends),
+            "rationale": {"text": WHY, "source": "ai"}}
+
+
+def test_the_judge_composes_an_option_of_an_unresolved_question_from_several(store, pool,
+                                                                             agents):
+    """Решение владельца: судья unresolved-вопроса, у которого ни один вариант не отвечает
+    целиком, а несколько вместе — отвечают, собирает из них вариант и рекомендует его. Вариант
+    ложится к вариантам вопроса на «Вариантах» — «собрано судьёй», из каких собран и что судья
+    дописал сам, — а решение берёт его, как рекомендацию судьи, и фиксируют его, как обычно."""
+    agents.judged["Q2"] = composing("P3", "P2", "P9", depends=["Q3"])
+    council_id, own = checked(store, pool)
+    assert ids_of(judged_prompt(agents, "Q2")) == ["P2", "P3"]
+    sets = sets_of(council_id)
+    # Номер — дальше всех вариантов потока; чужой номер в источниках отброшен.
+    composed = {"id": "P6", "text": COMPOSED, "source": "judge", "recommended": False,
+                "reason": JOINED, "cost": None, "dependsOn": ["Q3"], "basedOn": None,
+                "composedOf": ["P3", "P2"], "additions": [GAP]}
+    assert [option["id"] for option in sets["Q2"]["options"]] == ["P2", "P3", "P6"]
+    assert sets["Q2"]["options"][-1] == composed
+    assert (sets["Q2"]["choice"], sets["Q2"]["unchecked"]) == ({"kind": "unresolved"}, False)
+    # Порядок вопросов — от запуска шага: зависимости собранного его не меняют.
+    assert list(sets) == ["Q1", "Q2", "Q3"]
+    q2 = decisions_of(council_id)["Q2"]
+    assert (q2["option"], q2["text"], q2["verdict"], q2["note"], q2["rationale"],
+            q2["rationaleBy"], q2["status"], q2["recheck"], q2["unchecked"]) == (
+        composed, None, "recommended", JOINED, WHY, "ai", "draft", None, False)
+    assert q2["context"] == [{"question": "Q3", "option": own, "text": OWN}]
+    assert edits(council_id, "Q2", WHY, "fixed").status_code == 200
+    assert approves(council_id).status_code == 200
+    pool.run()
+    # Итоги собирают по собранному варианту: он — решение Q2 и вариант вопроса.
+    prompt = agents.prompts["outcome_discovery"][0]
+    adrs = {adr["question_id"]: adr for adr in json.loads(section(prompt, "ACCEPTED ADRS"))}
+    assert (adrs["Q2"]["proposal_id"], adrs["Q2"]["decision"]) == ("P6", COMPOSED)
+    questions = json.loads(section(prompt, "OPEN QUESTIONS AND PROPOSALS"))
+    assert [p["id"] for p in questions[1]["proposals"]] == ["P2", "P3", "P6"]
+
+
+def test_the_composed_option_takes_a_number_no_other_option_took(store, pool, agents):
+    """Номер собранному даёт поток, когда кладёт проверку: свой вариант, который написали на
+    «Вариантах», пока модели проверяли решения, свой номер сохраняет, а собранный — следующий."""
+    agents.judged["Q2"] = composing("P2", "P3")
+    council_id, own = chosen(store, pool)
+    later = adds(council_id, "Q1", "Искать по меткам").json()["option"]["id"]
+    assert (own, later) == ("P5", "P6")
+    pool.run()
+    assert [option["id"] for option in sets_of(council_id)["Q2"]["options"]] == ["P2", "P3", "P7"]
+    assert decisions_of(council_id)["Q2"]["option"]["id"] == "P7"
+    assert adds(council_id, "Q1", "Искать по авторам").json()["option"]["id"] == "P8"
+
+
+def test_a_composed_option_is_edited_into_ones_own_and_deleted_like_the_judges_pick(
+        store, pool, agents):
+    """Собранный правят «Поправить», как варианты ИИ: получается свой вариант на его основе.
+    Удалить его — как вариант, который судья взял unresolved-вопросу: решение ждёт
+    «Пересчитать», и пересчёт сравнивает варианты уже без него."""
+    agents.judged["Q2"] = composing("P2", "P3")
+    council_id, _ = checked(store, pool)
+    assert error_of(rewrites(council_id, "Q2", "P6", "Другое мерило")) == (422, "not_own_option")
+    edit = adds(council_id, "Q2", f"{COMPOSED} Раз в квартал.", based_on="P6").json()["option"]
+    assert (edit["id"], edit["source"], edit["basedOn"]) == ("P7", "user", "P6")
+    assert deletes(council_id, "Q2", "P6").status_code == 204
+    assert [option["id"] for option in sets_of(council_id)["Q2"]["options"]] == ["P2", "P3", "P7"]
+    q2 = decisions_of(council_id)["Q2"]
+    assert (q2["option"]["id"], q2["status"], q2["recheck"], q2["unchecked"]) == (
+        "P6", "draft", "ready", True)
+    agents.judged["Q2"] = {"status": "recommended", "proposal_id": "P2", "reason": "проще",
+                           "rationale": {"text": WHY, "source": "ai"}}
+    since = len(agents.prompts["decision_judge"])
+    assert rechecks(council_id, "Q2").status_code == 200
+    pool.run()
+    assert ids_of(judged_prompt(agents, "Q2", since)) == ["P2", "P3"]
+    q2 = decisions_of(council_id)["Q2"]
+    assert (q2["option"]["id"], q2["verdict"], q2["recheck"], q2["unchecked"]) == (
+        "P2", "recommended", None, False)
+    # Удалённый не возвращается, и номер его другому не достаётся.
+    assert adds(council_id, "Q2", "Ещё мерило").json()["option"]["id"] == "P8"
+
+
+def test_a_composed_option_is_an_option_of_its_question_later(store, pool, agents):
+    """Дальше собранный — вариант вопроса, как остальные: его выбирают на «Вариантах», и
+    «Пересчитать» проверяет его, как выбор человека; модели видят, из каких вариантов он собран и
+    что судья дописал сам."""
+    agents.judged["Q2"] = composing("P2", "P3")
+    council_id, _ = checked(store, pool)
+    del agents.judged["Q2"]
+    assert chooses(council_id, "Q2", "P6").status_code == 200
+    assert decisions_of(council_id)["Q2"]["unchecked"] is True
+    since = len(agents.prompts["decision_analysis"])
+    assert rechecks(council_id, "Q2").status_code == 200
+    pool.run()
+    prompt = prompt_of(agents, "Q2", since)
+    assert json.loads(section(prompt, "USER SELECTION")) == {"proposal_id": "P6",
+                                                             "rationale": None}
+    assert json.loads(section(prompt, "PROPOSALS"))[-1] == {
+        "id": "P6", "source": "judge", "text": COMPOSED, "reason": JOINED,
+        "composed_of_proposal_ids": ["P2", "P3"], "additions": [GAP],
+        "depends_on_question_ids": []}
+    q2 = decisions_of(council_id)["Q2"]
+    assert (q2["option"]["id"], q2["verdict"], q2["recheck"], q2["unchecked"]) == (
+        "P6", "validated", None, False)
+    assert [c.proposal for c in stored(store, council_id).choices if c.question_id == "Q2"] == [
+        "P6"]
+
+
+def test_a_recheck_of_an_unresolved_question_composes_too(store, pool, agents):
+    """Судья ответил «сначала решите Q1», Q1 решили — «Пересчитать» сравнивает варианты с нынешним
+    выбором, и судья может и собрать вариант из нескольких. Выбор вопроса остаётся unresolved."""
+    council_id = unresolved(store, pool, agents)
+    assert chooses(council_id, "Q1", "P1").status_code == 200
+    assert rechecks(council_id, "Q1").status_code == 200
+    pool.run()
+    agents.judged["Q2"] = composing("P2", "P3")
+    assert rechecks(council_id, "Q2").status_code == 200
+    pool.run()
+    q2 = decisions_of(council_id)["Q2"]
+    assert (q2["option"]["id"], q2["option"]["source"], q2["option"]["composedOf"],
+            q2["verdict"], q2["note"], q2["recheck"]) == (
+        "P6", "judge", ["P2", "P3"], "recommended", JOINED, None)
+    assert [option["id"] for option in sets_of(council_id)["Q2"]["options"]] == ["P2", "P3", "P6"]
+    assert [c.proposal for c in stored(store, council_id).choices if c.question_id == "Q2"] == [
+        None]
+
+
+def test_a_stream_without_options_of_the_council_has_nowhere_to_put_a_composed_one():
+    """Поток прежней версии без вариантов совета: собранному лечь некуда — обоснованно выбрать
+    вариант нельзя, пояснение судьи остаётся."""
+    stream = Stream(group="A", title="A", proposals=None)
+    work = DecisionAnalysis(state="done", run="a1", steps=[], analyses=[
+        QuestionAnalysis(question_id="Q2", verdict="recommended", reason=JOINED, rationale=WHY,
+                         composed=Proposal(id="", text=COMPOSED, reason=JOINED, source="judge",
+                                           composed_of=["F2", "F3"], origin="a1:Q2"))])
+    same, placed = composed_into(stream, work)
+    assert same is stream
+    assert [(f.verdict, f.proposal, f.reason, f.rationale, f.composed)
+            for f in placed.analyses] == [("none", None, JOINED, None, None)]
 
 
 # --- зафиксировать решения

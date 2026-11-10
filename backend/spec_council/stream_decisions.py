@@ -9,7 +9,10 @@
 меняет. Порядок — от запуска шага: пересчёт одного вопроса его не меняет.
 
 Вариант решения — тот, что проверили модели: выбор человека на «Вариантах», а у вопроса,
-переданного как unresolved, — вариант, который рекомендовал судья; не рекомендовал — варианта нет.
+переданного как unresolved, — вариант, который рекомендовал судья, или тот, что он собрал из
+нескольких вариантов вопроса (решение владельца к задаче «…судья собирает вариант
+unresolved-вопроса из нескольких»; options.composed_into: собранный ложится к вариантам вопроса
+на «Вариантах», и дальше он — как вариант, который судья взял); не рекомендовал — варианта нет.
 «Почему» сначала — обоснование совета, решение — черновик: судья проверил его по карте кода и
 другим решениям и неправду исправил сам (decisions.py), а «почему», которое написал человек,
 судья не переписывает: оно остаётся и после пересчёта — кроме пересчёта с новым выбором
@@ -76,7 +79,7 @@ from .models import (
     Ruling,
     Stream,
 )
-from .options import picked, removed_of, sets_of
+from .options import composed_into, picked, removed_of, sets_of
 from .order import Order, ordered
 from .pipeline import adr_id, choice_entry, question_key, related_adrs, rests_on
 from .scope import kept_of
@@ -315,6 +318,8 @@ def rechecked(stream: Stream, question_id: str, work: DecisionAnalysis) -> Strea
     rechecks = {**stream.rechecks, question_id: work}
     if work.state != "done":
         return stream.model_copy(update={"rechecks": rechecks})
+    # Судья собрал вариант из нескольких — он ложится к вариантам вопроса, и проверка берёт его.
+    stream, work = composed_into(stream, work)
     del rechecks[question_id]
     found = next((one for one in work.analyses if one.question_id == question_id), None)
     analysis = stream.analysis

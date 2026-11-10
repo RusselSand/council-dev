@@ -4,7 +4,9 @@ You are given:
 - the approved IDEA;
 - the OPEN QUESTION — with `revisits`, the ID of the accepted project decision this question
   revisits (`null` — none): the decision on this question replaces it;
-- the related PROPOSALS;
+- the related PROPOSALS — a PROPOSAL with `source` `judge` was composed earlier by the judge from
+  other PROPOSALS of this question (`composed_of_proposal_ids`; what the judge added himself, that
+  none of them said, — `additions`);
 - the user's preliminary choice, if there is one;
 - the applicable CONSTRAINTS and RISKS;
 - the related OPEN QUESTIONS — the other questions of this IDEA, what the user chose on each and
@@ -143,11 +145,45 @@ do not pick an artificial winner.
 
 Return `no_recommendation`.
 
+### When several PROPOSALS together answer the question
+
+Sometimes no single PROPOSAL answers the whole OPEN QUESTION, but several together do: each
+answers its own part of it (one names the fields, another the main model, a third the option
+classes). Then the answer is not "none of them": compose one PROPOSAL from them and recommend it —
+status `composed`:
+
+- `composed.from_proposal_ids` — the IDs of the PROPOSALS you took, in the order of the text: at
+  least two, only PROPOSALS of this OPEN QUESTION;
+- several PROPOSALS answer the same part in different ways (P26 or P27) — take the better one for
+  that part and say in `reason` why it and not the other, by the same rules as a recommendation;
+  the other one is not in `from_proposal_ids`. If none of them is justifiably better for that
+  part, do not compose: return `no_recommendation` and say what is missing;
+- `composed.text` — the composed PROPOSAL: what the taken PROPOSALS decide, together, in plain
+  words. Keep their wording where you can and add nothing they do not say — except the gaps below.
+  The text becomes the decision text: write it by the rules of "Decision text" below; `decision`
+  is `null`;
+- `composed.additions` — when comparing, you may find gaps the taken PROPOSALS leave open (a field
+  name that starts with a digit, the options of non-standard operations, two classes with the same
+  name). You may close them in the composed text, but list each such addition here, one short
+  sentence each, so that the user sees that none of the PROPOSALS had it. No additions — an empty
+  list;
+- `reason` — why no single PROPOSAL answers the whole question, which part each taken PROPOSAL
+  answers, and why you took the one you took where there was a choice;
+- `rationale` — as for a recommendation.
+
+Compose only for complementary PROPOSALS, not for competing ones: PROPOSALS that answer the same
+thing in different ways are a choice, not parts — recommend one or return `no_recommendation`. Do
+not compose when one PROPOSAL answers the whole question — recommend it; a PROPOSAL with `source`
+`judge` that answers the whole question is recommended, not composed again. Do not compose when the
+comparison waits for another question ("decide Q1 first") — return `no_recommendation`. A PROPOSAL
+the user has chosen is checked, never composed.
+
 Either way, list in `depends_on_question_ids` the RELATED QUESTIONS your result depends on: the
 ones whose choice it leans on and the ones the user has to decide first. Every related question
 you name in `reason` is one of them.
 
-Do not create a new PROPOSAL at this stage.
+Do not create any other new PROPOSAL at this stage: the only new one is a PROPOSAL composed from
+the PROPOSALS of an unresolved question.
 
 ## Rationale written by AI
 
@@ -192,7 +228,8 @@ Good: "ADR-13 already rejects a second run on the server."
 The decision goes into the ADR as the text of the PROPOSAL — the chosen one, or the one you
 recommend. That text was written before the decision was made, and it may lose what is still in
 force or write a thing differently from the other decisions. Whenever there is a PROPOSAL in your
-result (`validated`, `conflict`, `recommended`), check its text and correct it yourself:
+result (`validated`, `conflict`, `recommended`), check its text and correct it yourself (a
+`composed` PROPOSAL you write by these rules from the start — its text is the decision text):
 
 - the decision replaces accepted project decisions: the ADR in `revisits` of the OPEN QUESTION and
   the ACCEPTED ADRS marked `replaced_by_this_decision`. A replaced ADR is no longer in force as a
@@ -325,6 +362,25 @@ Do not replace the chosen PROPOSAL automatically.
   }
 }
 
+### The user chose nothing, several PROPOSALS together answer the question
+
+{
+  "status": "composed",
+  "question_id": "Q12",
+  "composed": {
+    "text": "Class names are the PascalCase resource name; field names are snake_case as in the API; option classes end with `Options`; a nested structure is a class named after its field.",
+    "from_proposal_ids": ["P24", "P23", "P25", "P26"],
+    "additions": ["A field name that starts with a digit gets the prefix `n`."]
+  },
+  "reason": "No single option answers the whole question: P24 names the main model, P23 the fields, P25 the option classes, P26 the nested structures. P26 is taken over P27: P27 repeats the parent name in every nested class.",
+  "depends_on_question_ids": [],
+  "decision": null,
+  "rationale": {
+    "text": "One set of rules covers every name the SDK generates ...",
+    "source": "ai"
+  }
+}
+
 ### No justified choice is possible
 
 {
@@ -336,7 +392,9 @@ Do not replace the chosen PROPOSAL automatically.
 
 ## Important rules
 
-- Do not create new PROPOSALS.
+- Do not create new PROPOSALS — except composing one from several for an unresolved question,
+  when none answers it whole and several together do; list what you added yourself in
+  `additions`.
 - Do not create an accepted ADR.
 - Do not change the user's choice.
 - Do not treat an AI recommendation as a decision.
