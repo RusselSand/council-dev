@@ -1,5 +1,6 @@
 """Группы по контракту: POST и GET /api/councils/{id}/structure, …/structure/confirm,
-…/structure/retry, PATCH …/groups/{groupId}, …/groups/{groupId}/merge и …/split."""
+…/structure/retry, PATCH …/groups/{groupId}, …/groups/{groupId}/merge, …/split и
+…/idea/search."""
 
 import json
 import re
@@ -10,21 +11,31 @@ import pytest
 from fastapi.testclient import TestClient
 
 from spec_council.app import app
+from spec_council.background import seeking
 from spec_council.config import config_of
 from spec_council.deps import get_agents, get_config, get_launcher, get_store
 from spec_council.groups import marked
 from spec_council.models import (
     Group,
     GroupRelation,
+    IdeaProposal,
     LabeledFragment,
     ModelRun,
     Research,
     Slicing,
     Step,
     Stream,
+    StreamIdea,
     Structure,
 )
-from spec_council.pipeline import ModelFailed, start, start_design, start_scan, start_structure
+from spec_council.pipeline import (
+    ModelFailed,
+    start,
+    start_design,
+    start_idea,
+    start_scan,
+    start_structure,
+)
 from spec_council.store import FileStore, InMemoryStore, interrupted
 from spec_council.web.structure import sought_at_start
 
@@ -57,6 +68,7 @@ class Agents:
     def __init__(self):
         self.asked: list[str] = []
         self.offline: set[str] = set()
+        self.idea: str | None = None                    # задана — её находят у любой группы
 
     def availability(self, aliases, *, fresh=False):
         raise AssertionError("группы вход в подписку заранее не проверяют")
@@ -72,8 +84,9 @@ class Agents:
         if "-idea_discovery-" in key:
             # Идея опирается на первый фрагмент группы; у группы с F1 — своя.
             first = re.search(r'"id": "(F\d+)"', prompt).group(1)
-            return json.dumps({"options": [{"idea": IDEA_A if first == "F1" else IDEA_B,
-                                            "evidence": [first], "reason": "так решают"}]})
+            idea = self.idea or (IDEA_A if first == "F1" else IDEA_B)
+            return json.dumps({"options": [{"idea": idea, "evidence": [first],
+                                            "reason": "так решают"}]})
         raise AssertionError(f"не тот шаг: {key}")
 
     def forget(self, keys):
@@ -232,10 +245,14 @@ def at_stage(stage, state, text):
 
 GROUPS = {
     "A": {"id": "A", "title": "Офлайн-очередь заявок", "idea": TEXTS[1], "ideaBy": "text",
-          "fragments": [fragment(1), fragment(2)], "links": [link("required_by", "B")]},
+          "ideaSearch": None, "fragments": [fragment(1), fragment(2)],
+          "links": [link("required_by", "B")]},
     "B": {"id": "B", "title": "Конфликты при синхронизации", "idea": "", "ideaBy": "ai",
-          "fragments": [fragment(3), fragment(4), fragment(5)], "links": [link("depends_on", "A")]},
+          "ideaSearch": None, "fragments": [fragment(3), fragment(4), fragment(5)],
+          "links": [link("depends_on", "A")]},
 }
+SEEKS = {"state": "running", "error": None}
+SOUGHT = {"state": "done", "error": None}
 DONE = [{"phase": "structure", "runs": runs(("sol", "done"), ("fable", "done"))},
         {"phase": "structure_judge", "runs": runs(("fable", "skipped"))}]
 GROUPING_NOW = at_stage("structure", "running", "sol и fable раскладывают фрагменты по группам")
@@ -490,7 +507,8 @@ def test_an_erased_idea_is_sought_by_the_council_at_once(store, pool, agents, id
     agents.asked.clear()
     res = edits(council_id, "A", {"idea": idea})
     assert res.status_code == 200
-    assert res.json() == {"group": {**GROUPS["A"], "idea": "", "ideaBy": "ai"}}
+    assert res.json() == {"group": {**GROUPS["A"], "idea": "", "ideaBy": "ai",
+                                    "ideaSearch": SEEKS}}
     assert groups_of(council_id)["A"] == res.json()["group"]
     assert len(pool.jobs) == 1
     assert listed(council_id)["stages"] == stages
@@ -501,7 +519,7 @@ def test_an_erased_idea_is_sought_by_the_council_at_once(store, pool, agents, id
     assert sorted(key.split("-")[1:3] for key in agents.asked) == [
         ["idea_discovery", "fable"], ["idea_discovery", "sol"]]
     group = groups_of(council_id)["A"]
-    assert (group["idea"], group["ideaBy"]) == (IDEA_A, "ai")
+    assert (group["idea"], group["ideaBy"], group["ideaSearch"]) == (IDEA_A, "ai", SOUGHT)
 
 
 def test_an_idea_erased_again_is_not_sought_twice(store, pool):
@@ -643,7 +661,8 @@ def test_split_takes_the_marked_fragments_into_a_new_group_after_the_old_one(sto
     groups = res.json()["structure"]["groups"]
     assert [group["id"] for group in groups] == ["A", "C", "B"]
     assert groups[1] == {"id": "C", "title": "Новая группа", "idea": "", "ideaBy": "ai",
-                         "fragments": [fragment(2)], "links": [link("split", "A")]}
+                         "ideaSearch": None, "fragments": [fragment(2)],
+                         "links": [link("split", "A")]}
     assert (groups[0]["idea"], groups[0]["fragments"]) == (TEXTS[1], [fragment(1)])
     assert structure_of(council_id)["groups"] == groups
     assert listed(council_id)["updatedAt"] > "2026-10-08T09:00:00Z"
@@ -925,7 +944,7 @@ def test_an_idea_erased_in_a_council_saved_before_is_sought_at_the_start(tmp_pat
     assert pool.jobs == []
 
 
-def test_only_erased_ideas_are_sought_at_the_start(store, pool, agents):
+def test_erased_ideas_and_failed_searches_are_sought_at_the_start(store, pool, agents):
     council_id = grouped(store, pool)                   # у B идеи нет, но её ищет подтверждение
     sought_at_start(store, agents, pool)
     assert pool.jobs == []
@@ -937,6 +956,31 @@ def test_only_erased_ideas_are_sought_at_the_start(store, pool, agents):
     assert len(pool.jobs) == 1
     pool.run()
     assert groups_of(council_id)["A"]["idea"] == IDEA_A
+
+
+def test_a_search_that_failed_is_sought_again_at_the_start(store, pool, agents):
+    # Решение владельца к задаче «…«Перезапустить» поиск идеи группы»: так стоял совет db1e454e
+    # — поиск идеи A упал (судья остановлен до запуска), и ждать было нечего. При старте сервера
+    # совет ищет снова: это повтор того же поиска — ответ sol, который уже есть, берётся даром.
+    council_id = grouped(store, pool)
+    agents.offline = {"fable"}
+    confirms(council_id)
+    pool.run()
+    group = groups_of(council_id)["B"]
+    assert (group["idea"], group["ideaSearch"]) == ("", {
+        "state": "failed", "error": "fable не справилась: нет входа в подписку."})
+    asked, agents.asked = agents.asked, []
+    agents.offline = set()
+    sought_at_start(store, agents, pool)
+    assert len(pool.jobs) == 1
+    assert groups_of(council_id)["B"]["ideaSearch"] == SEEKS
+    pool.run()
+    sol = "-idea_discovery-sol-"
+    assert [key for key in agents.asked if sol in key] == [key for key in asked if sol in key]
+    group = groups_of(council_id)["B"]
+    assert (group["idea"], group["ideaBy"], group["ideaSearch"]) == (IDEA_B, "ai", SOUGHT)
+    sought_at_start(store, agents, pool)                # нашёл — искать снова нечего
+    assert pool.jobs == []
 
 
 def test_a_search_stopped_by_a_restart_lets_the_slicing_go(tmp_path):
@@ -952,6 +996,323 @@ def test_a_search_stopped_by_a_restart_lets_the_slicing_go(tmp_path):
     assert (discovery.state, discovery.error) == ("failed",
                                                   "прерван: сервер остановился, пока шёл ход")
     assert client.post(f"/api/councils/{council_id}/slicing", json={}).status_code == 200
+
+
+# POST /api/councils/{id}/groups/{groupId}/idea/search
+
+def searches(council_id, group_id, body=None):
+    return client.post(f"/api/councils/{council_id}/groups/{group_id}/idea/search",
+                       json={} if body is None else body)
+
+
+def sought_b(store, pool) -> str:
+    """Группы подтверждены, совет нашёл идею B."""
+    council_id = grouped(store, pool)
+    confirms(council_id)
+    pool.run()
+    return council_id
+
+
+def test_a_found_idea_is_sought_anew_and_the_answers_before_are_not_taken(store, pool, agents):
+    # Решение владельца: у идеи группы — «Перезапустить». Это новый поиск: ответы прежнего не
+    # берутся, иначе вернулась бы та же идея.
+    council_id = sought_b(store, pool)
+    assert groups_of(council_id)["B"]["ideaSearch"] == SOUGHT
+    before, agents.asked = agents.asked, []
+    store.update_council(council_id, {"updated_at": LONG_AGO}, touch=False)
+    stages = listed(council_id)["stages"]
+    res = searches(council_id, "B")
+    assert res.status_code == 200
+    assert res.json() == {"group": {**GROUPS["B"], "ideaSearch": SEEKS}}
+    assert groups_of(council_id)["B"] == res.json()["group"]
+    council = listed(council_id)
+    assert council["stages"] == stages
+    assert council["updatedAt"] > "2026-10-08T09:00:00Z"
+    assert len(pool.jobs) == 1
+    # Пока совет ищет, новая нарезка не запускается, а «К потокам →» ждёт идею.
+    assert error_of(client.post(f"/api/councils/{council_id}/slicing", json={})) == (
+        409, "models_running")
+    agents.idea = "Сервер сверяет версии и спрашивает диспетчера."
+    pool.run()
+    assert sorted(key.split("-")[1:3] for key in agents.asked) == [
+        ["idea_discovery", "fable"], ["idea_discovery", "sol"]]
+    assert not set(agents.asked) & set(before)
+    group = groups_of(council_id)["B"]
+    assert (group["idea"], group["ideaBy"], group["ideaSearch"]) == (agents.idea, "ai", SOUGHT)
+    # Следующий — снова новый: ответов ни первого, ни прежнего перезапуска он не берёт.
+    before, agents.asked = [*before, *agents.asked], []
+    searches(council_id, "B")
+    pool.run()
+    assert len(agents.asked) == 2
+    assert not set(agents.asked) & set(before)
+
+
+def test_a_search_taken_by_a_merge_does_not_bring_back_the_answers_of_a_search_before(
+        store, pool, agents):
+    # Замечание ревью: B искала идею заново, от неё выделили C, перезапуск B упал, и C вернули в
+    # B — фрагменты у B снова те же, а поиск — C. Следующий перезапуск всё равно новый: ответы
+    # прежних поисков B из лотка он не берёт.
+    council_id = sought_b(store, pool)
+    searches(council_id, "B")
+    pool.run()
+    splits(council_id, "B", {"fragmentIds": ["F5"], "title": "Хвост"})
+    pool.run()                                          # у новой C совет нашёл идею
+    agents.offline = {"sol", "fable"}
+    searches(council_id, "B")
+    pool.run()                                          # перезапуск B упал
+    assert groups_of(council_id)["B"]["ideaSearch"]["state"] == "failed"
+    agents.offline = set()
+    merges(council_id, "C", {"into": "B"})
+    assert [f["id"] for f in groups_of(council_id)["B"]["fragments"]] == ["F3", "F4", "F5"]
+    before, agents.asked = agents.asked, []
+    assert searches(council_id, "B").json()["group"]["ideaSearch"] == SEEKS
+    pool.run()
+    assert len(agents.asked) == 2
+    assert not set(agents.asked) & set(before)
+
+
+def test_a_failed_restart_is_searched_again_at_start_with_the_answers_it_had(store, pool, agents):
+    # Перезапуск упал (сервер остановился посреди него): при старте сервера совет ищет снова тем
+    # же поиском — ответ, который модель уже дала, повтор берёт из лотка даром.
+    council_id = sought_b(store, pool)
+    agents.offline = {"fable"}
+    searches(council_id, "B")
+    pool.run()
+    assert groups_of(council_id)["B"]["ideaSearch"]["state"] == "failed"
+    agents.offline = set()
+    restart = [key for key in agents.asked if "-sol-" in key][-1]
+    agents.asked.clear()
+    sought_at_start(store, agents, pool)
+    pool.run()
+    assert [key for key in agents.asked if "-sol-" in key] == [restart]
+    assert groups_of(council_id)["B"]["ideaSearch"] == SOUGHT
+
+
+def test_a_failed_search_is_restarted_without_the_answers_it_had(store, pool, agents):
+    council_id = grouped(store, pool)
+    agents.offline = {"fable"}
+    confirms(council_id)
+    pool.run()
+    assert groups_of(council_id)["B"]["ideaSearch"]["state"] == "failed"
+    before, agents.asked = agents.asked, []
+    agents.offline = set()
+    assert searches(council_id, "B").json()["group"]["ideaSearch"] == SEEKS
+    pool.run()
+    # Ответ sol, что уже был, новый поиск не берёт: sol отвечает заново.
+    assert sorted(key.split("-")[1:3] for key in agents.asked) == [
+        ["idea_discovery", "fable"], ["idea_discovery", "sol"]]
+    assert not set(agents.asked) & set(before)
+    group = groups_of(council_id)["B"]
+    assert (group["idea"], group["ideaSearch"]) == (IDEA_B, SOUGHT)
+
+
+def test_a_search_that_found_nothing_is_restarted(store, pool):
+    # Модели честно не увидели идеи: поиск кончился, а идеи нет — её впишет человек или ищут
+    # заново.
+    nothing = start_idea(["sol", "fable"], "fable").model_copy(update={
+        "state": "done",
+        "proposal": IdeaProposal(idea=None, reason="идеи во фрагментах нет", decided_by="agreed")})
+    council_id = with_groups(store, [grp("A", [1, 2], ideas=[1]), grp("B", [3, 4, 5]).model_copy(
+        update={"discovery": nothing})], groups_confirmed=True)
+    group = groups_of(council_id)["B"]
+    assert (group["idea"], group["ideaBy"], group["ideaSearch"]) == ("", "ai", SOUGHT)
+    assert searches(council_id, "B").status_code == 200
+    pool.run()
+    assert groups_of(council_id)["B"]["idea"] == IDEA_B
+
+
+def test_an_idea_written_while_the_council_seeks_anew_stays_the_persons(store, pool):
+    council_id = sought_b(store, pool)
+    searches(council_id, "B")
+    group = edits(council_id, "B", {"idea": "Своя"}).json()["group"]
+    assert (group["idea"], group["ideaBy"], group["ideaSearch"]) == ("Своя", "user", None)
+    pool.run()
+    group = groups_of(council_id)["B"]
+    assert (group["idea"], group["ideaBy"], group["ideaSearch"]) == ("Своя", "user", None)
+    # Свою стёрли — идея группы та, что совет нашёл, и её снова можно перезапустить.
+    group = edits(council_id, "B", {"idea": ""}).json()["group"]
+    assert (group["idea"], group["ideaBy"], group["ideaSearch"]) == (IDEA_B, "ai", SOUGHT)
+    assert searches(council_id, "B").status_code == 200
+
+
+def test_a_type_idea_set_after_the_restart_still_gives_the_idea_of_the_group(store, pool):
+    council_id = sought_b(store, pool)
+    searches(council_id, "B")
+    pool.run()
+    assert client.patch(f"/api/councils/{council_id}/fragments/F4",
+                        json={"label": "idea"}).status_code == 200
+    group = groups_of(council_id)["B"]
+    assert (group["idea"], group["ideaBy"], group["ideaSearch"]) == (TEXTS[4], "text", None)
+
+
+def test_an_idea_left_by_a_merge_gives_way_to_the_new_search(store, pool, agents):
+    # У объединённой группы идея B осталась копией: «Перезапустить» ищет новую, и идея группы —
+    # та, что найдёт поиск, а не копия.
+    council_id = sought_b(store, pool)
+    splits(council_id, "A", {"fragmentIds": ["F2"], "title": "Связь"})
+    pool.run()                                          # у новой C совет нашёл идею
+    merges(council_id, "C", {"into": "B"})
+    group = groups_of(council_id)["B"]
+    assert (group["idea"], group["ideaBy"], group["ideaSearch"]) == (IDEA_B, "ai", SOUGHT)
+    agents.idea = "Конфликты решает диспетчер."
+    group = searches(council_id, "B").json()["group"]
+    assert (group["idea"], group["ideaSearch"]) == ("", SEEKS)
+    pool.run()
+    group = groups_of(council_id)["B"]
+    assert (group["idea"], group["ideaBy"], group["ideaSearch"]) == (agents.idea, "ai", SOUGHT)
+
+
+def test_a_merged_group_takes_the_search_along_with_the_idea(store, pool, agents):
+    # Идеи нет у той, с которой объединяют, — у неё идея другой группы и поиск этой идеи.
+    council_id = sought_b(store, pool)
+    agents.offline = {"sol", "fable"}
+    splits(council_id, "A", {"fragmentIds": ["F2"], "title": "Связь"})
+    pool.run()                                          # поиск идеи C упал
+    assert groups_of(council_id)["C"]["ideaSearch"]["state"] == "failed"
+    merges(council_id, "B", {"into": "C"})
+    group = groups_of(council_id)["C"]
+    assert (group["idea"], group["ideaBy"], group["ideaSearch"]) == (IDEA_B, "ai", SOUGHT)
+
+
+def test_a_merged_group_takes_the_search_its_stream_had_in_a_council_saved_before(store, pool):
+    # У совета прежней версии поиск идеи B — у её потока: он идёт за идеей B в объединённую
+    # группу, а не поиск потока A, который упал.
+    found = start_idea(["sol", "fable"], "fable").model_copy(update={
+        "state": "done", "proposal": IdeaProposal(idea=IDEA_B, reason="", decided_by="agreed")})
+    lost = start_idea(["sol", "fable"], "fable").model_copy(update={"state": "failed"})
+    council_id = with_groups(store, [grp("A", [2]), grp("B", [3, 4, 5])],
+                             streams=[Stream(group="A", discovery=lost),
+                                      Stream(group="B", discovery=found)])
+    assert groups_of(council_id)["A"]["ideaSearch"]["state"] == "failed"
+    merges(council_id, "B", {"into": "A"})
+    group = groups_of(council_id)["A"]
+    assert (group["idea"], group["ideaBy"], group["ideaSearch"]) == (IDEA_B, "ai", SOUGHT)
+    assert searches(council_id, "A").json()["group"]["ideaSearch"] == SEEKS
+    assert store.get_council(council_id).structure.groups[0].discovery.salt != ""
+
+
+def test_a_search_still_going_does_not_go_along_with_the_idea_of_a_person(store, pool, agents):
+    # Человек вписал идею B, пока совет её искал, и объединил B с A, у которой идеи нет: идея
+    # переходит, а поиск, который ещё идёт, — нет. Его ход пишет в B, а её уже нет: у A он
+    # навсегда остался бы «ищет», и новая нарезка ждала бы его без конца.
+    council_id = with_groups(store, [grp("A", [2]), grp("B", [3, 4, 5])])
+    edits(council_id, "B", {"idea": ""})                # совет ищет идею B
+    edits(council_id, "B", {"idea": "Своя"})
+    merges(council_id, "B", {"into": "A"})
+    pool.run()                                          # поиск B кончился — писать некуда
+    group = groups_of(council_id)["A"]
+    assert (group["idea"], group["ideaBy"], group["ideaSearch"]) == ("Своя", "user", None)
+    council = store.get_council(council_id)
+    assert council.structure.groups[0].discovery is None
+    assert not seeking(council)
+    # Свою стёрли — совет ищет идею объединённой группы.
+    agents.idea = "Конфликты решает диспетчер."
+    assert edits(council_id, "A", {"idea": ""}).json()["group"]["ideaSearch"] == SEEKS
+    pool.run()
+    group = groups_of(council_id)["A"]
+    assert (group["idea"], group["ideaBy"], group["ideaSearch"]) == (agents.idea, "ai", SOUGHT)
+
+
+def test_a_merged_group_keeps_its_own_search_still_going(store, pool):
+    # Совет ищет идею и у A, и у B; у B человек вписал свою. После объединения поиск A идёт
+    # дальше и кончается у объединённой группы.
+    council_id = with_groups(store, [grp("A", [2]), grp("B", [3, 4, 5])])
+    edits(council_id, "A", {"idea": ""})
+    edits(council_id, "B", {"idea": ""})
+    edits(council_id, "B", {"idea": "Своя"})
+    merges(council_id, "B", {"into": "A"})
+    assert groups_of(council_id)["A"]["idea"] == "Своя"
+    pool.run()
+    council = store.get_council(council_id)
+    assert council.structure.groups[0].discovery.state == "done"
+    assert not seeking(council)
+
+
+def test_the_idea_of_a_stream_gives_way_to_the_new_search_but_the_stream_keeps_it(store, pool,
+                                                                                agents):
+    # Группы уже стали потоками: идея B — у её потока. Перезапуск меняет идею группы, а поток —
+    # нет (решение q-002).
+    found = start_idea(["sol", "fable"], "fable").model_copy(update={
+        "state": "done", "proposal": IdeaProposal(idea=IDEA_B, reason="", decided_by="agreed")})
+    council_id = with_groups(
+        store, [grp("A", [1, 2], ideas=[1]), grp("B", [3, 4, 5]).model_copy(
+            update={"discovery": found})], groups_confirmed=True,
+        streams=[Stream(group="A", idea=StreamIdea(text=TEXTS[1], by="text")),
+                 Stream(group="B", idea=StreamIdea(text=IDEA_B, by="council"))])
+    group = groups_of(council_id)["B"]
+    assert (group["idea"], group["ideaBy"], group["ideaSearch"]) == (IDEA_B, "ai", SOUGHT)
+    agents.idea = "Конфликты решает диспетчер."
+    assert searches(council_id, "B").json()["group"]["idea"] == ""
+    pool.run()
+    assert groups_of(council_id)["B"]["idea"] == agents.idea
+    assert store.get_council(council_id).streams[1].idea.text == IDEA_B
+
+
+def test_a_search_saved_by_the_old_version_is_the_first_one(tmp_path, pool):
+    # Советы, сохранённые раньше, открываются: их поиск идеи — как первый, с ключами ответов как
+    # всегда; перезапуск — новый, со своим ключом.
+    folder = tmp_path / "data"
+    folder.mkdir()
+    fragments = [{"id": i, "text": TEXTS[i], "label": LABELS[i], "reason": "",
+                  "council_label": LABELS[i]} for i in TEXTS]
+    discovery = {"state": "done", "run": "i1", "steps": [],
+                 "proposal": {"idea": IDEA_B, "reason": "", "decided_by": "agreed"}}
+    saved = {"id": "old2", "name": "", "status": "review", "brief": "",
+             "participants": ["sol", "fable"], "judge": "fable",
+             "updated_at": "2026-10-08T09:00:00Z", "groups_confirmed": True,
+             "slicing": {"state": "done", "run": "s1", "steps": [], "fragments": fragments},
+             "structure": {"state": "done", "run": "g1", "slicing_run": "s1", "steps": [],
+                           "labels": LABELS, "groups": [
+                               {"id": "B", "title": "Конфликты", "fragment_ids": [3, 4, 5],
+                                "idea_fragment_ids": [], "missing_idea": True,
+                                "discovery": discovery}]}}
+    (folder / "old2.json").write_text(json.dumps(saved), encoding="utf-8")
+    store = FileStore(folder)
+    app.dependency_overrides[get_store] = lambda: store
+    group = groups_of("old2")["B"]
+    assert (group["idea"], group["ideaBy"], group["ideaSearch"]) == (IDEA_B, "ai", SOUGHT)
+    assert store.get_council("old2").structure.groups[0].discovery.salt == ""
+    assert searches("old2", "B").status_code == 200
+    assert store.get_council("old2").structure.groups[0].discovery.salt != ""
+
+
+def test_an_idea_not_from_the_search_is_not_sought_anew(store, pool):
+    # Своя идея человека и идея из текста — не от поиска; не искал ещё — перезапускать нечего.
+    council_id = grouped(store, pool)
+    assert error_of(searches(council_id, "B")) == (409, "idea_not_searched")   # не подтверждены
+    assert error_of(searches(council_id, "A")) == (409, "idea_not_searched")   # из текста
+    confirms(council_id)
+    pool.run()
+    edits(council_id, "B", {"idea": "Своя"})
+    assert error_of(searches(council_id, "B")) == (409, "idea_not_searched")
+    assert pool.jobs == []
+    assert groups_of(council_id)["B"]["idea"] == "Своя"
+
+
+def test_an_idea_is_not_sought_anew_while_the_council_seeks_it(store, pool):
+    council_id = grouped(store, pool)
+    confirms(council_id)
+    assert error_of(searches(council_id, "B")) == (409, "idea_running")
+    assert len(pool.jobs) == 1
+
+
+def test_an_idea_is_not_sought_anew_while_the_models_group(store, pool):
+    council_id = sought_b(store, pool)
+    store.update_council(council_id, {"structure": start_structure(["sol"], "fable",
+                                                                   sliced_with())})
+    assert error_of(searches(council_id, "B")) == (409, "structure_running")
+
+
+def test_a_search_of_a_group_or_council_that_is_not_there_is_not_found(store, pool):
+    council_id = sought_b(store, pool)
+    assert error_of(searches(council_id, "Z")) == (404, "not_found")
+    assert error_of(searches("missing", "B")) == (404, "not_found")
+
+
+def test_a_search_out_of_contract_is_a_bad_request(store, pool):
+    council_id = sought_b(store, pool)
+    assert error_of(searches(council_id, "B", {"search": 2})) == (400, "bad_request")
+    assert pool.jobs == []
 
 
 # POST /api/councils/{id}/structure/retry

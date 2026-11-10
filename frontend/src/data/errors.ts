@@ -22,6 +22,8 @@ export const ERROR_CODES = [
   'structure_running',
   'bad_merge',
   'bad_split',
+  'idea_running',
+  'idea_not_searched',
   'no_repos',
   'bad_link',
   'bad_decision',

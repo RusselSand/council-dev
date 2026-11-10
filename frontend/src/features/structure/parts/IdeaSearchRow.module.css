@@ -1,0 +1,27 @@
+/* Пояснение слева, кнопка справа; узко — кнопка уходит под пояснение. */
+.row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--space-4) var(--space-8);
+}
+
+.note {
+  flex: 1 1 12em;
+  min-width: 0;
+  margin: 0;
+  font-size: var(--text-sm);
+  line-height: var(--leading-normal);
+  color: var(--state-waiting-ink);
+  overflow-wrap: anywhere;
+}
+
+.failed {
+  color: var(--state-failed-ink);
+}
+
+/* Вровень с правым краем плашки: подпись кнопки — у края текста. */
+.restart {
+  margin-left: auto;
+  margin-right: calc(-1 * var(--space-8));
+}

@@ -10,6 +10,8 @@
 Идея, которую человек стёр (пустая или из одних пробелов), — «идеи нет, напишите её»: не своя
 идея человека, и фрагменты-идеи группы её не задают — её ищет совет; фрагменты-идеи — по типам,
 которые у фрагментов сейчас (решение владельца к задаче «Бекенд · Группы: стёртая идея…»).
+Идею от ИИ совет ищет заново по «Перезапустить» (решение владельца к задаче «Бекенд · Группы:
+«Перезапустить» поиск идеи группы»): поиск новый, идея — та, что он найдёт (restarted).
 """
 
 from collections import Counter
@@ -144,11 +146,35 @@ def found(discovery: IdeaDiscovery | None) -> str:
 def seeks_idea(council: Council, group: Group) -> bool:
     """Идею группы искать совету: её нет ни у человека, ни в тексте, и совет её ещё не искал
     или поиск упал. Ищет сейчас — второй раз не запускать; искал и не нашёл — её впишет
-    человек."""
+    человек или «Перезапустить»."""
     if idea_of(council, group).text.strip():
         return False
     discovery = discovery_of(council, group)
     return discovery is None or discovery.state == "failed"
+
+
+def idea_search(council: Council, group: Group) -> IdeaDiscovery | None:
+    """Поиск идеи группы, как его видят «Группы»: идея группы от ИИ, и совет её искал — ищет,
+    нашёл, не нашёл или поиск упал. Его «Перезапустить» (решение владельца к задаче «Бекенд ·
+    Группы: «Перезапустить» поиск идеи группы»). Идея своя или из текста — не от поиска: его не
+    видно, и искать заново нечего; совет её ещё не искал — None."""
+    if idea_of(council, group).by != "ai":
+        return None
+    return discovery_of(council, group)
+
+
+def restarted(council: Council, group: Group, discovery: IdeaDiscovery) -> Group:
+    """Группа, у которой совет ищет идею заново («Перезапустить»): поиск discovery — новый, а идея
+    группы — та, что он найдёт. Идея от ИИ, которая осталась у группы после объединения и
+    разделения или которую взял её поток, поиска не слушает: она уступает ему место, как
+    стёртая человеком. Идея, которую совет нашёл сам, и так от поиска — её место займёт новый,
+    а тип «идея», поставленный фрагменту потом, по-прежнему задаёт идею группы."""
+    stream = stream_of(council, group)
+    copied = group.idea is not None or (stream is not None and stream.idea is not None)
+    changes: dict = {"discovery": discovery}
+    if copied and not erased(group):
+        changes |= {"idea": "", "idea_by": "user"}
+    return group.model_copy(update=changes)
 
 
 def without_idea(council: Council) -> list[str]:
@@ -226,17 +252,29 @@ def group_in(structure: Structure | None, group_id: str) -> Group | None:
 def merged(council: Council, source: Group, target: Group) -> Structure:
     """Группа source — в группу target, другую группу раскладки совета. Фрагменты source встают в
     конец target, те, что там уже есть, не повторяются; название — у target; идея — у target, а
-    нет её — у source, вместе с тем, откуда она. Связи source переходят к target (разошлись
-    связи с одной и той же группой — остаётся связь target), ссылки на source ведут на target,
-    связи группы с самой собой нет; у target — след: с ней объединили source."""
+    нет её — у source, вместе с тем, откуда она, и поиском идеи, если он не идёт. Связи source
+    переходят к target
+    (разошлись связи с одной и той же группой — остаётся связь target), ссылки на source ведут
+    на target, связи группы с самой собой нет; у target — след: с ней объединили source."""
     structure = council.structure
     keeper = target if idea_of(council, target).text else source
+    # Идеи нет ни у той, ни у другой — поиск у target: он, может, уже идёт.
+    discovery = target.discovery
+    if keeper is source and idea_of(council, source).text:
+        # Идея source — вместе с её поиском, и тем, что у совета прежней версии вёл её поток
+        # (discovery_of): иначе он не пошёл бы за идеей. Поиск, который ещё идёт (идею вписал
+        # человек, пока совет искал), не переходит: его ход пишет в source, а её уже нет, — у
+        # target он навсегда остался бы «ищет». Тогда поиск — у target.
+        adopted = discovery_of(council, source)
+        if adopted is None or adopted.state != "running":
+            discovery = adopted
     ideas = idea_fragments(council, keeper)
     fragment_ids = [*target.fragment_ids,
                     *(i for i in source.fragment_ids if i not in target.fragment_ids)]
     union = target.model_copy(update={
         "fragment_ids": fragment_ids, "labels": typed(council, fragment_ids),
         "idea_fragment_ids": ideas, "missing_idea": not ideas, **own_idea(council, keeper),
+        "discovery": discovery,
         "origins": [*moved(target.origins, source.id, target.id, target.id),
                     GroupOrigin(kind="merged", group=source.id)],
     })

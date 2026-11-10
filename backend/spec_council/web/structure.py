@@ -17,6 +17,11 @@
 Человек стёр идею группы — идеи нет, и совет сразу ищет её сам, как подтверждение (решение
 владельца к задаче «Бекенд · Группы: стёртая идея…»); у советов, где стёртая идея сохранена
 раньше, — при старте сервера (sought_at_start).
+
+Идею от ИИ совет ищет заново по «Перезапустить» — POST …/groups/{groupId}/idea/search (решение
+владельца к задаче «Бекенд · Группы: «Перезапустить» поиск идеи группы»): поиск новый, ответы
+прежних из лотка не берутся. Как идёт поиск идеи группы — ideaSearch у группы; поиск, который
+упал (и тот, что прервал перезапуск сервера), совет при старте сервера ищет снова.
 """
 
 from collections.abc import Iterable
@@ -31,19 +36,22 @@ from ..groups import (
     IdeaBy,
     LinkKind,
     confirmed,
+    discovery_of,
     erased,
     fragments_of,
     group_in,
     idea_of,
+    idea_search,
     links_of,
     merged,
+    restarted,
     seeks_idea,
     split,
 )
 from ..models import Council, CouncilStatus, IdeaDiscovery, Slicing, StepName
 from ..models import Group as StoredGroup
 from ..models import Structure as StoredStructure
-from ..pipeline import GroupingRun, IdeaRun, Runner
+from ..pipeline import GroupingRun, IdeaRun, Runner, search_salt
 from ..standing import structure_of as stage_of
 from ..store import council_lock
 from .councils import CouncilAnswer, missing, shown
@@ -51,6 +59,7 @@ from .errors import ApiError, ContractRoute, not_found
 from .runs import Run, judge_of, runs_of
 from .schema import Empty, Schema
 from .slicing import Fragment, fragment_key, fragment_of
+from .streams import failed_text
 
 router = APIRouter(route_class=ContractRoute, tags=["structure"])
 
@@ -74,11 +83,19 @@ class GroupLink(Schema):
     fragment: str | None
 
 
+class IdeaSearch(Schema):
+    """Поиск идеи группы: ищет, кончился (нашёл или нет — по idea группы), упал — и почему."""
+
+    state: Literal["running", "done", "failed"]
+    error: str | None
+
+
 class Group(Schema):
     id: str
     title: str
     idea: str
     idea_by: IdeaBy
+    idea_search: IdeaSearch | None
     fragments: list[Fragment]
     links: list[GroupLink]
 
@@ -224,6 +241,34 @@ def update_group(council_id: str, group_id: str, fields: GroupFields, store: Sto
     return GroupAnswer(group=group_view(council, group))
 
 
+@router.post("/councils/{council_id}/groups/{group_id}/idea/search")
+def search_idea(council_id: str, group_id: str, store: StoreDep, agents: AgentsDep,
+                launch: LauncherDep, body: Empty | None = None) -> GroupAnswer:
+    """«Перезапустить» у идеи группы: совет ищет её заново, в фоне. Это новый поиск — ответы
+    прежних из лотка не берутся, даже тех моделей, что ответили, а поиск упал: иначе вернулась
+    бы та же идея. Можно, когда идея группы от ИИ и совет её искал — нашёл, не нашёл или поиск
+    упал; пока ищет — нельзя. Своя идея человека и идея из текста — не от поиска: искать заново
+    нечего. Пока совет ищет, у группы идеи нет; нашёл — она его. Этапов поиск не меняет."""
+    with council_lock:
+        council = editable(store, council_id)
+        group = group_of(council, group_id)
+        before = idea_search(council, group)
+        if before is None:
+            raise ApiError(409, "idea_not_searched",
+                           f"Идея группы {group_id} — своя или из текста, или совет её ещё не "
+                           "искал: искать её заново нечего")
+        if running(before):
+            raise ApiError(409, "idea_running", f"Совет уже ищет идею группы {group_id}")
+        run = idea_run(store, council, group, agents, search_salt())
+        group = restarted(council, group, run.state.model_copy(deep=True))
+        council = store.update_council(council_id, {"structure": council.structure.model_copy(
+            update={"groups": [group if one.id == group.id else one
+                               for one in council.structure.groups]})}) or council
+        group = group_of(council, group_id)
+    launched(launch, run, run.report)
+    return GroupAnswer(group=group_view(council, group))
+
+
 @router.post("/councils/{council_id}/groups/{group_id}/merge")
 def merge_group(council_id: str, group_id: str, body: Merge,
                 store: StoreDep) -> StructureAnswer:
@@ -283,14 +328,25 @@ def structure_of(council: Council) -> Structure:
 
 
 def group_view(council: Council, group: StoredGroup) -> Group:
-    """Группа по контракту: идея и откуда она, фрагменты с нынешним типом, связи."""
+    """Группа по контракту: идея, откуда она и как её ищет совет, фрагменты с нынешним типом,
+    связи."""
     idea = idea_of(council, group)
     links = links_of(council.structure, group)
     return Group(id=group.id, title=group.title, idea=idea.text, idea_by=idea.by,
+                 idea_search=search_view(idea_search(council, group)),
                  fragments=[fragment_of(one) for one in fragments_of(council, group)],
                  links=[GroupLink(kind=link.kind, group=link.group,
                                   fragment=None if link.fragment is None
                                   else fragment_key(link.fragment)) for link in links])
+
+
+def search_view(discovery: IdeaDiscovery | None) -> IdeaSearch | None:
+    """Поиск идеи по контракту. Упал — почему, словами сервера: какие модели не справились и
+    почему, а ни одна — почему остановился ход («прерван: сервер остановился…»)."""
+    if discovery is None:
+        return None
+    error = failed_text(discovery) if discovery.state == "failed" else None
+    return IdeaSearch(state=discovery.state, error=error)
 
 
 def answered(pipeline: GroupingRun, council: Council) -> None:
@@ -309,31 +365,49 @@ def answered(pipeline: GroupingRun, council: Council) -> None:
 def idea_runs(store: Store, council: Council, groups: Iterable[StoredGroup],
               agents: Runner) -> dict[str, IdeaRun]:
     """Поиск идеи у тех из групп, где её нет ни в тексте, ни от человека, а совет её ещё не
-    искал или поиск упал, — по группам."""
-    return {group.id: IdeaRun(council.id, fragments_of(council, group), council.participants,
-                              council.judge, agents,
-                              reporter(store, council.id, idea_slot(group.id)))
-            for group in groups if seeks_idea(council, group)}
+    искал или поиск упал, — по группам. Поиск, который упал, идёт снова тем же поиском: ответы,
+    которые модели уже дали, повтор берёт из лотка даром."""
+    runs: dict[str, IdeaRun] = {}
+    for group in groups:
+        if seeks_idea(council, group):
+            before = discovery_of(council, group)
+            runs[group.id] = idea_run(store, council, group, agents,
+                                      before.salt if before else "")
+    return runs
+
+
+def idea_run(store: Store, council: Council, group: StoredGroup, agents: Runner,
+             salt: str) -> IdeaRun:
+    """Поиск идеи группы по её фрагментам, моделями и судьёй совета; salt — ключ ответов
+    поиска: у повтора упавшего — его же, у нового («Перезапустить») — свой."""
+    return IdeaRun(council.id, fragments_of(council, group), council.participants, council.judge,
+                   agents, reporter(store, council.id, idea_slot(group.id)), salt)
 
 
 def sought_at_start(store: Store, agents: Runner, launch: Launcher) -> None:
     """Старт сервера: у групп, где человек стёр идею, а совет её не искал (так сохраняла прежняя
-    версия) или поиск упал (сервер остановился посреди него), совет ищет её — в фоне, как после
-    правки. Время изменения совета от этого не меняется: это не правка человека."""
+    версия), и у групп, где поиск упал (и сервер остановился посреди него), совет ищет её снова
+    — в фоне, как после правки (решение владельца к задаче «Бекенд · Группы: «Перезапустить»
+    поиск идеи группы»). Время изменения совета от этого не меняется: это не правка человека."""
     runs: list[IdeaRun] = []
     with council_lock:
         for council in store.list_councils():
             structure = council.structure
             if structure is None or stage_of(council) == "running":
                 continue
-            found = idea_runs(store, council,
-                              [group for group in structure.groups if erased(group)], agents)
+            found = idea_runs(store, council, [
+                group for group in structure.groups
+                if erased(group) or failed(discovery_of(council, group))], agents)
             if found:
                 store.update_council(council.id, {"structure": sought(structure, found)},
                                      touch=False)
                 runs.extend(found.values())
     for run in runs:
         launched(launch, run, run.report)
+
+
+def failed(discovery: IdeaDiscovery | None) -> bool:
+    return discovery is not None and discovery.state == "failed"
 
 
 def sought(structure: StoredStructure, runs: dict[str, IdeaRun]) -> StoredStructure:

@@ -87,6 +87,10 @@ export const httpSource: DataSource = {
     const { structure } = await request<{ structure: Structure }>('POST', path, { fragmentIds, title });
     return structure;
   },
+  async searchGroupIdea(id, groupId) {
+    const { group } = await request<{ group: Group }>('POST', `${groupPath(id, groupId)}/idea/search`, {});
+    return group;
+  },
   async confirmStructure(id) {
     const { council } = await request<{ council: CouncilSummary }>('POST', `${councilPath(id)}/structure/confirm`, {});
     return council;

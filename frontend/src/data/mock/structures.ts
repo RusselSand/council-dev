@@ -33,6 +33,7 @@ const G1: Structure = {
       title: 'Список сервисов Generation',
       idea: 'Обеспечить получение списка сервисов Generation из существующих данных Scan и вывести его в /generation.',
       ideaBy: 'text',
+      ideaSearch: null,
       fragments: G1_FRAGMENTS,
       links: [],
     },
@@ -50,6 +51,7 @@ const PROTO_GROUPS: Group[] = [
     title: 'Офлайн-очередь заявок',
     idea: 'Заявка копится на телефоне и уходит сама, когда сеть вернётся.',
     ideaBy: 'text',
+    ideaSearch: null,
     fragments: pick(PROTO_FRAGMENTS, 'F1', 'F2', 'F3', 'F8'),
     links: [link('required_by', 'B')],
   },
@@ -58,6 +60,8 @@ const PROTO_GROUPS: Group[] = [
     title: 'Конфликты при синхронизации',
     idea: 'При отправке очереди сервер сверяет версии заявки и не затирает правки диспетчера молча.',
     ideaBy: 'ai',
+    // Идею нашёл ИИ — её можно «Перезапустить».
+    ideaSearch: { state: 'done', error: null },
     fragments: pick(PROTO_FRAGMENTS, 'F4', 'F5', 'F6'),
     links: [link('depends_on', 'A'), link('shared', 'C', 'F5')],
   },
@@ -66,6 +70,7 @@ const PROTO_GROUPS: Group[] = [
     title: 'Индикатор сети',
     idea: 'Понятный индикатор: есть сеть или нет, сколько заявок ждёт отправки.',
     ideaBy: 'text',
+    ideaSearch: null,
     fragments: pick(PROTO_FRAGMENTS, 'F7', 'F1'),
     links: [link('related', 'A')],
   },
@@ -147,7 +152,30 @@ export function relabeled(group: Group, fragmentId: string, label: Label): Group
     .filter((f) => f.label === 'idea')
     .map((f) => f.text)
     .join(' ');
-  return { ...group, fragments, idea, ideaBy: idea ? 'text' : 'ai' };
+  // Идея из текста — не от поиска: его не видно.
+  return { ...group, fragments, idea, ideaBy: idea ? 'text' : 'ai', ideaSearch: idea ? null : group.ideaSearch };
+}
+
+/** Совет ищет идею группы: идеи пока нет, ИИ работает. В моках поиск не кончается, как и раскладка. */
+export const seekingIdea = (group: Group): Group => ({
+  ...group,
+  idea: '',
+  ideaBy: 'ai',
+  ideaSearch: { state: 'running', error: null },
+});
+
+/**
+ * «Перезапустить»: совет ищет идею группы заново — можно, когда идея от ИИ и совет её искал, а сейчас не ищет; как
+ * у сервера, иначе idea_not_searched или idea_running.
+ */
+export function searchedAgain(group: Group): Group {
+  if (group.ideaSearch === null) {
+    throw new ApiError('idea_not_searched', `Идея группы ${group.id} не от поиска — искать её заново нечего`, 409);
+  }
+  if (group.ideaSearch.state === 'running') {
+    throw new ApiError('idea_running', `Совет уже ищет идею группы ${group.id}`, 409);
+  }
+  return seekingIdea(group);
 }
 
 /** Без повторов: одна и та же связь — один раз. */
@@ -169,8 +197,9 @@ function groupOf(structure: Structure, id: string): Group {
 
 /**
  * Объединить группу groupId с группой into — как в макете (prototype.js, targets.pick): группа groupId пропадает, её
- * фрагменты встают в конец into (те, что уже там, — не повторяются); идея — у into, а нет её — у groupId; у into —
- * связь «объединена с группой groupId». Связи groupId переходят к into, ссылки других групп на groupId — тоже.
+ * фрагменты встают в конец into (те, что уже там, — не повторяются); идея — у into, а нет её — у groupId, вместе с
+ * поиском идеи; у into — связь «объединена с группой groupId». Связи groupId переходят к into, ссылки других групп на
+ * groupId — тоже.
  */
 export function mergeGroups(structure: Structure, groupId: string, into: string): Structure {
   if (groupId === into) throw new ApiError('bad_merge', `Группу ${groupId} не объединить с самой собой`, 422);
@@ -181,6 +210,7 @@ export function mergeGroups(structure: Structure, groupId: string, into: string)
     ...target,
     idea: target.idea || source.idea,
     ideaBy: target.idea ? target.ideaBy : source.ideaBy,
+    ideaSearch: target.idea || !source.idea ? target.ideaSearch : source.ideaSearch,
     fragments: [...target.fragments, ...source.fragments.filter((f) => !target.fragments.some((t) => t.id === f.id))],
     links: [...repoint([...target.links, ...relations], into, groupId, into), link('merged', groupId)],
   };
@@ -217,6 +247,7 @@ export function splitGroup(structure: Structure, groupId: string, fragmentIds: s
     title: cleanName(title),
     idea: '',
     ideaBy: 'ai',
+    ideaSearch: null,
     fragments: moved,
     links: [link('split', groupId)],
   };

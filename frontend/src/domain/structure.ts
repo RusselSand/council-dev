@@ -28,6 +28,17 @@ export interface GroupLink {
   fragment: string | null;
 }
 
+/** Как идёт поиск идеи группы: совет ищет, поиск кончился (нашёл — идея в idea группы, нет — она пустая), упал. */
+export const IDEA_SEARCH_STATES = ['running', 'done', 'failed'] as const;
+export type IdeaSearchState = (typeof IDEA_SEARCH_STATES)[number];
+
+/** Поиск идеи группы советом. */
+export interface IdeaSearch {
+  state: IdeaSearchState;
+  /** Почему поиск упал — одной строкой, текст пишет сервер; не упал — null. */
+  error: string | null;
+}
+
 /** Группа фрагментов вокруг одной идеи: после подтверждения она станет потоком. */
 export interface Group {
   /** id группы; интерфейс показывает его как есть: «A». */
@@ -37,6 +48,11 @@ export interface Group {
   /** Идея группы; пустая строка — идеи нет: ИИ восстановит её по фрагментам. */
   idea: string;
   ideaBy: IdeaSource;
+  /**
+   * Поиск идеи — когда идея от ИИ и совет её искал: его можно «Перезапустить» (решение владельца к задаче «Бекенд ·
+   * Группы: «Перезапустить» поиск идеи группы»). Идея своя или из текста, или совет её ещё не искал — null.
+   */
+  ideaSearch: IdeaSearch | null;
   /** Фрагменты группы по порядку; тип — тот, что у фрагмента сейчас. */
   fragments: Fragment[];
   /** Связи с другими группами — в порядке сервера. */
@@ -65,6 +81,9 @@ export interface GroupFields {
  */
 export const withoutIdea = (groups: readonly Group[]): string[] =>
   groups.filter((group) => group.idea.trim() === '').map((group) => group.id);
+
+/** Совет может искать идею группы заново: он её искал и сейчас не ищет. */
+export const canSearchIdea = (search: IdeaSearch | null): boolean => search !== null && search.state !== 'running';
 
 /** В новую группу можно вынести часть фрагментов группы: хотя бы один, но не все. */
 export const canSplit = (selected: number, total: number): boolean => selected > 0 && selected < total;

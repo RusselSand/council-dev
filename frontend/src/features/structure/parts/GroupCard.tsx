@@ -25,6 +25,8 @@ interface GroupCardProps {
   onSplitOff: () => void;
   onCancel: () => void;
   onIdeaChange: (idea: string) => void;
+  /** «Перезапустить» поиск идеи. */
+  onIdeaRestart: () => void;
 }
 
 /**
@@ -45,6 +47,7 @@ export function GroupCard({
   onSplitOff,
   onCancel,
   onIdeaChange,
+  onIdeaRestart,
 }: GroupCardProps) {
   return (
     <Card>
@@ -57,7 +60,15 @@ export function GroupCard({
         onChange={onTitleChange}
         onEnd={onRenameEnd}
       />
-      <GroupIdea group={group.id} idea={group.idea} ideaBy={group.ideaBy} readOnly={locked} onChange={onIdeaChange} />
+      <GroupIdea
+        group={group.id}
+        idea={group.idea}
+        ideaBy={group.ideaBy}
+        search={group.ideaSearch}
+        readOnly={locked}
+        onChange={onIdeaChange}
+        onRestart={onIdeaRestart}
+      />
       <GroupFragments
         fragments={group.fragments}
         selectable={group.mode === 'split'}

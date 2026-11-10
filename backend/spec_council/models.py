@@ -150,6 +150,11 @@ class IdeaDiscovery(BaseModel):
 
     state: Literal["running", "done", "failed"]
     run: str = ""
+    # Ключ ответов этого поиска (CouncilRun.salt). Пусто — у поиска, который совет начал сам, и у
+    # поиска прежней версии: ключи как всегда. «Перезапустить» даёт новый, у каждого свой: ответы
+    # прежних поисков ему не годятся, даже когда фрагменты группы снова те же (её объединяли и
+    # разделяли). Повтор упавшего — тот же поиск, с тем же ключом.
+    salt: str = ""
     steps: list[Step]
     options: list[IdeaOption] = []
     proposal: IdeaProposal | None = None
