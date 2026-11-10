@@ -24,7 +24,7 @@ from fastapi import APIRouter
 
 from ..council_tasks import go, retried, shown_draft, wrote
 from ..deps import AgentsDep, LauncherDep, ProjectsDep, RepositoriesDep, StoreDep
-from ..models import Council, Issue, StepName, TasksDraft
+from ..models import CancelledIssue, Council, Issue, StepName, Swap, TasksDraft
 from ..notes import NotesError
 from ..projects import Projects
 from ..prompts import notes_language
@@ -95,12 +95,51 @@ class VanishedTask(Schema):
     title: str
 
 
+class Superseded(Schema):
+    """Решение проекта, которое заменил совет (adr), и решение совета, что его заменяет (by)."""
+
+    adr: str
+    by: str
+
+
+class CancelledTask(Schema):
+    """Задача прежнего совета на решениях, которые заменил совет: её отменит запись. Заменена —
+    replaced_by (id задачи плана); её работу делают задачи плана — covered_by; ни того ни другого —
+    без замены, и задачи unlinked (номера в каталоге) больше её не ждут."""
+
+    id: str
+    title: str
+    status: Literal["open", "deferred"]
+    superseded: list[Superseded]
+    replaced_by: str | None
+    covered_by: list[str]
+    unlinked: list[str]
+
+
+class CancelledOutcome(Schema):
+    """Итог прежнего совета, у которого после отмены не осталось открытых и отложенных задач."""
+
+    id: str
+    title: str
+
+
+class DoneTask(Schema):
+    """Сделанная задача на решениях, которые заменил совет: её не трогают."""
+
+    id: str
+    title: str
+    superseded: list[Superseded]
+
+
 class TasksPlan(Schema):
     catalog: Catalog | None
     progress: list[TaskStep]
     outcomes: list[TaskOutcome]
     tasks: list[Task]
     vanished: list[VanishedTask]
+    cancelled: list[CancelledTask]
+    cancelled_outcomes: list[CancelledOutcome]
+    done_superseded: list[DoneTask]
     ready_streams: list[str]
     pending_streams: list[str]
     error: str | None
@@ -191,6 +230,7 @@ def plan_of(council: Council, folders: Folders, projects: Projects, store: Store
     catalog = catalog_of(council, projects, folders)
     if state == "idle":
         return TasksPlan(catalog=catalog, progress=[], outcomes=[], tasks=[], vanished=[],
+                         cancelled=[], cancelled_outcomes=[], done_superseded=[],
                          ready_streams=[], pending_streams=pending, error=None)
     plan = current_plan(council)
     draft = shown_draft(council, folders, store) if plan is not None else None
@@ -198,6 +238,7 @@ def plan_of(council: Council, folders: Folders, projects: Projects, store: Store
     owners = owners_of(council)
     outcomes = plan_outcomes(council) if plan else []
     by_name = outcome_by_name(outcomes)
+    cancelled = draft.cancelled if draft else []
     return TasksPlan(
         catalog=catalog, progress=progress_of(council, folders),
         outcomes=[task_outcome_of(outcome, outcome_number(numbers.get(outcome.name)))
@@ -206,9 +247,27 @@ def plan_of(council: Council, folders: Folders, projects: Projects, store: Store
         if plan else [],
         vanished=[VanishedTask(id=note.id, title=title_of(note.text)) for note in draft.vanished
                   if not note.linked_from and not note.edited] if draft else [],
+        cancelled=[cancelled_task_of(item) for item in cancelled if item.type == "issue"],
+        cancelled_outcomes=[CancelledOutcome(id=item.id, title=item.title)
+                            for item in cancelled if item.type == "outcome"],
+        done_superseded=[DoneTask(id=item.id, title=item.title,
+                                  superseded=superseded_of(item.swaps))
+                         for item in draft.done] if draft else [],
         ready_streams=[stream.id for stream in where.streams] if plan else [],
         pending_streams=pending,
         error=error_of(council, folders) if state == "failed" else None)
+
+
+def superseded_of(swaps: list[Swap]) -> list[Superseded]:
+    return [Superseded(adr=swap.adr, by=swap.by) for swap in swaps]
+
+
+def cancelled_task_of(item: CancelledIssue) -> CancelledTask:
+    """Задача, которую отменит запись: причина — какие её решения заменил совет и чем, и что с ней
+    дальше (решение владельца к задаче «Бекенд · Задачи: задачи на заменённых ADR…»)."""
+    return CancelledTask(id=item.id, title=item.title, status=item.status,
+                         superseded=superseded_of(item.swaps), replaced_by=item.replaced_by,
+                         covered_by=item.covered_by, unlinked=item.unlinked)
 
 
 def catalog_of(council: Council, projects: Projects, folders: Folders) -> Catalog | None:

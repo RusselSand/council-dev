@@ -41,6 +41,21 @@ outcomes этой папки (решение владельца к задаче 
 (research.planned_issues); у файла прежней версии статуса нет — его состояние неизвестно. Итоги
 исследование не видит: они не задачи.
 
+Совет отменяет задачи прежних советов, решения которых он заменил, и их итоги без открытых задач
+(решение владельца к задаче «Бекенд · Задачи: задачи на заменённых ADR…», cancels.py): ставит им
+status: cancelled на месте прежнего статуса и дописывает в конец frontmatter причину — какие решения
+заменены и чем, — номер замены или задачи, что делают её работу:
+
+    status: cancelled
+    …
+    cancelled: ADR-0007 → ADR-0021
+    replaced_by: ISS-0040
+
+Остальное в файле — как было: и в файле, который правил человек. Статус, который поменял совет, не
+делает файл правленным руками (uncancelled: отпечаток считается без этих строк, со статусом open,
+каким совет пишет задачу), а запись, что переписывает такой файл, их не теряет (recancelled). Это —
+пока статус тот, что поставил совет: человек потом поставил done или deferred — это его правка.
+
 Папка задач — не каталог заметок: Causa читает заметкой каждый .md в своей папке, и файл задачи
 там сломал бы ей весь каталог. Задачи читаются только с верхнего уровня папки, итоги — только из
 подпапки outcomes, и в обеих — только свои файлы: README и прочее рядом не мешают, а итог — не
@@ -48,7 +63,7 @@ outcomes этой папки (решение владельца к задаче 
 """
 
 import re
-from collections.abc import Collection, Iterable, Mapping
+from collections.abc import Collection, Iterable, Mapping, Sequence
 from pathlib import Path
 
 from .models import PlannedIssue
@@ -82,6 +97,13 @@ PARENT = "parent:"
 # Итог задачи — номер OUT-… одной строкой; остальные ссылки — списками, по префиксу номера, в
 # этом порядке.
 FIELDS = (("adrs", "ADR"), ("depends_on", "ISS"))
+CANCELLED = "cancelled"
+# Строки frontmatter, что совет дописывает задаче и итогу, которые отменяет: причина, замена и
+# задачи, что делают её работу, — в этом порядке.
+MARKS = (CANCELLED, "replaced_by", "covered_by")
+MARK_ROW = re.compile(rf"[ \t]*({'|'.join(MARKS)})[ \t]*:[ \t]*(.*?)[ \t]*\r?\n?\Z", re.DOTALL)
+STATUS_ROW = re.compile(r"[ \t]*status[ \t]*:.*?(\r?\n)?\Z", re.DOTALL)
+DEPENDS_ROW = re.compile(r"[ \t]*depends_on[ \t]*:[ \t]*(.*?)[ \t]*(\r?\n)?\Z", re.DOTALL)
 
 
 def number_key(number: str) -> str:
@@ -133,6 +155,167 @@ def rendered(note: Note) -> str:
     return "---\n" + "\n".join(lines) + f"\n---\n\n{note.body.strip()}\n"
 
 
+# Отмена советом: строки во frontmatter (решение владельца к задаче «Бекенд · Задачи: задачи на
+# заменённых ADR…»).
+
+def reason_of(swaps: Iterable[tuple[str, str]]) -> str:
+    """Причина отмены одной строкой: какие решения заменены и чем — «ADR-0007 → ADR-0021»."""
+    return ", ".join(f"{adr} → {by}" for adr, by in swaps)
+
+
+def marks_of(reason: str, replaced_by: str | None = None,
+             covered_by: Iterable[str] = ()) -> dict[str, str]:
+    """Строки отмены: причина, замена, задачи, что делают работу, — что есть."""
+    marks = {CANCELLED: reason}
+    if replaced_by:
+        marks["replaced_by"] = replaced_by
+    covered = list(covered_by)
+    if covered:
+        marks["covered_by"] = f"[{', '.join(covered)}]"
+    return marks
+
+
+def _block(text: str, path: Path | None) -> tuple[int, int, list[str], str]:
+    """Frontmatter файла: где он, его строки (с переносами) и перенос строк файла."""
+    found = FRONTMATTER.match(text)
+    if found is None:
+        where = f" {path}" if path else ""
+        raise NotesError(f"В файле{where} нет frontmatter между строками ---")
+    start, end = found.span(1)
+    newline = "\r\n" if text.startswith("\r\n", end) else "\n"
+    return start, end, text[start:end].splitlines(keepends=True), newline
+
+
+def _without(rows: list[str], drop: Collection[int]) -> list[str]:
+    """Строки frontmatter без строк с номерами drop: убрали последнюю — и перенос перед ней, его
+    дописали вместе с ней."""
+    kept = [row for n, row in enumerate(rows) if n not in drop]
+    if kept and len(rows) - 1 in drop:
+        kept[-1] = kept[-1].rstrip("\r\n")
+    return kept
+
+
+def _marked_rows(rows: list[str]) -> set[int]:
+    return {n for n, row in enumerate(rows) if MARK_ROW.match(row)}
+
+
+def _status(rows: list[str], status: str, newline: str) -> list[str]:
+    """Строки frontmatter со статусом status: на месте прежнего (строк несколько — последней, как
+    её читает parsed), а нет его — сразу за номером."""
+    rows = list(rows)
+    found = [n for n, row in enumerate(rows) if STATUS_ROW.match(row)]
+    if found:
+        at = found[-1]
+        ending = rows[at][len(rows[at].rstrip("\r\n")):]
+        rows[at] = f"status: {status}{ending}"
+        return rows
+    if not rows:
+        return [f"status: {status}"]
+    if len(rows) == 1:
+        return [rows[0] + newline, f"status: {status}"]
+    first = rows[0]
+    ending = first[len(first.rstrip("\r\n")):]
+    return [first, f"status: {status}{ending}", *rows[1:]]
+
+
+def cancelled(text: str, marks: Mapping[str, str], path: Path | None = None) -> str:
+    """Файл задачи или итога, который отменил совет: status: cancelled и строки отмены (marks_of) в
+    конце frontmatter — прежние строки отмены уходят. Остальное — как было, с теми же переносами
+    строк. Нет frontmatter — NotesError."""
+    start, end, rows, newline = _block(text, path)
+    rows = _status(_without(rows, _marked_rows(rows)), "cancelled", newline)
+    added = "".join(f"{newline}{name}: {marks[name]}" for name in MARKS if name in marks)
+    return text[:start] + "".join(rows) + added + text[end:]
+
+
+def _cancelled_rows(rows: list[str]) -> bool:
+    """Строки frontmatter файла, который отменил совет: строка причины и статус — cancelled (как
+    его читает parsed — последний). Статус после отмены поменял человек — уже не отменён советом."""
+    if not any((found := MARK_ROW.match(row)) and found.group(1) == CANCELLED for row in rows):
+        return False
+    status = [row for row in rows if STATUS_ROW.match(row)]
+    return bool(status) and scalar(status[-1].split(":", 1)[1].strip()).lower() == CANCELLED
+
+
+def uncancelled(text: str) -> str:
+    """Файл, каким он был, пока совет его не отменил (cancelled): без строк отмены и со статусом
+    open — каким совет пишет задачу и итог. Совет его не отменял (строки причины нет), статус
+    после отмены поменял человек или нет frontmatter — как есть: это правка руками."""
+    try:
+        start, end, rows, newline = _block(text, None)
+    except NotesError:
+        return text
+    if not _cancelled_rows(rows):
+        return text
+    rows = _status(_without(rows, _marked_rows(rows)), OPEN, newline)
+    return text[:start] + "".join(rows) + text[end:]
+
+
+def cancel_marks(text: str) -> dict[str, str]:
+    """Строки отмены в файле, как они записаны; совет файл не отменял (или статус после отмены
+    поменял человек) — пусто."""
+    try:
+        rows = _block(text, None)[2]
+    except NotesError:
+        return {}
+    if not _cancelled_rows(rows):
+        return {}
+    return {found.group(1): found.group(2) for row in rows if (found := MARK_ROW.match(row))}
+
+
+def recancelled(text: str, before: str) -> str:
+    """Новый текст файла (text), который совет отменил раньше (before): отмена в нём остаётся —
+    так выгрузка, что переписывает свою задачу, не теряет её отмену. Не отменял — text."""
+    marks = cancel_marks(before)
+    return cancelled(text, marks) if marks else text
+
+
+def relinked(text: str, links: Mapping[str, Sequence[str]], path: Path | None = None,
+             added: Sequence[str] = ()) -> str:
+    """Файл задачи, где задачи, после которых её делать (depends_on), — другие: отменённая
+    задача — её заменой (links: номер → номера замены), без замены — убрана; added — дописаны в
+    конец списка (строки нет — она встаёт в конец frontmatter); список опустел — строки нет.
+    Остальное — как было."""
+    start, end, rows, newline = _block(text, path)
+    found = [n for n, row in enumerate(rows) if DEPENDS_ROW.match(row)]
+    if not found:
+        fresh = list(dict.fromkeys(added))
+        if not fresh:
+            return text
+        row = f"depends_on: [{', '.join(fresh)}]"
+        return text[:start] + "".join(rows) + (newline if rows else "") + row + text[end:]
+    at = found[-1]
+    row = DEPENDS_ROW.match(rows[at])
+    value = row.group(1)
+    if not (value.startswith("[") and value.endswith("]")):
+        return text
+    before = [scalar(item) for item in value[1:-1].split(",") if item.strip()]
+    keys = {number_key(item): item for item in links}
+    after = list(dict.fromkeys([
+        *(new for item in before
+          for new in (links[keys[number_key(item)]] if ISSUE.fullmatch(item)
+                      and number_key(item) in keys else [item])), *added]))
+    if after == before:
+        return text
+    if after:
+        rows = [*rows[:at], f"depends_on: [{', '.join(after)}]{row.group(2) or ''}",
+                *rows[at + 1:]]
+    else:
+        rows = _without(rows, {at})
+    return text[:start] + "".join(rows) + text[end:]
+
+
+def outcome_or_parent(note: Note) -> str | None:
+    """Итог задачи — номер файла итога (OUT-…); у задачи прежней версии — её родительская задача
+    (ISS-…); нет — None."""
+    return outcome_of(note.links) or parent_of(note.links)
+
+
+def depends_of(note: Note) -> list[str]:
+    """Задачи, после которых делать эту, — номерами."""
+    return [link for link in note.links if ISSUE.fullmatch(link)]
+
+
 def parsed(text: str, path: Path | None = None, kind: str = "issue") -> Note:
     """Задача (или итог — kind) из файла. Ссылки — в том же порядке полей, что и при записи: так
     сверяется, что в файле уже то же самое. Статус — как записан, в нижнем регистре; нет его —
@@ -162,7 +345,8 @@ def parsed(text: str, path: Path | None = None, kind: str = "issue") -> Note:
         if value.startswith("[") and value.endswith("]"):
             links += [scalar(item) for item in value[1:-1].split(",") if item.strip()]
     return Note(number_key(note_id), kind, found.group(2).strip(), tuple(links), path,
-                status=scalar(meta.get("status", "")).lower() or None)
+                status=scalar(meta.get("status", "")).lower() or None,
+                cancelled=scalar(meta.get(CANCELLED, "")) or None)
 
 
 def loaded(root: Path | None, kind: str = "issue") -> dict[str, Note]:

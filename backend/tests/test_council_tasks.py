@@ -182,6 +182,8 @@ OUTCOME_O1 = {
     "change": "Доля отвеченных вопросов видна команде.", "criteria": ["Доля считается по #help."],
     "decisions": [{"adr": "ADR-1", "catalogId": "ADR-0001"},
                   {"adr": "ADR-2", "catalogId": "ADR-0002"}]}
+# Задач прежних советов на решениях, которые заменил совет, нет: запись ничего не отменит.
+NONE_CANCELLED = {"cancelled": [], "cancelledOutcomes": [], "doneSuperseded": []}
 
 
 def test_the_last_stream_written_plans_the_tasks_and_they_are_written_to_the_tasks_folder(
@@ -205,8 +207,8 @@ def test_the_last_stream_written_plans_the_tasks_and_they_are_written_to_the_tas
                 {"model": "fable", "state": "done", "attempt": 1, "rejected": []}]},
             {"phase": "task_plan_judge", "runs": [
                 {"model": "fable", "state": "skipped", "attempt": 1, "rejected": []}]}],
-        "outcomes": [OUTCOME_O1], "tasks": [TASK_I1], "vanished": [], "readyStreams": ["C"],
-        "pendingStreams": [], "error": None}
+        "outcomes": [OUTCOME_O1], "tasks": [TASK_I1], "vanished": [], **NONE_CANCELLED,
+        "readyStreams": ["C"], "pendingStreams": [], "error": None}
     summary = tasks_of(council_id)
     assert (summary["stage"], summary["state"]) == ("tasks", "waiting")
     assert summary["activity"] == [{"stage": "tasks", "stream": None, "step": None,
@@ -255,7 +257,8 @@ def test_the_plan_waits_for_every_stream(agents, base):
     assert council(council_id).tasks is None                     # A и B не готовы
     assert plan_of(council_id) == {
         "catalog": {"path": "issues", "language": "Russian"}, "progress": [], "outcomes": [],
-        "tasks": [], "vanished": [], "readyStreams": [], "pendingStreams": ["A", "B"],
+        "tasks": [], "vanished": [], **NONE_CANCELLED, "readyStreams": [],
+        "pendingStreams": ["A", "B"],
         "error": None}
     assert tasks_of(council_id)["stages"]["tasks"] == "idle"
     assert error_of(writes(council_id)) == (409, "tasks_not_ready")
@@ -433,8 +436,8 @@ def test_without_a_documentation_folder_there_is_nothing_to_plan(agents, base):
     assert council(council_id).tasks is None
     assert "task_plan" not in agents.prompts
     assert plan_of(council_id) == {"catalog": None, "progress": [], "outcomes": [], "tasks": [],
-                                   "vanished": [], "readyStreams": [], "pendingStreams": [],
-                                   "error": None}
+                                   "vanished": [], **NONE_CANCELLED, "readyStreams": [],
+                                   "pendingStreams": [], "error": None}
     assert tasks_of(council_id)["stages"]["tasks"] == "waiting"
     assert writes(council_id).json()["council"]["stages"]["tasks"] == "done"
 

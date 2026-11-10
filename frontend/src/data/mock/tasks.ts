@@ -1,7 +1,15 @@
 import type { Catalog } from '../../domain/notes';
 import type { AdrRef, StreamOutcome } from '../../domain/outcomes';
 import type { RunState } from '../../domain/run';
-import type { Task, TaskOutcome, TaskStep, VanishedTask } from '../../domain/tasks';
+import type {
+  CancelledOutcome,
+  CancelledTask,
+  DoneTask,
+  Task,
+  TaskOutcome,
+  TaskStep,
+  VanishedTask,
+} from '../../domain/tasks';
 import { COUNCIL_LANGUAGE } from './notes';
 import { PROJECTS, type MockProject } from './projects';
 import { modelRun } from './runs';
@@ -14,6 +22,11 @@ import { modelRun } from './runs';
 export interface MockTasks {
   tasks: Task[];
   vanished: VanishedTask[];
+  /** «Будут отменены»: задачи прежних советов на решениях, которые заменил совет, и их итоги без открытых задач. */
+  cancelled: CancelledTask[];
+  cancelledOutcomes: CancelledOutcome[];
+  /** Сделанные задачи на заменённых решениях — их не трогают. */
+  doneSuperseded: DoneTask[];
   /** Судья задач: свёл разошедшиеся планы моделей — done; планы совпали, судья не понадобился — skipped. */
   judge: RunState;
   /** Самый большой номер итога (OUT) в каталоге заметок и прежних выгрузках: номера итогов плана — следующие. */
@@ -288,6 +301,9 @@ const G1: MockTasks = {
       title: 'The caption above the /generation list states the selection rule: endpoints in the active Scan snapshot',
     },
   ],
+  cancelled: [],
+  cancelledOutcomes: [],
+  doneSuperseded: [],
 };
 
 /** Решение итога советов-примеров — номер, как в макете («ADR-0007»); в потоке и в каталоге номер один. */
@@ -343,13 +359,61 @@ const PROTO: MockTasks = {
     ),
   ],
   vanished: [],
+  cancelled: [],
+  cancelledOutcomes: [],
+  doneSuperseded: [],
+};
+
+/** Решение проекта прежнего совета, которое заменил Сайт (c7): «Заявку закрывает только диспетчер» — ADR-0008. */
+const C7_SWAP = [{ adr: 'ADR-0004', by: 'ADR-0008' }];
+
+/**
+ * Задачи Сайта (c7) — как у советов-примеров, а ещё «Будут отменены» (решение владельца к задаче «Бекенд · Задачи: задачи
+ * на заменённых ADR…»; в макете такого нет): ADR-0004 прежнего совета («Заявку закрывает только диспетчер», в макете —
+ * superseded, заменено ADR-0008) заменило решение потока. Задача только на нём — без замены, и ISS-0006 её больше не
+ * ждёт; отложенной, где заменена часть решений, план написал замену — I2; работу третьей уже делает I1. Их итог OUT-0002
+ * остался без открытых задач; сделанную ISS-0003 не трогают.
+ */
+const C7: MockTasks = {
+  ...PROTO,
+  cancelled: [
+    {
+      id: 'ISS-0005',
+      title: 'Заявку закрывает диспетчер',
+      status: 'open',
+      superseded: C7_SWAP,
+      replacedBy: null,
+      coveredBy: [],
+      unlinked: ['ISS-0006'],
+    },
+    {
+      id: 'ISS-0007',
+      title: 'Отправка закрытой заявки после ответа диспетчера',
+      status: 'deferred',
+      superseded: C7_SWAP,
+      replacedBy: 'I2',
+      coveredBy: [],
+      unlinked: [],
+    },
+    {
+      id: 'ISS-0008',
+      title: 'Черновик заявки до закрытия',
+      status: 'open',
+      superseded: C7_SWAP,
+      replacedBy: null,
+      coveredBy: ['I1'],
+      unlinked: [],
+    },
+  ],
+  cancelledOutcomes: [{ id: 'OUT-0002', title: 'Закрытие заявки' }],
+  doneSuperseded: [{ id: 'ISS-0003', title: 'Кнопка «Закрыть» у диспетчера', superseded: C7_SWAP }],
 };
 
 /**
- * Планы по id совета: g1 — из data-1.json; c1, c4, c7 — задачи макета (у советов-примеров они одни). У c1 потоки ещё
- * не готовы — план покажется, когда готовы все.
+ * Планы по id совета: g1 — из data-1.json; c1, c4, c7 — задачи макета (у советов-примеров они одни), у c7 — ещё
+ * задачи прежнего совета, которые отменит запись. У c1 потоки ещё не готовы — план покажется, когда готовы все.
  */
-export const TASKS: Record<string, MockTasks> = { g1: G1, c1: PROTO, c4: PROTO, c7: PROTO };
+export const TASKS: Record<string, MockTasks> = { g1: G1, c1: PROTO, c4: PROTO, c7: C7 };
 
 /**
  * Итоги плана, как их отдаёт сервер (решение владельца к задаче «Бекенд · Задачи: итоги — файлы OUT в подпапке, в папке

@@ -70,7 +70,8 @@ class NotesError(ValueError):
 class Note:
     """Заметка. superseded_by — у ADR, что записан заменённым: каким решением (frontmatter).
     status — у файла задачи и итога: статус из frontmatter (issue_files.STATUSES); нет поля —
-    None."""
+    None. cancelled — у файла задачи и итога, который отменил совет: причина из frontmatter
+    (issue_files.cancelled); отменил человек или не отменяли — None."""
 
     id: str
     type: str
@@ -79,6 +80,7 @@ class Note:
     path: Path | None = field(default=None, compare=False)
     superseded_by: str | None = None
     status: str | None = None
+    cancelled: str | None = None
 
     def as_dict(self) -> dict[str, object]:
         return {"id": self.id, "type": self.type, "body": self.body, "links": list(self.links)}

@@ -7,15 +7,20 @@ import { hasRejected, progressRows, type ProgressRow } from '../../domain/run';
 import {
   dependencyLabels,
   outcomeLabel,
+  planLabels,
   taskBranches,
   taskLabel,
+  type CancelledTask,
+  type Superseded,
   type Task,
   type TaskOutcome,
   type TaskPhase,
+  type TasksPlan,
   type VanishedTask,
 } from '../../domain/tasks';
 import { useI18n, type FormatList, type Translate } from '../../i18n';
 import type { TagTone } from '../../ui/Tag';
+import type { TaskListRow } from './parts/TaskList';
 
 /** Задача на экране. */
 export interface TaskView {
@@ -66,6 +71,16 @@ export interface OutcomeView {
   tasks: TaskView[];
 }
 
+/** «Будут отменены» на экране. */
+export interface CancelledView {
+  /** «Будут отменены · 3» — задачи и итоги, которые отменят. */
+  title: string;
+  /** Задачи — номер, заголовок, «(отложена)», причина и что дальше; потом итоги. */
+  rows: TaskListRow[];
+  /** «Сделаны по заменённым решениям — их не трогаем: ISS-0012.»; нет таких — null. */
+  footer: string | null;
+}
+
 export interface TasksScreen {
   /** Модели строят план или судья переводит задачи: «ИИ работает» и ход работы; иначе — план. */
   running: boolean;
@@ -102,6 +117,11 @@ export interface TasksScreen {
   /** «Уйдут из каталога · 7». */
   vanishedTitle: string;
   vanished: VanishedTask[];
+  /**
+   * «Будут отменены · 3»: задачи прежних советов на решениях, которые заменил совет, — причина и что с задачей дальше, —
+   * их итоги без открытых задач и строкой — сделанные задачи на этих решениях. Нечего показать — null, блока нет.
+   */
+  cancelled: CancelledView | null;
 
   /** «7 задач · каталог /repos/tasks · язык: English»; каталога нет — «7 задач · Без папки». */
   summary: string;
@@ -139,6 +159,56 @@ function outcomeMeta(planned: TaskOutcome, t: Translate): string {
 /** Метка итога: сколько у него задач — серая. */
 function outcomeTag(count: number, t: Translate): OutcomeView['tag'] {
   return { tone: 'gray', label: count ? t('tasks.outcome.tag', { count }) : t('tasks.outcome.none') };
+}
+
+/** Причина отмены: какие решения задачи заменил совет и чем — «ADR-0007 заменён на ADR-0041». */
+function swapsText(superseded: Superseded[], t: Translate): string {
+  return superseded.map(({ adr, by }) => t('tasks.cancelled.swap', { adr, by })).join(', ');
+}
+
+/** Что с отменённой задачей дальше: «Заменена: ISS-0040», «Работа ушла в ISS-0041, ISS-0042» или «Без замены». */
+function nextText(task: CancelledTask, tasks: Task[], t: Translate): string {
+  if (task.replacedBy) return t('tasks.cancelled.replaced', { id: planLabels([task.replacedBy], tasks).join(', ') });
+  if (task.coveredBy.length) return t('tasks.cancelled.covered', { ids: planLabels(task.coveredBy, tasks).join(', ') });
+  return t('tasks.cancelled.none');
+}
+
+/**
+ * «Будут отменены» (решение владельца к задаче «Бекенд · Задачи: задачи на заменённых ADR…»): задачи — с причиной и тем,
+ * что дальше, а без замены — и кто её больше не будет ждать; итоги без открытых задач; сделанные — строкой внизу.
+ */
+function cancelledView(plan: TasksPlan, tasks: Task[], t: Translate): CancelledView | null {
+  const { cancelled, cancelledOutcomes, doneSuperseded } = plan;
+  if (!cancelled.length && !cancelledOutcomes.length && !doneSuperseded.length) return null;
+  const rows: TaskListRow[] = [
+    ...cancelled.map((task) => ({
+      id: task.id,
+      title: task.title,
+      mark: task.status === 'deferred' ? t('tasks.cancelled.deferred') : null,
+      lines: [
+        swapsText(task.superseded, t),
+        nextText(task, tasks, t),
+        ...(task.unlinked.length
+          ? [t('tasks.cancelled.unlinked', { count: task.unlinked.length, ids: task.unlinked.join(', ') })]
+          : []),
+      ],
+    })),
+    ...cancelledOutcomes.map((outcome) => ({
+      id: outcome.id,
+      title: outcome.title,
+      lines: [t('tasks.cancelled.outcome')],
+    })),
+  ];
+  return {
+    title: t('tasks.cancelled', { count: cancelled.length + cancelledOutcomes.length }),
+    rows,
+    footer: doneSuperseded.length
+      ? t('tasks.cancelled.done', {
+          count: doneSuperseded.length,
+          ids: doneSuperseded.map((task) => task.id).join(', '),
+        })
+      : null,
+  };
 }
 
 /** Ключ открытой задачи или итога на экране: у них разные id. */
@@ -240,6 +310,7 @@ export function useTasks(council: CouncilSummary): TasksScreen {
     toggleOutcome: (id) => toggle(outcomeKey(id)),
     vanishedTitle: t('tasks.vanished', { count: plan?.vanished.length ?? 0 }),
     vanished: plan?.vanished ?? [],
+    cancelled: plan ? cancelledView(plan, tasks, t) : null,
 
     summary: plan ? summaryText(tasks.length, plan.catalog, t) : '',
     approve: () => {

@@ -70,9 +70,50 @@ export interface VanishedTask {
   title: string;
 }
 
+/** Решение проекта, которое заменил совет (adr, «ADR-0007»), и решение совета, что его заменяет (by, «ADR-0041»). */
+export interface Superseded {
+  adr: string;
+  by: string;
+}
+
+/**
+ * Задача прежнего совета на решениях, которые заменил этот совет: её отменит «Записать в каталог» (решение владельца к
+ * задаче «Бекенд · Задачи: задачи на заменённых ADR…»).
+ */
+export interface CancelledTask {
+  /** Номер в каталоге задач: «ISS-0031». */
+  id: string;
+  /** Заголовок задачи — как записан в каталоге. */
+  title: string;
+  /** Статус до отмены: отложенная — «(отложена)». */
+  status: 'open' | 'deferred';
+  /** Причина: какие её решения заменил совет и чем. */
+  superseded: Superseded[];
+  /** Её замена — id задачи плана: «Заменена: ISS-0040»; нет — null. */
+  replacedBy: string | null;
+  /** id задач плана, что делают её работу: «Работа ушла в …»; нет — пусто. Ни замены, ни их — без замены. */
+  coveredBy: string[];
+  /** У задачи без замены — номера живых задач, что её ждали: после записи они её больше не ждут. */
+  unlinked: string[];
+}
+
+/** Итог прежнего совета, у которого после отмены не осталось открытых задач: его тоже отменят. */
+export interface CancelledOutcome {
+  /** «OUT-0020», у родительской задачи прежней версии — «ISS-0019». */
+  id: string;
+  title: string;
+}
+
+/** Сделанная задача на решениях, которые заменил совет: её не трогают, только показывают. */
+export interface DoneTask {
+  id: string;
+  title: string;
+  superseded: Superseded[];
+}
+
 /**
  * План задач совета — на весь совет, когда готовы все потоки (решение q-009 бекенда): задачи, куда они пишутся, что
- * уйдёт из каталога, каких потоков ещё ждут и как модели строят план.
+ * уйдёт из каталога, что отменится, каких потоков ещё ждут и как модели строят план.
  */
 export interface TasksPlan {
   /**
@@ -88,6 +129,12 @@ export interface TasksPlan {
   tasks: Task[];
   /** Задачи прошлой записи, которых нет в плане; нет или каталога нет — пусто. */
   vanished: VanishedTask[];
+  /** «Будут отменены»: задачи прежних советов на решениях, которые заменил совет; нет — пусто. */
+  cancelled: CancelledTask[];
+  /** Итоги прежних советов без открытых задач после отмены — их тоже отменят; нет — пусто. */
+  cancelledOutcomes: CancelledOutcome[];
+  /** Сделанные задачи на заменённых решениях — их не трогают; нет — пусто. */
+  doneSuperseded: DoneTask[];
   /** Потоки, чьи задачи уже в плане: план построен — все потоки; плана нет — пусто. */
   readyStreams: string[];
   /** Потоки, которые ещё не готовы (не записаны в каталог заметок): план строят, когда готовы все. */
@@ -121,10 +168,15 @@ export function taskBranches(outcomes: readonly TaskOutcome[], tasks: readonly T
   };
 }
 
+/** Номера задач плана по их id: в каталоге, а номера нет — id; задачи нет в плане — её id. */
+export function planLabels(ids: readonly string[], tasks: readonly Task[]): string[] {
+  return ids.map((id) => {
+    const found = tasks.find((t) => t.id === id);
+    return found ? taskLabel(found) : id;
+  });
+}
+
 /** Номера задач, после которых брать эту, по порядку dependsOn; задачи нет в плане — её id. */
 export function dependencyLabels(task: Pick<Task, 'dependsOn'>, tasks: readonly Task[]): string[] {
-  return task.dependsOn.map((id) => {
-    const dependency = tasks.find((t) => t.id === id);
-    return dependency ? taskLabel(dependency) : id;
-  });
+  return planLabels(task.dependsOn, tasks);
 }

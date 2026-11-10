@@ -23,7 +23,7 @@ import {
   type DecisionState,
   type StreamDecision,
 } from '../../domain/decisions';
-import { useI18n } from '../../i18n';
+import { useI18n, type Translate } from '../../i18n';
 import { navigate, routePath } from '../../router';
 import type { TagTone } from '../../ui/Tag';
 
@@ -189,6 +189,19 @@ export interface DecisionsStep {
 const NOT_SAVED = new ApiError('not_saved', 'Не всё сохранилось — решения не зафиксированы');
 /** Не пересчитали: «почему» или правка решения (и отметки) не сохранились, а пересчёт берёт то, что на сервере. */
 const NOT_SAVED_RECHECK = new ApiError('not_saved', 'Не всё сохранилось — решение не пересчитано');
+
+/**
+ * У отмеченной замены решения проекта — задачи прежних советов, что на нём стоят: «На нём стоят задачи: ISS-0030,
+ * ISS-0031 (отложена)» (решение владельца к задаче «Бекенд · Задачи: задачи на заменённых ADR…»). Задач нет — строки нет.
+ */
+function tasksOn(decision: StreamDecision, adr: string, t: Translate): Consequence[] {
+  const found = decision.adrTasks.find((item) => item.adr === adr);
+  if (!found?.tasks.length) return [];
+  const ids = found.tasks
+    .map((task) => (task.status === 'deferred' ? t('decisions.tasksOn.deferred', { id: task.id }) : task.id))
+    .join(', ');
+  return [{ tone: 'gray', text: t('decisions.tasksOn', { ids }) }];
+}
 
 /**
  * Шаг «Решения», как в макете: решения по одному — чипы, «готово 2 из 4», «←» / «→»; вопрос и метка решения, «Ваш
@@ -510,20 +523,28 @@ export function useDecisionsStep(
     // Отмечают и снимают замену, пока шаг ждёт вас или остановился: у готового решения уже ушли в итоги.
     const marking = decisionsApprovable(state);
     const lockedHere = locked || fixing === id || busyOf(d);
+    const replaced = d.replaces.filter((ref) => marks.includes(ref.id));
     const consequences: Consequence[] = [
-      ...d.conflicts.map((c) => ({
-        tone: 'red' as const,
-        text: c.text ? t('decisions.conflict.text', { id: c.id, text: c.text }) : t('decisions.conflict', { id: c.id }),
-        ...(c.kind === 'decision' && marking ? { mark: { id: c.id, on: marks.includes(c.id) } } : {}),
-      })),
-      ...d.replaces
-        .filter((ref) => marks.includes(ref.id))
-        .map((ref) => ({
+      ...d.conflicts.flatMap((c) => [
+        {
+          tone: 'red' as const,
+          text: c.text ? t('decisions.conflict.text', { id: c.id, text: c.text }) : t('decisions.conflict', { id: c.id }),
+          ...(c.kind === 'decision' && marking ? { mark: { id: c.id, on: marks.includes(c.id) } } : {}),
+        },
+        // Замену отметили только что — задачи на решении видно сразу, ещё до «Заменяет …».
+        ...(c.kind === 'decision' && marks.includes(c.id) && !replaced.some((ref) => ref.id === c.id)
+          ? tasksOn(d, c.id, t)
+          : []),
+      ]),
+      ...replaced.flatMap((ref) => [
+        {
           tone: 'gray' as const,
           text: ref.decision
             ? t('decisions.replaces', { id: ref.id, text: ref.decision })
             : t('decisions.replaces.id', { id: ref.id }),
-        })),
+        },
+        ...tasksOn(d, ref.id, t),
+      ]),
       ...d.risks.map((risk) => ({ tone: 'yellow' as const, text: t('decisions.risk', { id: risk }) })),
       ...d.fixes.map((fix) => ({ tone: 'gray' as const, text: t('decisions.fix', { text: fix }) })),
     ];

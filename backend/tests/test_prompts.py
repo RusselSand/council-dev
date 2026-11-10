@@ -42,10 +42,10 @@ GIVEN = {
     "outcome_judge": {"idea", "questions_and_proposals", "accepted_adrs", "accepted_decisions",
                       "fixed_outcomes", "constraints_and_risks", "outcome_candidates",
                       "repository", "design"},
-    "task_plan": {"ideas", "outcomes", "decisions", "constraints_and_risks",
+    "task_plan": {"ideas", "outcomes", "decisions", "constraints_and_risks", "stale_issues",
                   "repository_context", "design"},
     "task_plan_judge": {"ideas", "outcomes", "decisions", "constraints_and_risks",
-                        "repository_context", "design", "plan_candidates"},
+                        "stale_issues", "repository_context", "design", "plan_candidates"},
     "answer_fix": {"task", "answer", "reason"},
 }
 
@@ -95,6 +95,16 @@ def test_the_code_research_sees_the_planned_issues_apart_from_the_code(name):
     text = render(name, **{key: f"<{key}>" for key in GIVEN[name]})
     assert "## PLANNED ISSUES\n\n<planned_issues>" in text
     assert "not an unknown area and not a contradiction" in text and "`deferred`" in text
+
+
+@pytest.mark.parametrize("name", ["task_plan", "task_plan_judge"])
+def test_the_task_plan_sees_the_issues_on_superseded_decisions(name):
+    """План задач видит задачи прежних советов на решениях, которые заменил совет, и пишет им
+    замену или называет задачи, что делают их работу (решение владельца к задаче «Бекенд · Задачи:
+    задачи на заменённых ADR…»)."""
+    text = render(name, **{key: f"<{key}>" for key in GIVEN[name]})
+    assert "## ISSUES ON SUPERSEDED DECISIONS\n\n" in text and "<stale_issues>" in text
+    assert '"replaces": []' in text and '"covers": []' in text
 
 
 @pytest.mark.parametrize("name", [name for name, given in GIVEN.items() if "design" in given])

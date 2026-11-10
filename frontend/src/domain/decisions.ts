@@ -61,6 +61,22 @@ export interface StaleChoice {
   chosenText: string | null;
 }
 
+/** Задача папки задач проекта: номер и статус — отложенная на экране «(отложена)». */
+export interface TaskRef {
+  id: string;
+  status: 'open' | 'deferred';
+}
+
+/**
+ * Решение проекта и открытые и отложенные задачи прежних советов, что на нём стоят: их отменит замена решения — «На нём
+ * стоят задачи: ISS-0030, ISS-0031 (отложена)» (решение владельца к задаче «Бекенд · Задачи: задачи на заменённых ADR…»).
+ */
+export interface AdrTasks {
+  /** id решения в каталоге: «ADR-0003». */
+  adr: string;
+  tasks: TaskRef[];
+}
+
 /** Что поправить, чтобы снять проблему: в каком вопросе и что. */
 export interface DecisionFix {
   question: string;
@@ -103,6 +119,11 @@ export interface StreamDecision {
    * с ними нет. Нет — пусто.
    */
   replaces: DecisionRef[];
+  /**
+   * Задачи прежних советов на решениях проекта из conflicts и replaces — у решений, на которых они есть; у отмеченной
+   * замены — «На нём стоят задачи: …». Нет — пусто.
+   */
+  adrTasks: AdrTasks[];
   risks: string[];
   fixes: string[];
   /** «почему»; пусто — ещё не написали. */
