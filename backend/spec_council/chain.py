@@ -49,7 +49,7 @@ from .models import (
     Stream,
 )
 from .notes import Catalog
-from .options import hidden_of, seen
+from .options import composed_into, hidden_of, seen
 from .pipeline import (
     CouncilRun,
     DecisionRun,
@@ -385,13 +385,16 @@ def replaced(council: Council, stream: Stream) -> list[Stream]:
 
 def stream_slot(stream_id: str, field: str) -> Slot:
     """Ход в потоке как место хода. Потока уже нет (новая нарезка стёрла потоки) — нет и
-    хода."""
+    хода. Проверка выбора ложится вместе с вариантами, которые собрал судья: номер им даёт поток
+    (options.composed_into)."""
     def get(council: Council):
         stream = find_stream(council, stream_id)
         return getattr(stream, field) if stream else None
 
     def put(council: Council, state) -> dict:
         stream = find_stream(council, stream_id)
+        if isinstance(state, DecisionAnalysis):
+            stream, state = composed_into(stream, state)
         return {"streams": replaced(council, stream.model_copy(update={field: state}))}
 
     return Slot(get, put)

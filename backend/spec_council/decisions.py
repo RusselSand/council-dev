@@ -6,10 +6,14 @@
 расходится; расходится выбор только с решениями проекта — правок может и не быть: решение может их
 заменить, а подтверждает замену человек (статусы решений проекта меняет совет). Решение проекта,
 замену которого подтвердили, для проверки не действует: с ним выбор не расходится. Где вопрос
-unresolved, сравнивают его варианты и, если один обоснованно лучше, рекомендуют его. Новых
-вариантов здесь нет: рекомендовать можно только из тех, что у вопроса есть. Выбор человека не
-меняется: проверка не того варианта или рекомендация вместо проверки — негодный ответ. Ссылки
-вторичны: чужой номер просто отбрасывается.
+unresolved, сравнивают его варианты и, если один обоснованно лучше, рекомендуют его. Ни один не
+отвечает на вопрос целиком, а несколько вместе — отвечают (каждый на свою часть), — судья
+собирает из них один вариант и рекомендует его (решение владельца к задаче «…судья собирает
+вариант unresolved-вопроса из нескольких»): называет, из каких вариантов вопроса он собран, а
+пробелы, которые закрыл сам, перечисляет отдельно (composed_of). Других новых вариантов здесь
+нет: рекомендовать можно только из тех, что у вопроса есть, а собирать — только из них. Выбор
+человека не меняется: проверка не того варианта, рекомендация или сборка вместо проверки —
+негодный ответ. Ссылки вторичны: чужой номер просто отбрасывается.
 
 Сравнение вариантов unresolved-вопроса, как и проверка выбора, говорит, от каких других вопросов
 оно зависит (решение владельца к задаче «…unresolved-вопрос помнит, на что опирался…»): «сначала
@@ -48,6 +52,8 @@ RATIONALE_MAX = 2000
 DECISION_MAX = 2000
 # Сколько знаков в одной правке: что поменять и почему.
 FIX_MAX = 1000
+# Сколько знаков в одном пробеле, который судья закрыл в собранном варианте сам.
+ADDITION_MAX = 500
 # Сколько знаков в том, чем вариант расходится с решением проекта.
 CLASH_MAX = 500
 # Номер решения потока в тексте: «ADR-3» — не «ADR-30» и не «ADR-0003».
@@ -55,9 +61,10 @@ ADR_REF = re.compile(r"(?<![\w-])ADR-[1-9]\d*(?![\w-])")
 # Номер вопроса потока в тексте: «Q1», «Q12», оба в «Q1–Q3» — но не в «FAQ1» и не в «Q1a».
 QUESTION_REF = re.compile(r"(?<!\w)Q\d+(?!\w)")
 
-# Ответы участника и судьи — в своих словах (decision_analysis.md, decision_judge.md).
+# Ответы участника и судьи — в своих словах (decision_analysis.md, decision_judge.md). Собранный
+# судьёй вариант он и рекомендует.
 JUDGED = {"validated": "validated", "conflict": "conflict", "recommended": "recommended",
-          "no_recommendation": "none"}
+          "composed": "recommended", "no_recommendation": "none"}
 
 
 @dataclass(frozen=True)
@@ -99,10 +106,22 @@ class Clash:
 
 
 @dataclass(frozen=True)
+class Composed:
+    """Вариант, который судья собрал у unresolved-вопроса: текст, из каких вариантов вопроса
+    собран (по порядку) и пробелы, которые судья закрыл сам, — их в тех вариантах не было."""
+
+    text: str
+    sources: tuple[str, ...]
+    additions: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True)
 class Analysis:
     """Анализ участника или итог судьи. kind — validated или conflict про выбор человека,
     recommended или none про unresolved; proposal — проверенный или рекомендованный вариант;
-    depends_on — от каких других вопросов зависит выбор или сравнение вариантов."""
+    depends_on — от каких других вопросов зависит выбор или сравнение вариантов. composed — у
+    recommended судьи, когда он собрал вариант из нескольких: варианта ещё нет и номера тоже —
+    proposal None."""
 
     kind: str
     proposal: str | None
@@ -117,6 +136,7 @@ class Analysis:
     clashes: tuple[Clash, ...] = ()
     # От судьи: текст решения, как он его поправил; None — текст варианта как есть.
     decision: str | None = None
+    composed: Composed | None = None
 
 
 def proposal_id(value: object) -> str | None:
@@ -254,6 +274,34 @@ def recommended(value: object, context: Context) -> str:
     return named
 
 
+def composed_of(value: object, context: Context) -> Composed:
+    """Вариант, который судья собрал у unresolved-вопроса: с текстом и только из вариантов
+    вопроса — не меньше чем из двух: из одного не собирают, его рекомендуют. Чужой номер
+    источника отбрасывается, повтор — первый; пробел без сути — тоже. Текст варианта — он же
+    текст решения: судья пишет его сразу так, как пишет текст решения. Сборка вместо проверки
+    выбора человека — негодный ответ."""
+    if context.selected is not None:
+        raise BadAnswer(f"сборка вместо проверки выбранного {context.selected}")
+    found = value if isinstance(value, dict) else {}
+    text = reason_of(found.get("text"))
+    if not text:
+        raise BadAnswer("собранный вариант без текста")
+    if len(text) > DECISION_MAX:
+        raise BadAnswer(f"собранный вариант длиннее {DECISION_MAX} знаков")
+    listed = found.get("from_proposal_ids")
+    sources = tuple(dict.fromkeys(
+        name for item in (listed if isinstance(listed, list) else [])
+        if (name := proposal_id(item)) in context.proposals))
+    if len(sources) < 2:
+        raise BadAnswer("собранный вариант — меньше чем из двух вариантов вопроса")
+    given = found.get("additions")
+    additions = tuple(dict.fromkeys(
+        gap for item in (given if isinstance(given, list) else []) if (gap := reason_of(item))))
+    if any(len(gap) > ADDITION_MAX for gap in additions):
+        raise BadAnswer(f"дописанное в собранный вариант длиннее {ADDITION_MAX} знаков")
+    return Composed(text, sources, additions)
+
+
 def rests_of(data: dict, context: Context, reason: str) -> tuple[str, ...]:
     """Другие вопросы потока, от выбора по которым зависит сравнение вариантов unresolved-вопроса:
     названные в зависимостях (depends_on_question_ids) и в пояснении — «сначала решите Q1»,
@@ -290,7 +338,7 @@ def analysis_of(data: dict, context: Context) -> Analysis:
 def judged_analysis(data: dict, context: Context) -> Analysis:
     """Итог судьи по вопросу. У варианта, который проверили или рекомендовали, — и текст решения,
     если судья его поправил. У unresolved — и от каких вопросов зависит сравнение (rests_of),
-    рекомендовал судья вариант или нет."""
+    рекомендовал судья вариант, собрал его из нескольких (composed_of) или нет."""
     status = data.get("status")
     kind = JUDGED.get(status) if isinstance(status, str) else None
     if kind is None:
@@ -308,6 +356,10 @@ def judged_analysis(data: dict, context: Context) -> Analysis:
             if kind == "conflict" else ()
         return Analysis(kind, found.proposal, found.conflicts, found.risks, found.depends_on,
                         reason, rationale, fixes, found.clashes, decision)
+    if status == "composed":
+        # Варианта ещё нет — номер ему даст поток (options.composed_into).
+        return Analysis(kind, None, depends_on=rests_of(data, context, reason), reason=reason,
+                        rationale=rationale, composed=composed_of(data.get("composed"), context))
     if kind == "recommended":
         return Analysis(kind, recommended(data.get("proposal_id"), context),
                         depends_on=rests_of(data, context, reason), reason=reason,

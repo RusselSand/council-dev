@@ -35,11 +35,15 @@ export interface DependencyView {
 export interface OptionView {
   id: string;
   text: string;
-  /** «из группы», «ИИ», «вы». */
+  /** «из группы», «ИИ», «собрано судьёй», «вы». */
   source: string;
   /** Из группы — зелёная метка, остальные — тёмная. */
   fromGroup: boolean;
   recommended: boolean;
+  /** Собран судьёй — из каких вариантов, по порядку: «собрано из: P23 + P24»; иначе пусто. */
+  composedOf: string[];
+  /** Что судья дописал сам в собранный вариант: «добавил судья», по строке на добавку; нет — пусто. */
+  additions: string[];
   /** «почему»; нет — строки нет. */
   why: string | null;
   /** «цена»; нет — строки нет. */
@@ -331,6 +335,8 @@ export function useOptionsStep(
         source: source(option),
         fromGroup: option.source === 'group',
         recommended: option.recommended,
+        composedOf: option.composedOf,
+        additions: option.additions,
         why: why(option),
         cost: option.cost,
         dependencies: option.dependsOn.map((id) => {

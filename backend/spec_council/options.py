@@ -20,11 +20,21 @@
 «Пересчитать» на «Решениях»: пересчёт проверяет новый выбор и утверждает его
 (stream_decisions.rechecked; решение владельца к задаче «…«Пересчитать» после смены выбора…»).
 
+Вариант бывает и собранным судьёй «Решений» (решение владельца к задаче «…судья собирает вариант
+unresolved-вопроса из нескольких»): у вопроса, переданного как unresolved, ни один вариант не
+отвечает целиком, а несколько вместе — отвечают, и судья собирает из них один. Он ложится к
+вариантам совета этого вопроса — после найденных, с тем, из каких собран, и тем, что судья дописал
+сам, — и номер ему даёт поток, когда кладёт отчёт проверки (composed_into): дальше всех, какие
+поток уже давал. Дальше он — вариант вопроса, как остальные: его выбирают, правят «Поправить»
+(свой вариант на его основе) и удаляют; порядок вопросов — от запуска шага, и его зависимости
+порядок не меняют (order_of).
+
 Удалить можно любой вариант вопроса, кроме выбранного (решение владельца к задаче «…удалить любой
 вариант вопроса»; Stream.removed_options): из группы — только из вариантов этого вопроса, совета,
-свой. Удалённого нет на шаге (sets_of), его не видят модели дальше и выгрузка в заметки (seen), а
-его номер другому варианту не достаётся (work.last_used); вернуть его нельзя — и «Запустить
-снова» его не возвращает: варианты, найденные раньше, повтор берёт с теми же номерами. Вариант,
+собранный судьёй, свой. Удалённого нет на шаге (sets_of), его не видят модели дальше и выгрузка
+в заметки (seen), а его номер другому варианту не достаётся (work.last_used); вернуть его нельзя
+— и «Запустить снова» его не возвращает: варианты, найденные раньше, повтор берёт с теми же
+номерами. Вариант,
 который берут утверждённый выбор или зафиксированное решение, — их вариант, пока вопрос не
 пересчитали: удалили его, когда выбран уже другой, — решение ждёт «Пересчитать», как после смены
 выбора (stream_decisions.unchecked_of).
@@ -43,6 +53,7 @@ from typing import Literal
 
 from .models import (
     Choice,
+    DecisionAnalysis,
     OpenQuestion,
     OwnOption,
     Pick,
@@ -59,11 +70,12 @@ from .work import earlier_choices, last_used
 
 @dataclass(frozen=True)
 class Offered:
-    """Вариант вопроса на шаге: из группы (Fn), найденный советом (found) или свой (own)."""
+    """Вариант вопроса на шаге: из группы (Fn), найденный советом или собранный судьёй «Решений»
+    (found) или свой (own)."""
 
     id: str
     text: str
-    source: Literal["group", "council", "own"]
+    source: Literal["group", "council", "judge", "own"]
     found: Proposal | None = None
     own: OwnOption | None = None
 
@@ -100,7 +112,8 @@ def sets_of(stream: Stream, fragments: Mapping[int, str] | None, *,
         offered = [one for one in [
             *(Offered(f"F{n}", fragments[n] if fragments is not None else "", "group")
               for n in question.proposal_ids if fragments is None or n in fragments),
-            *(Offered(proposal.id, proposal.text, "council", found=proposal)
+            *(Offered(proposal.id, proposal.text,
+                      "judge" if proposal.source == "judge" else "council", found=proposal)
               for proposal in (found.proposals if found else [])),
             *(Offered(one.id, one.text, "own", own=one)
               for one in own if one.question_id == question.id)] if one.id not in hidden]
@@ -118,11 +131,13 @@ def order_of(stream: Stream) -> Order:
     запуска шага, поэтому и порядок: до нового запуска он не меняется. Считается по всем вопросам
     шага, и убранным тоже: убрали и вернули вопрос — порядок тот же; добавленный после «Утвердить
     вопросы» вариантов совета не имеет и встаёт по номеру — в конец. Свои варианты зависимостей не
-    имеют: их совет не дописывает."""
+    имеют: их совет не дописывает. Собранный судьёй «Решений» появился уже после запуска шага —
+    его зависимости порядок тоже не меняют."""
     depends: dict[str, list[str]] = {}
     for options in stream.proposals.options if stream.proposals else []:
         for proposal in options.proposals:
-            depends.setdefault(options.question_id, []).extend(proposal.depends_on)
+            if proposal.source != "judge":
+                depends.setdefault(options.question_id, []).extend(proposal.depends_on)
     return ordered((item.question.id for item in listed(stream)), depends)
 
 
@@ -210,6 +225,54 @@ def hidden_of(stream: Stream) -> dict[str, set[str]]:
     for question, option in taken:
         hidden.get(question, set()).discard(option or "")
     return {question: ids for question, ids in hidden.items() if ids}
+
+
+def composed_into(stream: Stream, work: DecisionAnalysis) -> tuple[Stream, DecisionAnalysis]:
+    """Поток и ход проверки, где варианты, которые собрал судья (QuestionAnalysis.composed), —
+    среди вариантов своих вопросов, с номером, а проверка берёт его номером (proposal). Номер даёт
+    поток, а не ход: пересчёты разных вопросов идут разом, а свои варианты человек пишет и пока
+    модели проверяют, — номер не должен достаться двоим. Ход отчитывается много раз — вариант
+    той же проверки (origin) номер не меняет. Вариантов совета у потока нет совсем (поток прежней
+    версии) — собранному лечь некуда: обоснованно выбрать вариант нельзя, пояснение судьи
+    остаётся."""
+    if all(found.composed is None for found in work.analyses):
+        return stream, work
+    analyses = []
+    for found in work.analyses:
+        if found.composed is None:
+            analyses.append(found)
+        elif stream.proposals is None:
+            analyses.append(found.model_copy(update={
+                "verdict": "none", "proposal": None, "rationale": None, "composed": None}))
+        else:
+            stream, option = with_composed(stream, found.question_id, found.composed)
+            analyses.append(found.model_copy(update={"proposal": option, "composed": None}))
+    return stream, work.model_copy(update={"analyses": analyses})
+
+
+def with_composed(stream: Stream, question_id: str, composed: Proposal) -> tuple[Stream, str]:
+    """Поток, где вариант, который собрал судья, — в конце вариантов совета к вопросу, и номер
+    варианта: «P» и дальше всех, какие поток уже давал (work.last_used). Вариант той же проверки
+    уже там — номер его; удалённый тоже там, только не на шаге (removed_of). У вопроса, к
+    которому варианты не искали (добавлен после «Утвердить вопросы»), — свои варианты совета
+    только из него."""
+    search = stream.proposals
+    assert search is not None
+    mine = next((options for options in search.options if options.question_id == question_id),
+                None)
+    same = next((proposal.id for proposal in (mine.proposals if mine else [])
+                 if proposal.source == "judge" and proposal.origin == composed.origin), None)
+    if same is not None:
+        return stream, same
+    option = composed.model_copy(update={"id": f"P{last_used(stream) + 1}"})
+    if mine is None:
+        options = [*search.options,
+                   QuestionOptions(question_id=question_id, verdict="none", proposals=[option])]
+    else:
+        options = [one.model_copy(update={"proposals": [*one.proposals, option]})
+                   if one.question_id == question_id else one for one in search.options]
+    return (stream.model_copy(update={"proposals": search.model_copy(update={"options": options})}),
+            option.id)
 
 
 def approved(stream: Stream, sets: list[OptionSet]) -> Stream:

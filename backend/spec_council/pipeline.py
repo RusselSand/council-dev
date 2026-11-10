@@ -57,7 +57,9 @@ Figma через REST API, модели читают снимок:
 2. decision_judge — судья сводит их анализы в один итог (decision_judge.md); неправду в
    «почему» участников он исправляет сам, а в текст решения дописывает, что ещё действует в
    решениях проекта, которые оно заменяет, и записывает путь, имя, термин так, как у других
-   решений. У unresolved вопроса без вариантов сравнивать нечего — модели его не видят.
+   решений. У unresolved, где ни один вариант не отвечает целиком, а несколько вместе отвечают,
+   судья собирает из них один и рекомендует его. У unresolved вопроса без вариантов сравнивать
+   нечего — модели его не видят.
 
 Итоги потока (OutcomeRun) — из зафиксированных решений:
 1. outcome_discovery — каждый участник собирает решения в законченные изменения системы,
@@ -1174,8 +1176,11 @@ def options_of(question: OpenQuestion, verdict: Verdict, numbers) -> QuestionOpt
 class DecisionRun(CouncilRun[DecisionAnalysis]):
     """Проверка выбора по отобранным вопросам потока, по вопросу за раз. Где человек выбрал
     вариант, участники проверяют его, где оставил unresolved — сравнивают варианты вопроса:
-    из текста группы и найденные советом. Судья сводит их анализы в один итог. Новых вариантов
-    здесь нет, выбор человека не меняется, а решений шаг не принимает — их фиксирует человек.
+    из текста группы и найденные советом. Судья сводит их анализы в один итог. Выбор человека не
+    меняется, а решений шаг не принимает — их фиксирует человек. Новый вариант бывает только у
+    unresolved: ни один не отвечает на вопрос целиком, а несколько вместе — отвечают, и судья
+    собирает из них один (решение владельца к задаче «…судья собирает вариант…»); номера у него
+    в ходе нет — его даёт поток, когда кладёт отчёт хода (options.composed_into).
     Готовый вопрос сразу в отчёте, а пока модели проверяют — какой вопрос идёт (question), как у
     поиска вариантов.
 
@@ -1264,7 +1269,8 @@ class DecisionRun(CouncilRun[DecisionAnalysis]):
                                [decision.adr_id for decision in self.decisions])
             with self._lock:
                 self.state.analyses.append(analysis_of_question(
-                    question, verdict, self.entries, self.replaced.get(question.id, ()), named))
+                    question, verdict, self.entries, self.replaced.get(question.id, ()), named,
+                    origin=f"{self.state.run}:{question.id}"))
                 self.state.question = None
                 self._publish()
         if not asked:
@@ -1333,7 +1339,8 @@ class DecisionRun(CouncilRun[DecisionAnalysis]):
 
 def analysis_of_question(question: OpenQuestion, verdict: Analysis,
                          entries: Mapping[str, str], replaced: Sequence[str] = (),
-                         adrs: Mapping[str, str] | None = None) -> QuestionAnalysis:
+                         adrs: Mapping[str, str] | None = None,
+                         origin: str = "") -> QuestionAnalysis:
     """Проверка вопроса — и выбор по вопросам, на которые она опирается, как он был при ней
     (entries — выбор по каждому вопросу потока, «Q2: P5»): от которых зависит, где судья велел
     что-то поправить и чьи решения называет её «почему» (rests_on). Там выбрали другое —
@@ -1341,7 +1348,10 @@ def analysis_of_question(question: OpenQuestion, verdict: Analysis,
     пересчитали другой вопрос с другим выбором, и его проверка опирается на эту, — эту можно
     пересчитать. replaced — решения проекта, замену которых к ней подтвердили; adrs — решения
     потока, которые называет её «почему» (decisions.adrs_named). Текст решения — как его
-    поправил судья (decisions.rewritten)."""
+    поправил судья (decisions.rewritten). Судья собрал вариант из нескольких — он при проверке,
+    пока без номера, с тем, какая проверка его собрала (origin): номер даёт поток
+    (options.composed_into); «почему» варианта — пояснение судьи, зависимости — сравнения."""
+    composed = verdict.composed
     found = QuestionAnalysis(
         question_id=question.id, verdict=verdict.kind, proposal=verdict.proposal,
         constraint_conflicts=list(verdict.conflicts), risk_ids=list(verdict.risks),
@@ -1351,7 +1361,11 @@ def analysis_of_question(question: OpenQuestion, verdict: Analysis,
                for fix in verdict.fixes],
         project_conflicts=[DecisionClash(adr_id=clash.adr, text=clash.text)
                            for clash in verdict.clashes],
-        replaced=list(replaced), adrs=dict(adrs or {}))
+        replaced=list(replaced), adrs=dict(adrs or {}),
+        composed=None if composed is None else Proposal(
+            id="", text=composed.text, reason=verdict.reason, source="judge",
+            depends_on=list(verdict.depends_on), composed_of=list(composed.sources),
+            additions=list(composed.additions), origin=origin))
     return found.model_copy(update={
         "context": [entries[name] for name in rests_on(found) if name in entries],
         "others": [entry for name, entry in entries.items() if name != question.id]})
@@ -1367,14 +1381,19 @@ def rests_on(found: QuestionAnalysis) -> list[str]:
 
 def offered(question: OpenQuestion, fragments: dict[int, LabeledFragment],
             found: dict[str, list[Proposal]]) -> list[dict]:
-    """Варианты вопроса для промпта: из текста группы, найденные к нему советом и свой вариант
+    """Варианты вопроса для промпта: из текста группы, найденные к нему советом, собранные
+    судьёй «Решений» — с тем, из каких собраны и что судья дописал сам, — и свой вариант
     человека — у него только текст."""
     group = [{"id": f"F{i}", "source": "group", "text": fragments[i].text}
              for i in question.proposal_ids if i in fragments]
     council = [{"id": p.id, "source": "council", "text": p.text, "reason": p.reason,
                 "constraint_ids": as_ids(p.constraint_ids), "risk_ids": as_ids(p.risk_ids),
                 "depends_on_question_ids": p.depends_on}
-               if p.source == "council" else {"id": p.id, "source": "user", "text": p.text}
+               if p.source == "council" else
+               {"id": p.id, "source": "judge", "text": p.text, "reason": p.reason,
+                "composed_of_proposal_ids": p.composed_of, "additions": p.additions,
+                "depends_on_question_ids": p.depends_on}
+               if p.source == "judge" else {"id": p.id, "source": "user", "text": p.text}
                for p in found.get(question.id, [])]
     return group + council
 

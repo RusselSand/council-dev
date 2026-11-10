@@ -5,6 +5,7 @@ import pytest
 from spec_council.decisions import (
     Analysis,
     Clash,
+    Composed,
     Context,
     Fix,
     adrs_named,
@@ -298,3 +299,38 @@ def test_the_judge_says_what_to_fix_and_where():
     with pytest.raises(BadAnswer, match="правка длиннее"):
         judged_analysis({"status": "conflict", "proposal_id": "P2",
                          "fixes": [{"question_id": "Q1", "change": "x" * 1001}]}, here)
+
+
+def composing(*sources, text="Поля — snake_case, классы — PascalCase.", additions=(), **extra):
+    return {"status": "composed", "reason": "Ни один не отвечает целиком: P1 — поля, P2 — классы.",
+            "composed": {"text": text, "from_proposal_ids": list(sources),
+                         "additions": list(additions)},
+            "rationale": {"text": "Одно правило на все имена.", "source": "ai"}, **extra}
+
+
+def test_the_judge_composes_an_option_of_an_unresolved_question_from_several():
+    """Решение владельца к задаче «…судья собирает вариант unresolved-вопроса из нескольких»:
+    ни один вариант не отвечает целиком, а несколько вместе — отвечают; судья собирает из них
+    один и рекомендует его. Варианта ещё нет — номера тоже; дописанное судьёй — отдельно."""
+    found = judged_analysis(composing(
+        "p2", "F3", "P9", "P2", additions=[" Имя  с цифры — с префиксом n. ", " ", 7],
+        depends_on_question_ids=["Q2"]), OPEN)
+    assert (found.kind, found.proposal, found.depends_on, found.rationale, found.decision) == (
+        "recommended", None, ("Q2",), "Одно правило на все имена.", None)
+    assert found.composed == Composed("Поля — snake_case, классы — PascalCase.", ("P2", "F3"),
+                                      ("Имя с цифры — с префиксом n.",))
+    assert found.reason == "Ни один не отвечает целиком: P1 — поля, P2 — классы."
+
+
+@pytest.mark.parametrize(("answer", "where", "problem"), [
+    (composing("P1", "P2"), CHOSEN, "сборка вместо проверки выбранного P2"),
+    (composing("P1", "P9"), OPEN, "меньше чем из двух"),        # чужой номер отброшен
+    (composing("P1", "p1"), OPEN, "меньше чем из двух"),        # повтор — один
+    (composing("P1", "P2", text=" "), OPEN, "без текста"),
+    (composing("P1", "P2", text="x" * 2001), OPEN, "длиннее 2000"),
+    (composing("P1", "P2", additions=["x" * 501]), OPEN, "дописанное"),
+])
+def test_a_composed_option_is_only_for_an_unresolved_question_and_from_its_options(
+        answer, where, problem):
+    with pytest.raises(BadAnswer, match=problem):
+        judged_analysis(answer, where)

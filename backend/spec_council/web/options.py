@@ -52,8 +52,8 @@ from .streams import StreamAnswer, council_of, shown_of, stream_of
 
 router = APIRouter(route_class=ContractRoute, tags=["options"])
 
-Source = Literal["group", "ai", "user"]
-SOURCES: dict[str, Source] = {"group": "group", "council": "ai", "own": "user"}
+Source = Literal["group", "ai", "judge", "user"]
+SOURCES: dict[str, Source] = {"group": "group", "council": "ai", "judge": "judge", "own": "user"}
 
 # Судья оставил один вариант и ничего о нём не сказал — так это пишет макет (docs/api-contract.md,
 # OptionSet).
@@ -70,6 +70,9 @@ class Option(Schema):
     cost: str | None
     depends_on: list[str]
     based_on: str | None
+    # У собранного судьёй «Решений»: из каких вариантов вопроса и что судья дописал сам.
+    composed_of: list[str]
+    additions: list[str]
 
 
 class DroppedOption(Schema):
@@ -346,19 +349,23 @@ def summary_of(item: Offering) -> str:
 
 def option_of(offered: Offered) -> Option:
     """Вариант из группы — фрагмент как есть; совета — с «почему» и зависимостями от других
-    вопросов; свой — его «почему» и зависимости совет ещё не дописал. «Цену» совет не пишет."""
+    вопросов; собранный судьёй «Решений» — ещё и с тем, из каких вариантов собран и что судья
+    дописал сам; свой — его «почему» и зависимости совет ещё не дописал. «Цену» совет не
+    пишет."""
     if offered.own is not None:
         return own_option(offered.own)
     found = offered.found
     return Option(id=offered.id, text=offered.text, source=SOURCES[offered.source],
                   recommended=found.recommended if found else False,
                   reason=(found.reason or None) if found else None, cost=None,
-                  depends_on=list(found.depends_on) if found else [], based_on=None)
+                  depends_on=list(found.depends_on) if found else [], based_on=None,
+                  composed_of=list(found.composed_of) if found else [],
+                  additions=list(found.additions) if found else [])
 
 
 def own_option(own: OwnOption) -> Option:
     return Option(id=own.id, text=own.text, source="user", recommended=False, reason=None,
-                  cost=None, depends_on=[], based_on=own.based_on)
+                  cost=None, depends_on=[], based_on=own.based_on, composed_of=[], additions=[])
 
 
 def choice_of(item: Offering) -> OptionChoice | Unresolved | None:

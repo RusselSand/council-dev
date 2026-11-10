@@ -406,6 +406,7 @@ def option_for(option_id: str | None, item: Offering | None,
         return None
     if choice is not None and choice.proposal == option_id and choice.text is not None:
         return Option(id=option_id, text=choice.text, source="user", recommended=False,
-                      reason=None, cost=None, depends_on=[], based_on=choice.based_on)
+                      reason=None, cost=None, depends_on=[], based_on=choice.based_on,
+                      composed_of=[], additions=[])
     offered = next((one for one in item.offered if one.id == option_id), None) if item else None
     return option_of(offered) if offered is not None else None

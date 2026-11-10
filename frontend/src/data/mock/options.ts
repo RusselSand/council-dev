@@ -8,14 +8,26 @@ import { streamKey } from './streams';
  */
 export type MockOptionSet = Omit<OptionSet, 'question' | 'cycle' | 'unchecked'>;
 
-/** Вариант совета: без цены и зависимостей, не рекомендован, если не сказано другое. */
+/** Вариант совета: без цены и зависимостей, не рекомендован и ни из чего не собран, если не сказано другое. */
 const option = (
   id: string,
   text: string,
   source: OptionSource,
   reason: string | null,
-  extra: Partial<Pick<Option, 'recommended' | 'cost' | 'dependsOn' | 'basedOn'>> = {},
-): Option => ({ id, text, source, recommended: false, reason, cost: null, dependsOn: [], basedOn: null, ...extra });
+  extra: Partial<Pick<Option, 'recommended' | 'cost' | 'dependsOn' | 'basedOn' | 'composedOf' | 'additions'>> = {},
+): Option => ({
+  id,
+  text,
+  source,
+  recommended: false,
+  reason,
+  cost: null,
+  dependsOn: [],
+  basedOn: null,
+  composedOf: [],
+  additions: [],
+  ...extra,
+});
 
 /** Свой вариант человека: «почему», цены и зависимостей пока нет — их допишет совет. */
 const own = (id: string, text: string, basedOn: string | null): Option =>
@@ -412,10 +424,38 @@ const PROTO_DONE: Record<string, Choice> = { Q1: chose('P12'), Q3: chose('P21'),
 const proto = (choices: Record<string, Choice>): Record<string, MockOptionSet> =>
   Object.fromEntries(Object.entries(PROTO).map(([id, value]) => [id, { ...value, choice: choices[id] ?? null }]));
 
+/** Почему судья «Решений» собрал вариант Q1 потока A Сайта (c7) так: его заметка (note) на «Решениях» — та же. */
+export const COMPOSED_REASON =
+  'Ни один вариант не решает конфликт целиком: P13 сливает поля, которые правили порознь, но не говорит, кто решает спорное поле; P12 говорит, как его решить, — мастер видит обе версии и выбирает. P11 не взят: правка диспетчера пропадёт молча, и это противоречит ADR-0005.';
+
+/**
+ * Вариант, который судья «Решений» собрал у Q1, переданного как unresolved, — из P13 и P12, и дописал, чего в них не
+ * было (решение владельца к задаче «…судья собирает вариант unresolved-вопроса из нескольких»). Номер — дальше всех
+ * вариантов потока. В макете такого нет — пример, чтобы видеть «собрано судьёй».
+ */
+const COMPOSED = option(
+  'P43',
+  'Несовпавшие поля сливаются сами, а спорное поле решает мастер: ему показывают обе версии, прежде чем отправить его правку.',
+  'judge',
+  COMPOSED_REASON,
+  {
+    dependsOn: ['Q2'],
+    composedOf: ['P13', 'P12'],
+    additions: ['Фото и комментарии не сливаются по полям: к заявке добавляются обе версии.'],
+  },
+);
+
+/** Готовые «Варианты» потока A Сайта (c7): Q1 передан как unresolved, и судья «Решений» собрал ему вариант (COMPOSED). */
+function composedProto(): Record<string, MockOptionSet> {
+  const sets = proto({ ...PROTO_DONE, Q1: UNRESOLVED });
+  return { ...sets, Q1: { ...sets.Q1, options: [...sets.Q1.options, COMPOSED] } };
+}
+
 /**
  * Варианты по совету и потоку (streamKey), по id вопроса. g1 — из data-1.json, советы-примеры — из prototype.js: у
  * потока B c1 «Варианты» ждут вас — выбран только Q1 (P12), как в макете (picks: { Q1: 'o2' }); у готовых потоков —
- * выбор на каждый вопрос. У потоков, где «Варианты» не начаты, вариантов нет.
+ * выбор на каждый вопрос, а у потока A Сайта (c7) Q1 передан как unresolved, и судья собрал ему вариант (в макете
+ * такого нет). У потоков, где «Варианты» не начаты, вариантов нет.
  */
 export const OPTIONS: Record<string, Record<string, MockOptionSet>> = {
   [streamKey('g1', 'A')]: G1,
@@ -426,10 +466,10 @@ export const OPTIONS: Record<string, Record<string, MockOptionSet>> = {
       ['c4', 'A'],
       ['c4', 'B'],
       ['c4', 'C'],
-      ['c7', 'A'],
       ['c7', 'B'],
     ].map(([council, stream]) => [streamKey(council, stream), proto(PROTO_DONE)]),
   ),
+  [streamKey('c7', 'A')]: composedProto(),
 };
 
 /** Варианты вопроса, которому вариантов ещё не искали: добавлен на «Вопросах» после их утверждения. */

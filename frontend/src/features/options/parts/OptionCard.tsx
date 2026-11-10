@@ -30,7 +30,8 @@ interface OptionCardProps {
  * Вариант карточкой с кружком выбора, как в макете: id, откуда он, «рекомендация судьи», текст; под ним «почему» и
  * «цена», зависимости — «зависит от Q2 · решён» (щелчок открывает тот вопрос, убранный — нет) и справа «Поправить» и
  * «Удалить» (первое нажатие — «Да, удалить»; у выбранного — недоступна, с пояснением). Пока вариант правят — вместо
- * текста поле правки. Не вышло удалить — под карточкой текст ошибки и «Повторить».
+ * текста поле правки. Не вышло удалить — под карточкой текст ошибки и «Повторить». У собранного судьёй — перед «почему»
+ * ещё «собрано из: P23 + P24» и «добавил судья», по строке на добавку (в макете такого варианта нет).
  */
 export function OptionCard({
   option,
@@ -44,6 +45,19 @@ export function OptionCard({
 }: OptionCardProps) {
   const { t } = useI18n();
   const facts: Fact[] = [
+    ...(option.composedOf.length ? [{ label: t('options.composedOf'), value: option.composedOf.join(' + ') }] : []),
+    ...(option.additions.length
+      ? [
+          {
+            label: t('options.additions'),
+            value: option.additions.map((addition) => (
+              <span key={addition} className={styles.addition}>
+                {addition}
+              </span>
+            )),
+          },
+        ]
+      : []),
     ...(option.why ? [{ label: t('options.why'), value: option.why }] : []),
     ...(option.cost ? [{ label: t('options.cost'), value: option.cost }] : []),
   ];
