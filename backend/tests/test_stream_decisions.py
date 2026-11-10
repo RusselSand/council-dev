@@ -1146,9 +1146,11 @@ def test_an_unresolved_decision_can_be_rechecked_once_what_it_waited_for_is_deci
     assert rechecks(council_id, "Q1").status_code == 200
     pool.run()
     q2 = decisions_of(council_id)["Q2"]
-    assert (q2["recheck"], q2["unchecked"], q2["stale"]) == ("ready", False, [
-        {"question": "Q1", "checked": None, "checkedText": None, "chosen": "P1",
-         "chosenText": None}])
+    # «Заблокировано», а «Пересчитать» есть: по recheck точка на чипе жёлтая (решение владельца к
+    # задаче «…жёлтая точка у всех решений с «Пересчитать»»).
+    assert (q2["verdict"], q2["recheck"], q2["unchecked"], q2["stale"]) == (
+        "blocked", "ready", False, [{"question": "Q1", "checked": None, "checkedText": None,
+                                     "chosen": "P1", "chosenText": None}])
     asked = len(agents.prompts["decision_judge"])
     agents.judged["Q2"] = {"status": "recommended", "proposal_id": "P2",
                            "reason": "Q1 ищет по P1 — с ним подходит P2.",

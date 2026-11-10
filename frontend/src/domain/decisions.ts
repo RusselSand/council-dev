@@ -110,7 +110,7 @@ export interface StreamDecision {
   rationaleBy: RationaleAuthor;
   /** Выбор поменяли на «Вариантах» (unchecked) — не fixed, пока решение не пересчитали. */
   status: DecisionState;
-  /** Что с «Пересчитать»; пересчитывать нечего или шаг готов — null. */
+  /** Что с «Пересчитать»; не null — точка на чипе жёлтая. Пересчитывать нечего или шаг готов — null. */
   recheck: DecisionRecheck | null;
   /**
    * Выбор вопроса на «Вариантах» не тот, что проверили модели: решение — по прежней проверке, и пока его не пересчитали,
@@ -177,15 +177,18 @@ export const hasRationale = (text: string): boolean => text.trim() !== '';
 export const isAlarming = (verdict: DecisionVerdict): boolean => verdict === 'conflict' || verdict === 'blocked';
 
 /**
- * Точка решения на чипе, как в макете: зафиксировано — зелёная; противоречие — красная; иначе — жёлтая. Выбор поменяли на
- * «Вариантах» (unchecked) — жёлтая, и при противоречии: решение ждёт пересчёта.
+ * Точка решения на чипе, как в макете: зафиксировано — зелёная; противоречие или «заблокировано» — красная; иначе —
+ * жёлтая. У решения есть «Пересчитать» (recheck — ready или failed) или его пересчитывают (running) — жёлтая, даже если
+ * оно зафиксировано или у проверки противоречие: так видно, что пересчитать (решение владельца к задаче «…жёлтая точка
+ * у всех решений с «Пересчитать»»). Выбор поменяли на «Вариантах» (unchecked) — тоже: у такого решения recheck не null.
+ * Пересчитали — recheck null, и точка снова по итогу проверки.
  */
 export function decisionDot(
   status: DecisionState,
   verdict: DecisionVerdict,
-  unchecked = false,
+  recheck: DecisionRecheck | null = null,
 ): 'green' | 'red' | 'yellow' {
-  if (unchecked) return 'yellow';
+  if (recheck !== null) return 'yellow';
   if (status === 'fixed') return 'green';
   return isAlarming(verdict) ? 'red' : 'yellow';
 }
