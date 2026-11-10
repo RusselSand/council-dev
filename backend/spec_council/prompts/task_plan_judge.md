@@ -8,6 +8,7 @@ You are given:
 - the accepted decisions (ADRs) the OUTCOMES implement or rely on, and the decisions of earlier
   councils of the project they rely on;
 - the CONSTRAINTS and RISKS of the OUTCOMES;
+- the ISSUES of earlier councils that stand on decisions this council has superseded;
 - the existing repository;
 - independently proposed plans.
 
@@ -98,6 +99,26 @@ decision answers — neutral questions, one per item, without answer options and
 Merge duplicates. Do not answer these yourself: the human and the coding agent decide them at
 implementation.
 
+## 4. Issues on superseded decisions
+
+ISSUES ON SUPERSEDED DECISIONS lists open or deferred issues of earlier councils of the project
+(`ISS-0031`). Some of their decisions this council has superseded (`superseded`: the old decision
+and the decision of this council that replaces it); others are still in force (`live`). Each such
+issue will be cancelled, and your plan handles every listed issue in exactly one of two ways:
+
+- replaced: one ISSUE of your plan does what is still needed of it, with an updated scope — what
+  only the superseded decisions required is dropped, what its live decisions and its outcome still
+  require is kept, the replacing decisions are followed — and has its number in `replaces`. That
+  ISSUE belongs to one of the OUTCOMES in the issue's `outcomes`; its `adr_ids` may list the issue's
+  live decisions and never a superseded decision;
+- covered: ISSUES of your plan already do all its remaining work, and each of them has its number
+  in `covers`; "no replacement needed" without such ISSUES is not allowed.
+
+Check the candidates against these rules and fix what breaks them: an issue that is neither
+replaced nor covered, replaced by two ISSUES, both replaced and covered, a replacement of another
+OUTCOME or with a superseded decision in `adr_ids` makes the answer invalid. When the list is
+empty, `replaces` and `covers` stay empty.
+
 ## IDs in the text
 
 In every free-text field, `main_entry_points` included, refer to decisions only by their note
@@ -138,7 +159,9 @@ Return only JSON, the ISSUES in the order they are to be done, with sequential I
       "constraint_ids": [],
       "risk_ids": [],
       "depends_on": [],
-      "open_questions": []
+      "open_questions": [],
+      "replaces": [],
+      "covers": []
     }
   ]
 }
@@ -157,6 +180,8 @@ Before answering, check that:
 - no open question is one an accepted decision answers: its answer is in `scope`, with the
   note ID of the decision;
 - the free text names only note IDs, OUTCOME IDs and the IDs of the ISSUES of your plan;
+- every issue on superseded decisions is either replaced by one ISSUE of an OUTCOME from its
+  `outcomes`, without superseded decisions in `adr_ids`, or covered by the ISSUES that do its work;
 - the result is not based on model voting.
 
 ## IDEAS
@@ -179,6 +204,14 @@ councils of the project that OUTCOMES rely on: note ID, what was decided, `statu
 ## CONSTRAINTS AND RISKS
 
 {{constraints_and_risks}}
+
+## ISSUES ON SUPERSEDED DECISIONS
+
+Open (`open`) or deferred (`deferred`) issues of earlier councils: number, title, status, text,
+the superseded decisions with the decisions that replace them, the live decisions, its outcome
+and the OUTCOMES of this plan a replacement may belong to.
+
+{{stale_issues}}
 
 ## REPOSITORY CONTEXT
 

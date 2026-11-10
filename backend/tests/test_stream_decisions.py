@@ -241,9 +241,9 @@ def test_checked_decisions_are_drafts_with_the_councils_rationale(store, pool):
     assert q1 == {
         "question": questions["Q1"], "adr": "ADR-1", "catalogId": None,
         "option": option_at(council_id, "Q1", "P1"), "text": None, "verdict": "validated",
-        "note": None, "problem": None, "context": [], "conflicts": [], "replaces": [], "risks": [],
-        "fixes": [], "rationale": WHY, "rationaleBy": "ai", "status": "draft", "recheck": None,
-        "unchecked": False, "stale": [], "cycle": []}
+        "note": None, "problem": None, "context": [], "conflicts": [], "replaces": [],
+        "adrTasks": [], "risks": [], "fixes": [], "rationale": WHY, "rationaleBy": "ai",
+        "status": "draft", "recheck": None, "unchecked": False, "stale": [], "cycle": []}
     # Передан как unresolved — судья взял вариант сам и объяснил почему.
     assert (q2["question"], q2["adr"], q2["option"], q2["verdict"], q2["note"]) == (
         questions["Q2"], "ADR-2", option_at(council_id, "Q2", "P2"), "recommended", "проще")

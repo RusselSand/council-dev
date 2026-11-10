@@ -151,6 +151,7 @@ from .models import (
     RepositoryScan,
     ScannedRepository,
     Slicing,
+    StaleIssue,
     Step,
     StepName,
     Stream,
@@ -1710,11 +1711,13 @@ class DesignRun(CouncilRun[DesignScan]):
 
 
 def start_tasks(participants: list[str], judge: str, basis: Mapping[str, str],
-                cited: Sequence[str] = ()) -> TaskPlan:
-    """Код в начале не прочитан: какой — ход отметит сам, когда снимок сделан."""
+                cited: Sequence[str] = (), stale: Sequence[StaleIssue] = ()) -> TaskPlan:
+    """Код в начале не прочитан: какой — ход отметит сам, когда снимок сделан. stale — задачи
+    прежних советов, которым план пишет замену."""
     return TaskPlan(state="running", run=uuid4().hex[:8], basis=dict(basis), cited=list(cited),
                     steps=steps(participants, judge,
-                                (StepName.task_plan, StepName.task_plan_judge)))
+                                (StepName.task_plan, StepName.task_plan_judge)),
+                    stale=list(stale), stale_seen=True)
 
 
 class TaskRun(CouncilRun[TaskPlan]):
@@ -1735,7 +1738,8 @@ class TaskRun(CouncilRun[TaskPlan]):
                  design: str = design_context(None),
                  copy: Copier = snapshot_all) -> None:
         super().__init__(council_id, participants, judge, runner, report,
-                         start_tasks(participants, judge, inputs.basis, inputs.cited))
+                         start_tasks(participants, judge, inputs.basis, inputs.cited,
+                                     inputs.stale))
         self.inputs = inputs
         self.sources = sources
         self.repository = repository
@@ -1756,7 +1760,8 @@ class TaskRun(CouncilRun[TaskPlan]):
                 "uncovered": [name for name in self.inputs.outcomes if name not in covered]}
 
     def _planned(self) -> list[Issue]:
-        values = {**self.inputs.values,
+        # Задач прежних советов на заменённых решениях нет — список пустой.
+        values = {"stale_issues": "[]", **self.inputs.values,
                   "repository_context": self._code_note() + self.repository,
                   "design": self.design}
         parse = partial(plan_of, context=self.inputs.context)

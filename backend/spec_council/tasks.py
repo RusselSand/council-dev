@@ -34,6 +34,7 @@ from .export import (
     terms_of,
 )
 from .groups import stream_group
+from .issue_files import ISSUE, number_key
 from .models import (
     Council,
     DesignScan,
@@ -44,8 +45,10 @@ from .models import (
     RepositoryScan,
     RepositoryStep,
     Research,
+    StaleIssue,
     Stream,
 )
+from .notes import number_of
 from .slicing import BadAnswer
 
 TEXT_MAX = 4000
@@ -65,13 +68,28 @@ class Allowed:
 
 
 @dataclass(frozen=True)
+class Stale:
+    """Задача прежнего совета, у которой совет заменил часть решений (StaleIssue), как её видит
+    проверка плана: заменённые решения (superseded — их у замены быть не должно), те, что ещё
+    действуют (live — на них замена может стоять), и итоги, к которым замена может встать
+    (outcomes — те, что реализуют решение-замену)."""
+
+    superseded: frozenset[str]
+    live: frozenset[str]
+    outcomes: frozenset[str]
+
+
+@dataclass(frozen=True)
 class Context:
     """Итоги плана — номерами в совете (outcome_name) — и на что может сослаться задача каждого
     из них. И сочетания исходных текстов у потока каждого итога (Names.phrases): номер задачи в
-    «I1 cache» — слово, и новым номером он не становится."""
+    «I1 cache» — слово, и новым номером он не становится. stale — задачи прежних советов на
+    заменённых решениях (по номеру в папке задач): каждой план пишет замену или называет задачи,
+    что делают её работу."""
 
     outcomes: Mapping[str, Allowed]
     phrases: Mapping[str, frozenset[str]] = field(default_factory=dict)
+    stale: Mapping[str, Stale] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -290,6 +308,8 @@ class Inputs:
     basis: dict[str, str]
     # Номера каталога, что называет исследование, — пока они в каталоге (research_cited).
     cited: list[str] = field(default_factory=list)
+    # Задачи прежних советов, которым план пишет замену (with_stale).
+    stale: list[StaleIssue] = field(default_factory=list)
 
 
 def as_json(value: object) -> str:
@@ -405,11 +425,51 @@ def inputs_of(council: Council) -> Inputs:
                                          "superseded_by": found.superseded_by}
     values = {"ideas": ideas_text(council), "outcomes": as_json(outcomes),
               "decisions": as_json(list(decisions.values())),
-              "constraints_and_risks": as_json(limits_prompt(fragments, constraints | risks))}
+              "constraints_and_risks": as_json(limits_prompt(fragments, constraints | risks)),
+              "stale_issues": as_json([])}
     context = Context(allowed, {name: names.phrases
                                 for name, names in outcome_names(council, fragments).items()
                                 if name in allowed})
     return Inputs(values, context, [o["id"] for o in outcomes], basis_of(council))
+
+
+def with_replacements(stale: Sequence[StaleIssue],
+                      outcomes: Sequence[PlanOutcome]) -> list[StaleIssue]:
+    """Задачи на заменённых решениях (cancels.stale_of) — с итогами плана, к которым может встать
+    их замена: с теми, что реализуют решение-замену (решение владельца к задаче «Бекенд · Задачи:
+    задачи на заменённых ADR…»: у задачи по-прежнему ровно один итог, и совет пишет только под свои
+    итоги)."""
+    implements: dict[str, set[tuple[str, int]]] = {}
+    for outcome in outcomes:
+        refs = outcome.stream.notes.refs if outcome.stream.notes else {}
+        implements[outcome.name] = {number_of(refs[adr]) for adr in outcome.outcome.adr_ids
+                                    if adr in refs}
+    return [item.model_copy(update={"outcomes": [
+        name for name, adrs in implements.items()
+        if any(number_of(swap.by) in adrs for swap in item.swaps)]}) for item in stale]
+
+
+def with_stale(inputs: Inputs, stale: Sequence[StaleIssue],
+               texts: Mapping[str, str]) -> Inputs:
+    """Что видят модели — и задачи прежних советов, у которых совет заменил часть решений, а их
+    замене есть куда встать (cancels.partial): текст задачи, какие решения заменены и чем, её
+    итог и решения, что ещё действуют, — с текстами из каталога (texts). Их план заменяет или
+    называет задачи, что делают их работу."""
+    shown = [item for item in stale if item.live and item.outcomes]
+    entries = [{
+        "id": item.id, "title": item.title, "status": item.status, "text": item.text,
+        "superseded": [{"id": swap.adr, "decision": texts.get(swap.adr, ""),
+                        "superseded_by": swap.by, "new_decision": texts.get(swap.by, "")}
+                       for swap in item.swaps],
+        "live": [{"id": adr, "decision": texts.get(adr, "")} for adr in item.live],
+        "outcome": ({"id": item.outcome, "text": item.outcome_text}
+                    if item.outcome is not None else None),
+        "outcomes": item.outcomes} for item in shown]
+    context = replace(inputs.context, stale={item.id: Stale(
+        frozenset(swap.adr for swap in item.swaps), frozenset(item.live),
+        frozenset(item.outcomes)) for item in shown})
+    return replace(inputs, values={**inputs.values, "stale_issues": as_json(entries)},
+                   context=context, stale=list(shown))
 
 
 def outcome_entry(outcome: Outcome, name: str, group: str, refs: Mapping[str, str],
@@ -530,6 +590,10 @@ def plan_of(data: dict, context: Context, judged: bool = False) -> list[Issue]:
             raise BadAnswer(f"{issue_id} ждёт задачи после себя: {', '.join(later)} — порядок "
                             "плана и есть порядок работы")
         own = context.outcomes[item["outcome_id"]]
+        replaces = stale_ids(item.get("replaces"), context.stale)
+        covers = stale_ids(item.get("covers"), context.stale)
+        adrs = replacement_adrs(issue_id, item["outcome_id"], texts_of(item.get("adr_ids")),
+                                own.adrs, [context.stale[old] for old in replaces], replaces)
         keep = context.phrases.get(item["outcome_id"], frozenset())
         stray: list[str] = []
 
@@ -544,19 +608,72 @@ def plan_of(data: dict, context: Context, judged: bool = False) -> list[Issue]:
                                for entry in texts_of(item.get("main_entry_points"))],
             current_state=text(text_of(item.get("current_state"), "нынешнего состояния", False)),
             scope=[text(line(entry)) for entry in texts_of(item.get("scope"))],
-            outcome_id=item["outcome_id"],
-            adr_ids=[a for a in texts_of(item.get("adr_ids")) if a in own.adrs],
+            outcome_id=item["outcome_id"], adr_ids=adrs,
             constraint_ids=ints_in(item.get("constraint_ids"), own.constraints),
             risk_ids=ints_in(item.get("risk_ids"), own.risks),
             depends_on=list(dict.fromkeys(after)),
             open_questions=[text(line(entry))
-                            for entry in texts_of(item.get("open_questions"))])
+                            for entry in texts_of(item.get("open_questions"))],
+            replaces=replaces, covers=covers)
         # Задачу и ссылку называют номерами ответа: план из него не построен.
         if judged and stray:
             raise BadAnswer(f"в тексте {answered or issue_id} — "
                             f"{', '.join(dict.fromkeys(stray))}: таких задач в плане нет")
         issues.append(issue)
+    resolved(issues, context.stale)
     return issues
+
+
+def stale_ids(value: object, stale: Mapping[str, Stale]) -> list[str]:
+    """Задачи прежних советов из ответа (replaces, covers) — номерами в папке задач; не из тех, что
+    план видел, — отброшены, как чужие ссылки."""
+    found = [number_key(item) for item in texts_of(value) if ISSUE.fullmatch(item)]
+    return [item for item in dict.fromkeys(found) if item in stale]
+
+
+def replacement_adrs(issue_id: str, outcome_id: str, answered: Sequence[str],
+                     allowed: frozenset[str], stale: Sequence[Stale],
+                     replaces: Sequence[str]) -> list[str]:
+    """Решения задачи из ответа: её итога, а у замены задачи прежнего совета — и решения той, что
+    ещё действуют. Замена встаёт только к итогу, что реализует решение-замену, и на заменённых
+    решениях не стоит: иначе ответ негодный (решение владельца к задаче «Бекенд · Задачи: задачи на
+    заменённых ADR…»)."""
+    for old, item in zip(replaces, stale, strict=True):
+        if outcome_id not in item.outcomes:
+            raise BadAnswer(f"{issue_id} заменяет {old}, а итог {outcome_id} не реализует "
+                            f"решение, что заменило её решения: замена встаёт к итогу "
+                            f"{', '.join(sorted(item.outcomes))}")
+    superseded = {number_of(adr) for item in stale for adr in item.superseded}
+    left = [adr for adr in answered if number_of(adr) in superseded]
+    if left:
+        raise BadAnswer(f"{issue_id} заменяет {', '.join(replaces)}, а стоит на заменённых "
+                        f"решениях {', '.join(dict.fromkeys(left))}: их в adr_ids замены нет")
+    live = frozenset(adr for item in stale for adr in item.live)
+    return [adr for adr in answered if adr in allowed | live]
+
+
+def resolved(issues: Sequence[Issue], stale: Mapping[str, Stale]) -> None:
+    """Каждой задаче прежнего совета, которую видел план, — одно из двух: одна задача плана,
+    что её заменяет (replaces), или задачи плана, что уже делают её работу (covers); «замена не
+    нужна» без задач — негодный ответ (решение владельца к задаче «Бекенд · Задачи: задачи на
+    заменённых ADR…»)."""
+    replaced: dict[str, list[str]] = {}
+    covered: dict[str, list[str]] = {}
+    for issue in issues:
+        for old in issue.replaces:
+            replaced.setdefault(old, []).append(issue.id)
+        for old in issue.covers:
+            covered.setdefault(old, []).append(issue.id)
+    for old in stale:
+        if len(replaced.get(old, [])) > 1:
+            raise BadAnswer(f"{old} заменяют {', '.join(replaced[old])}: замена у задачи одна")
+        if old in replaced and old in covered:
+            raise BadAnswer(f"у {old} и замена {replaced[old][0]}, и задачи, что делают её "
+                            f"работу, {', '.join(covered[old])}: что-то одно")
+        if old not in replaced and old not in covered:
+            raise BadAnswer(f"{old} стоит на заменённых решениях: нет ни задачи, что её "
+                            "заменяет (replaces), ни задач плана, что уже делают её работу "
+                            "(covers)")
 
 
 def ints_in(value: object, allowed: frozenset[int]) -> list[int]:

@@ -9,6 +9,7 @@ You are given:
 - the accepted decisions (ADRs) the OUTCOMES implement or rely on, and the decisions of earlier
   councils of the project they rely on;
 - the CONSTRAINTS and RISKS of the OUTCOMES;
+- the ISSUES of earlier councils that stand on decisions this council has superseded;
 - the existing repository and the project instructions.
 
 ## What an OUTCOME and an ISSUE are
@@ -87,6 +88,28 @@ A question about what the system must do — observable behavior that no OUTCOME
 settles — does not belong here either: the OUTCOMES are approved, so describe the ISSUE by what
 they say and put the doubt into `open_questions`.
 
+## Issues on superseded decisions
+
+ISSUES ON SUPERSEDED DECISIONS lists open or deferred issues of earlier councils of the project
+(`ISS-0031`). Some of their decisions this council has superseded (`superseded`: the old decision
+and the decision of this council that replaces it); others are still in force (`live`). Each such
+issue will be cancelled. Its remaining work must not be lost: handle every listed issue in exactly
+one of two ways.
+
+- Replace it: write one new ISSUE of this plan that does what is still needed of it, with an
+  updated scope — drop what only the superseded decisions required, keep what its live decisions
+  and its outcome still require, and follow the decisions that replace the superseded ones. Put
+  its number into `replaces` of the new ISSUE. The new ISSUE belongs to one of the OUTCOMES listed
+  in the issue's `outcomes` — those that implement the replacing decisions. In `adr_ids` it may
+  list the issue's live decisions besides the decisions of its own OUTCOME, and never a superseded
+  decision: an answer where one is left is rejected.
+- No replacement needed: when ISSUES of this plan already do all its remaining work, do not write
+  a replacement — put its number into `covers` of each of those ISSUES. Without such ISSUES this
+  answer is rejected.
+
+An issue that is neither replaced nor covered, replaced by two ISSUES or both replaced and covered
+makes the answer invalid. When the list is empty, `replaces` and `covers` stay empty.
+
 ## Technical level
 
 Use the repository as the source of facts about the current implementation. Name existing paths,
@@ -149,7 +172,9 @@ Return only JSON. The ISSUES go in the order they are to be done:
       "constraint_ids": [],
       "risk_ids": [],
       "depends_on": [],
-      "open_questions": []
+      "open_questions": [],
+      "replaces": [],
+      "covers": []
     }
   ]
 }
@@ -170,7 +195,9 @@ Before answering, check that:
 - no implementation is decided that the human has not set and the code does not already have —
   such choices are in `open_questions`;
 - paths, fields and mechanisms are confirmed by the repository;
-- the free text names only note IDs, OUTCOME IDs and ISSUE IDs.
+- the free text names only note IDs, OUTCOME IDs and ISSUE IDs;
+- every issue on superseded decisions is either replaced by one ISSUE of an OUTCOME from its
+  `outcomes`, without superseded decisions in `adr_ids`, or covered by the ISSUES that do its work.
 
 ## IDEAS
 
@@ -192,6 +219,14 @@ councils of the project that OUTCOMES rely on: note ID, what was decided, `statu
 ## CONSTRAINTS AND RISKS
 
 {{constraints_and_risks}}
+
+## ISSUES ON SUPERSEDED DECISIONS
+
+Open (`open`) or deferred (`deferred`) issues of earlier councils: number, title, status, text,
+the superseded decisions with the decisions that replace them, the live decisions, its outcome
+and the OUTCOMES of this plan a replacement may belong to.
+
+{{stale_issues}}
 
 ## REPOSITORY CONTEXT
 

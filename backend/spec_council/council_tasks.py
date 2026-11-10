@@ -16,7 +16,9 @@
 только задачи плана, а каждый утверждённый итог — файлом в её подпапку outcomes, и задачи плана
 называют свой итог (решение владельца к задаче «Бекенд · Задачи: итоги — файлы OUT в подпапке, в
 папке задач только ISS»); папки нет — «Задачи» готовы без записи. План остановился — «Запустить
-снова» (retried).
+снова» (retried). Задачи прежних советов на решениях, которые заменил совет, план видит входом и
+пишет им замену, а запись их отменяет (решение владельца к задаче «Бекенд · Задачи: задачи на
+заменённых ADR…», cancels.py).
 
 Хранение прежнее: план — Council.tasks (pipeline.TaskRun), черновик выгрузки плана с переводом
 судьи — Council.tasks_draft (pipeline.NotesRun), последняя запись — Council.tasks_export. Номера и
@@ -32,7 +34,9 @@ from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
+from . import issue_files
 from .background import Slot, halt, held, launched, reporter, running
+from .cancels import cancelled_of, done_of, folder_of, stale_of, swaps_of, written_others
 from .chain import resumed
 from .deps import Launcher
 from .export import (
@@ -40,6 +44,7 @@ from .export import (
     design_map,
     graph_problems,
     previous_of,
+    read_note,
     repository_map,
     settled,
     words_for,
@@ -47,11 +52,15 @@ from .export import (
 from .export import written as written_files
 from .issue_files import OUTCOME, OUTCOMES, loaded, number_key
 from .models import (
+    CancelledIssue,
     Council,
+    DoneIssue,
     ExportedNote,
+    IssueNumber,
     NotePlan,
     Research,
     ScannedRepository,
+    StaleIssue,
     Stream,
     TaskPlan,
     TasksDraft,
@@ -82,6 +91,8 @@ from .tasks import (
     research_cited,
     research_maps,
     research_texts,
+    with_replacements,
+    with_stale,
 )
 from .tasks_export import aligned, drafted_tasks, parents_apart
 from .translation import merged
@@ -217,14 +228,16 @@ def planning(council: Council, folders: Folders, context: Context,
         if problems:
             raise PlanRefused("План строить рано: " + "; ".join(problems))
         cited = research_snapshot(council, notes)
+        stale, texts = stale_for_plan(council, notes, issues)
     except PlanRefused as exc:
         failed = start_tasks(council.participants, council.judge, basis_of(council))
         return TasksLaunch({"tasks": failed.model_copy(update={"state": "failed",
                                                                "error": str(exc)}),
                             "tasks_draft": None})
     research = council.research or Research()
+    inputs = with_stale(replace(inputs_of(council), cited=cited), stale, texts)
     run = PlanRun(council.id, council.participants, council.judge, context.runner,
-                  plan_report(council.id, context), replace(inputs_of(council), cited=cited),
+                  plan_report(council.id, context), inputs,
                   research=research, repositories=context.repositories,
                   skip=council_folders(notes, issues), repository=repository_map(research),
                   design=design_map(research))
@@ -311,6 +324,38 @@ def research_snapshot(council: Council, notes: Path) -> list[str]:
     # И что запомнила прошлая попытка плана (упавшая): заметку с тех пор могли удалить.
     return research_cited([*research_texts(council).values(), *research_maps(council)],
                           catalog.notes, council.tasks.cited if council.tasks else ())
+
+
+def stale_for_plan(council: Council, notes: Path,
+                   issues: Path | None) -> tuple[list[StaleIssue], dict[str, str]]:
+    """Задачи прежних советов на решениях, которые заменил совет (cancels.stale_of), — с итогами
+    плана, к которым может встать их замена, — и тексты решений каталога: их видят модели.
+    Папки задач нет — их нет. Каталог или папку задач не прочитать — PlanRefused."""
+    if issues is None:
+        return [], {}
+    try:
+        catalog = Catalog.load(notes)
+        files, outcomes = loaded(issues), loaded(issues, "outcome")
+    except NotesError as exc:
+        raise PlanRefused(f"Папка задач {issues}: {exc} — почините её и запустите план "
+                          "снова") from None
+    folder = folder_of(files, outcomes, export_in(council.tasks_export, issues))
+    stale = with_replacements(stale_of(folder, swaps_of(council, catalog, notes)),
+                              plan_outcomes(council))
+    return stale, {note.id: note.body for note in catalog.notes.values() if note.type == "adr"}
+
+
+def cancels_for(council: Council, plan: TaskPlan, shelf: Shelf, previous: TasksExport | None,
+                numbers: Sequence[IssueNumber]) -> tuple[list[CancelledIssue], list[DoneIssue]]:
+    """Что отменит запись плана в папке задач, какая она сейчас, и сделанные задачи на заменённых
+    решениях (cancels.py). План прежней версии задач прежних советов не видел — ничего."""
+    if not plan.stale_seen or shelf.issues is None:
+        return [], []
+    swaps = swaps_of(council, shelf.catalog, shelf.root)
+    folder = folder_of(shelf.files, shelf.outcomes, previous, (item.id for item in numbers))
+    stale = with_replacements(stale_of(folder, swaps), plan_outcomes(council))
+    return (cancelled_of(stale, plan.issues, folder, {item.id for item in plan.stale}),
+            done_of(folder, swaps))
 
 
 def code_of(research: Research, repositories: Path | None,
@@ -416,12 +461,14 @@ def draft_of(council: Council, plan: TaskPlan, notes: Path, issues: Path,
         plan, fragments, shelf, previous, words_for(language()),
         notes_language(), reserved_by_others(store, council.id, issues) | outcomes_before(
             store, notes), outcome_names(council, fragments, plan.cited), plan_outcomes(council))
+    cancelled, done = cancels_for(council, plan, shelf, previous, numbers)
     return TasksDraft(state="done", run=uuid4().hex[:8], plan=plan.run,
                       language=notes_language(), root=str(issues), notes=files,
                       vanished=vanished, numbers=numbers,
                       glossary=merged(*(glossary_of(stream.notes, notes_language())
                                         for stream in streams_in(council, notes)),
-                                      glossary_of(previous, notes_language()))), shelf
+                                      glossary_of(previous, notes_language())),
+                      cancelled=cancelled, done=done), shelf
 
 
 def streams_in(council: Council, notes: Path) -> list[Stream]:
@@ -467,15 +514,24 @@ def wrote(council: Council, folders: Folders,
     # Исчезнувшую задачу, которую ещё ждёт файл, что остаётся в папке, не удалить: она остаётся.
     # Родительскую задачу прежней версии, правленную руками, — тоже (vanished_of).
     delete = [note.id for note in draft.vanished if not note.linked_from and not note.edited]
+    # Задачи прежних советов на заменённых решениях и их итоги — отменить, а живые задачи, что их
+    # ждали, — к замене (cancels.written_others): той же сделкой.
+    folder = folder_of(shelf.files, shelf.outcomes, previous,
+                       (item.id for item in draft.numbers))
+    others = written_others(
+        draft.cancelled, folder, {item.issue_id: item.id for item in draft.numbers}, read_note,
+        lambda note: issue_files.path_of(issue_files.folder_of(shelf.issues or Path(), note.type),
+                                         note))
 
     def keep(exported: list[ExportedNote]) -> None:
         record = TasksExport(run=draft.run, plan=draft.plan, language=draft.language,
                              root=draft.root, notes=exported, numbers=draft.numbers,
-                             glossary=draft.glossary)
+                             glossary=draft.glossary, cancelled=draft.cancelled)
         context.store.update_council(council.id, {"tasks_export": record, "tasks_draft": draft})
 
     graph_problems(shelf.catalog, draft.notes, draft.vanished, edits, delete)
-    written_files(draft.notes, draft.vanished, edits, delete, shelf, previous, keep)
+    written_files(draft.notes, draft.vanished, edits, delete, shelf, previous, keep,
+                  others=others)
     return {}, None
 
 

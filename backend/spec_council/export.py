@@ -1077,14 +1077,17 @@ def digest_of(path: Path) -> str:
 def unmarked_digest(path: Path, kind: str) -> str:
     """Отпечаток выгруженного файла: заметки — без superseded_by во frontmatter (notes.unmarked).
     Его дописывает и меняет выгрузка другого потока (notes.marked) — это правит совет, а не
-    человек, и отпечаток от этого не меняется. Файл задачи и итога — как есть."""
-    if kind in issue_files.KINDS:
-        return digest_of(path)
+    человек, и отпечаток от этого не меняется. Файл задачи и итога — без отмены, которую
+    поставил совет (issue_files.uncancelled; решение владельца к задаче «Бекенд · Задачи: задачи
+    на заменённых ADR…»): статус, который поменял совет, не делает его правленным руками."""
     try:
         text = path.read_bytes().decode("utf-8")
     except (OSError, UnicodeError):
         return digest_of(path)
-    return hashlib.sha256(unmarked(text).encode("utf-8")).hexdigest()
+    plain = issue_files.uncancelled(text) if kind in issue_files.KINDS else unmarked(text)
+    if plain == text:
+        return digest_of(path)
+    return hashlib.sha256(plain.encode("utf-8")).hexdigest()
 
 
 def written_as(path: Path, digest: str, kind: str) -> bool:
@@ -1228,14 +1231,18 @@ def written(notes: Sequence[NotePlan], vanished: Sequence[VanishedNote],
             edits: Mapping[str, str], delete: Sequence[str], shelf: Shelf,
             previous: NotesExport | None,
             keep: Callable[[list[ExportedNote]], None] | None = None, *,
-            marks: Mapping[str, str] | None = None) -> list[ExportedNote]:
+            marks: Mapping[str, str] | None = None,
+            others: Sequence[tuple[Path, str]] = ()) -> list[ExportedNote]:
     """Записывает подтверждённое: заметки с правками человека (edits — по ключу), удаляет
     отмеченные исчезнувшие. Файлы, правленные руками, — не трогает. Вернёт, что выгружено, —
     и исчезнувшие, что человек оставил в каталоге: они всё ещё потока. marks — решения каталога,
     что после записи стали заменёнными, и каким решением: в их файлы — во frontmatter —
     дописывается superseded_by (notes.marked; решение владельца к задаче «Бекенд · Поток ·
     Документация: заменённый ADR получает superseded_by во frontmatter»). Заметка, которую
-    запись переписывает, superseded_by из своего файла не теряет.
+    запись переписывает, superseded_by из своего файла не теряет, а файл задачи или итога —
+    отмену, которую ему поставил совет (issue_files.recancelled). others — чужие файлы задач и
+    итогов с новым текстом: их отменяет или поправляет запись плана (решение владельца к задаче
+    «Бекенд · Задачи: задачи на заменённых ADR…») — той же сделкой.
 
     Сначала номера в правках и пустой текст, потом временные файлы, подмена и удаление одним
     шагом с откатом (committed), потом keep — запись о выгрузке. Отказ на любом шаге, и в keep
@@ -1261,12 +1268,17 @@ def written(notes: Sequence[NotePlan], vanished: Sequence[VanishedNote],
             held = shelf.held(plan.id, plan.type)
             note = Note(plan.id, plan.type, texts[plan.key], tuple(plan.links),
                         superseded_by=held.superseded_by if held is not None else None)
-            staged.append((staged_file(path, file_text(note)), path))
+            text = file_text(note)
+            if held is not None and held.cancelled is not None:
+                text = issue_files.recancelled(text, read_note(path))
+            staged.append((staged_file(path, text), path))
         for adr_id, by in (marks or {}).items():
             path = where(adr_id, "adr")
             text = marked(read_note(path), by, path)
             if text is not None:
                 staged.append((staged_file(path, text), path))
+        for path, text in others:
+            staged.append((staged_file(path, text), path))
     except NotesError:
         for part, _ in staged:
             part.unlink(missing_ok=True)

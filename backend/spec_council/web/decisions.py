@@ -34,21 +34,26 @@
 decisions_not_ready.
 """
 
+from pathlib import Path
 from typing import Literal
 
 from fastapi import APIRouter
 
 from ..background import launched
+from ..cancels import Folder, folder_of, tasks_on
 from ..chain import begun, rechecking, replaced
+from ..council_tasks import export_in
 from ..deps import AgentsDep, LauncherDep, ProjectsDep, RepositoriesDep, StoreDep
-from ..models import Choice, Council
+from ..issue_files import loaded
+from ..models import Choice, Council, QuestionAnalysis
 from ..models import Stream as Stored
+from ..notes import NotesError
 from ..options import OptionSet as Offering
 from ..options import sets_of
 from ..order import looped, placed
 from ..pipeline import rests_on
 from ..scope import Listed
-from ..standing import State, exported, stream_standing
+from ..standing import Folders, State, exported, stream_standing
 from ..store import council_lock
 from ..stream_decisions import (
     Recheck,
@@ -119,6 +124,22 @@ class StaleChoice(Schema):
     chosen_text: str | None
 
 
+class TaskRef(Schema):
+    """Задача папки задач проекта: номер и статус."""
+
+    id: str
+    status: Literal["open", "deferred"]
+
+
+class AdrTasks(Schema):
+    """Решение проекта (adr) и открытые и отложенные задачи прежних советов, что на нём стоят: их
+    отменит замена решения (решение владельца к задаче «Бекенд · Задачи: задачи на заменённых
+    ADR…»)."""
+
+    adr: str
+    tasks: list[TaskRef]
+
+
 class StreamDecision(Schema):
     question: Question
     adr: str
@@ -132,6 +153,8 @@ class StreamDecision(Schema):
     context: list[DecisionContext]
     conflicts: list[DecisionConflict]
     replaces: list[DecisionRef]
+    # Задачи на решениях проекта из conflicts и replaces — у решений, на которых они есть.
+    adr_tasks: list[AdrTasks]
     risks: list[str]
     fixes: list[str]
     rationale: str
@@ -176,13 +199,13 @@ def list_decisions(council_id: str, stream_id: str, store: StoreDep, projects: P
     модели успели проверить."""
     council = council_of(store, council_id)
     stream = stream_at(council, stream_id)
-    notes = folders_of(council, projects, repositories).notes
-    state = stream_standing(stream, notes).steps["decisions"]
+    folders = folders_of(council, projects, repositories)
+    state = stream_standing(stream, folders.notes).steps["decisions"]
     if state == "idle":
         return DecisionsRound(run=0, decisions=[])
     if state == "running":
         return DecisionsRound(run=run_of(stream), decisions=[])
-    return DecisionsRound(run=run_of(stream), decisions=decisions_of(council, stream, notes))
+    return DecisionsRound(run=run_of(stream), decisions=decisions_of(council, stream, folders))
 
 
 # «Зафиксировать решения» — раньше ручки с {question_id}: иначе «approve» был бы id вопроса.
@@ -228,8 +251,8 @@ def update_decision(council_id: str, stream_id: str, question_id: str, body: Edi
     with council_lock:
         council = council_of(store, council_id)
         stream = stream_at(council, stream_id)
-        notes = folders_of(council, projects, repositories).notes
-        state = editable(stream, notes, body.run)
+        folders = folders_of(council, projects, repositories)
+        state = editable(stream, folders.notes, body.run)
         item = decision_at(stream, question_id)
         if question_id in rechecking_questions(stream):
             raise ApiError(409, "decisions_not_ready",
@@ -249,7 +272,7 @@ def update_decision(council_id: str, stream_id: str, question_id: str, body: Edi
         stream = with_ruling(stream, question_id, body.rationale, body.status, body.replaces)
         council = store.update_council(council_id,
                                        {"streams": replaced(council, stream)}) or council
-    return DecisionAnswer(decision=decision_in(council, stream, notes, question_id))
+    return DecisionAnswer(decision=decision_in(council, stream, folders, question_id))
 
 
 @router.post("/councils/{council_id}/streams/{stream_id}/decisions/{question_id}/recheck")
@@ -277,7 +300,7 @@ def recheck(council_id: str, stream_id: str, question_id: str, body: Run, store:
             stream = stream_at(council, stream_id)
     if start is not None and not launched(launch, start.pipeline, start.report):
         raise ApiError(500, "internal", "Сервер останавливается — решение не начали пересчитывать")
-    return DecisionAnswer(decision=decision_in(council, stream, folders.notes, question_id))
+    return DecisionAnswer(decision=decision_in(council, stream, folders, question_id))
 
 
 def run_of(stream: Stored) -> int:
@@ -294,10 +317,10 @@ def decision_at(stream: Stored, question_id: str) -> Shown:
     return item
 
 
-def decision_in(council: Council, stream: Stored, notes: str | None,
+def decision_in(council: Council, stream: Stored, folders: Folders,
                 question_id: str) -> StreamDecision:
     """Решение вопроса по контракту, каким оно стало."""
-    return next(one for one in decisions_of(council, stream, notes)
+    return next(one for one in decisions_of(council, stream, folders)
                 if one.question.id == question_id)
 
 
@@ -317,7 +340,7 @@ def editable(stream: Stored, notes: str | None, run: int) -> State:
 
 # Решения по контракту.
 
-def decisions_of(council: Council, stream: Stored, notes: str | None) -> list[StreamDecision]:
+def decisions_of(council: Council, stream: Stored, folders: Folders) -> list[StreamDecision]:
     """Решения шага в порядке зависимостей проверки (stream_decisions.order_of): вопрос — тот же,
     что на «Вопросах»; вариант — тот же, что на «Вариантах»; «в контексте» — варианты решений
     вопросов, на которые опирается проверка (pipeline.rests_on: от которых зависит, где судья
@@ -325,7 +348,11 @@ def decisions_of(council: Council, stream: Stored, notes: str | None) -> list[St
     Зависимости замкнулись в круг — у решения вопросы круга, чьи решения есть на шаге, и оно
     само. Номер в каталоге — пока поток выгружен
     (standing.exported, как у «Документации»): выгрузка к другим итогам знает ADR-n других
-    решений — вопросы с тех пор могли отобрать заново."""
+    решений — вопросы с тех пор могли отобрать заново. У решений проекта, которым противоречит
+    решение или замену которых отметили, — задачи прежних советов, что на них стоят (папка
+    задач — folders.issues, какая она сейчас)."""
+    notes = folders.notes
+    folder = tasks_folder(council, folders.issues)
     order = order_of(stream.analysis)
     shown = placed(order, shown_of(stream), lambda item: item.question.id)
     on_step = [item.question.id for item in shown]
@@ -344,13 +371,40 @@ def decisions_of(council: Council, stream: Stored, notes: str | None) -> list[St
     return [decision_of(item, question, options, refs.get(item.adr), past,
                         None if done else recheck_of(stream, item),
                         [] if done else [stale_of(was, now) for was, now in shifted(stream, item)],
-                        looped(order, item.question.id, on_step))
+                        looped(order, item.question.id, on_step), folder)
             for item, question in zip(shown, questions, strict=True)]
+
+
+def tasks_folder(council: Council, issues: str | None) -> Folder | None:
+    """Папка задач проекта, как её видит отмена задач (cancels.Folder): задачи совета — его, их
+    не отменяют. Папки нет или её не прочитать — None: задач не видно."""
+    if issues is None:
+        return None
+    try:
+        files = loaded(Path(issues))
+    except NotesError:
+        return None
+    return folder_of(files, {}, export_in(council.tasks_export, Path(issues)))
+
+
+def adr_tasks_of(found: QuestionAnalysis, replaces: list[str],
+                 folder: Folder | None) -> list[AdrTasks]:
+    """Решения проекта, которым противоречит вариант, и те, замену которых отметили, — с открытыми
+    и отложенными задачами прежних советов на них: «На нём стоят задачи: ISS-0030, ISS-0031
+    (отложена)» у отмеченной замены. Задач нет — решения нет в ответе."""
+    if folder is None:
+        return []
+    adrs = list(dict.fromkeys([*(clash.adr_id for clash in found.project_conflicts), *replaces]))
+    on = tasks_on(folder, adrs)
+    return [AdrTasks(adr=adr, tasks=[TaskRef(id=note.id, status=note.status)
+                                     for note in on[adr]])
+            for adr in adrs if adr in on]
 
 
 def decision_of(item: Shown, question: Question, options: dict[str, Option | None],
                 catalog_id: str | None, past: dict[str, str], recheck: Recheck | None,
-                stale: list[StaleChoice], cycle: list[str]) -> StreamDecision:
+                stale: list[StaleChoice], cycle: list[str],
+                folder: Folder | None = None) -> StreamDecision:
     """Что совет сказал о решении: противоречие — проблемой и что поправить, без заметки судьи;
     иначе — заметкой судьи. Текст решения — его, если судья поправил текст варианта (решение
     владельца к задаче «…судья переносит действующее из заменённого ADR и выравнивает запись»):
@@ -379,6 +433,7 @@ def decision_of(item: Shown, question: Question, options: dict[str, Option | Non
                    *(DecisionConflict(id=clash.adr_id, kind="decision", text=clash.text or None)
                      for clash in found.project_conflicts)],
         replaces=[DecisionRef(id=adr, decision=past.get(adr, "")) for adr in ruling.replaces],
+        adr_tasks=adr_tasks_of(found, ruling.replaces, folder),
         risks=[f"F{n}" for n in found.risk_ids], fixes=[], rationale=ruling.rationale,
         rationale_by=AUTHORS[ruling.rationale_by], status=ruling.status, recheck=recheck,
         unchecked=item.unchecked, stale=stale, cycle=cycle)
