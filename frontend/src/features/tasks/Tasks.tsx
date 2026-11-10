@@ -10,14 +10,14 @@ import { TitledCard } from '../../ui/TitledCard';
 import { OutcomeCard } from './parts/OutcomeCard';
 import { PendingStreams } from './parts/PendingStreams';
 import { TaskCard } from './parts/TaskCard';
-import { VanishedTasks } from './parts/VanishedTasks';
+import { TaskList } from './parts/TaskList';
 import { useTasks } from './useTasks';
 
 /**
  * Этап «Задачи»: пока модели строят план или судья переводит задачи — «ИИ работает» и ход работы; иначе — план
  * остановился — «План задач остановился» и «Запустить снова», а на судье, чей ответ не прошёл проверку, — под ней и ход
  * работы; не все потоки готовы — «Не все потоки готовы»; «Задачи для
- * coding agents» — итоги, в каждом — его задачи, свёрнутые и открытые; «Уйдут из каталога»;
+ * coding agents» — итоги, в каждом — его задачи, свёрнутые и открытые; «Уйдут из каталога» и «Будут отменены»;
  * внизу — «Записать задачи» и «Записать в каталог». Пока план грузится — «Загружаем…» или ошибка. Другой совет — другой
  * экран: ставьте с key={council.id}.
  */
@@ -54,7 +54,17 @@ export function Tasks({ council }: { council: CouncilSummary }) {
           <TaskCard key={task.id} task={task} onToggle={() => screen.toggleTask(task.id)} />
         ))}
       </TitledCard>
-      {screen.vanished.length > 0 && <VanishedTasks title={screen.vanishedTitle} tasks={screen.vanished} />}
+      {screen.vanished.length > 0 && (
+        <TaskList struck title={screen.vanishedTitle} intro={t('tasks.vanished.intro')} rows={screen.vanished} />
+      )}
+      {screen.cancelled && (
+        <TaskList
+          title={screen.cancelled.title}
+          intro={t('tasks.cancelled.intro')}
+          rows={screen.cancelled.rows}
+          footer={screen.cancelled.footer}
+        />
+      )}
       <NextStep layout="bar" title={t('tasks.write.title')} text={screen.summary}>
         <Button variant="inverse" disabled={screen.approveDisabled} onClick={screen.approve}>
           {t('tasks.write.button')}

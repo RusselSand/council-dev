@@ -35,8 +35,29 @@
   color: var(--color-text-muted);
 }
 
+.text {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  min-width: 0;
+}
+
+.head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--space-6);
+}
+
 .title {
   font-size: var(--text-md);
+  color: var(--color-text-muted);
+  overflow-wrap: anywhere;
+}
+
+.mark,
+.line {
+  font-size: var(--text-sm);
   color: var(--color-text-muted);
   overflow-wrap: anywhere;
 }

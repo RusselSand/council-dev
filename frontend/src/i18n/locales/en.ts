@@ -394,6 +394,8 @@ export const en = translation({
   'decisions.replace': 'This decision replaces {id}',
   'decisions.replaces': 'Replaces {id}: {text}',
   'decisions.replaces.id': 'Replaces {id}',
+  'decisions.tasksOn': 'Tasks on it: {ids}',
+  'decisions.tasksOn.deferred': '{id} (deferred)',
   'decisions.risk': 'risk {id}',
   'decisions.fix': 'fix: {text}',
   'decisions.clean': 'no conflicts with constraints or risks',
@@ -487,6 +489,23 @@ export const en = translation({
   'tasks.outcome.meta.outcome': 'outcome {outcome}',
   'tasks.vanished': 'Leaving the catalog · {count}',
   'tasks.vanished.intro': 'Tasks from the previous export that aren’t in the current plan: writing deletes their files.',
+  'tasks.cancelled': 'To be cancelled · {count}',
+  'tasks.cancelled.intro':
+    'Tasks of earlier councils on decisions this council replaced: writing sets them to status: cancelled.',
+  'tasks.cancelled.deferred': '(deferred)',
+  'tasks.cancelled.swap': '{adr} replaced by {by}',
+  'tasks.cancelled.replaced': 'Replaced by {id}',
+  'tasks.cancelled.covered': 'Work moved to {ids}',
+  'tasks.cancelled.none': 'No replacement',
+  'tasks.cancelled.unlinked': {
+    one: '{ids} will no longer wait for it',
+    other: '{ids} will no longer wait for it',
+  },
+  'tasks.cancelled.outcome': 'Outcome: no open tasks left',
+  'tasks.cancelled.done': {
+    one: 'Done on replaced decisions — left as is: {ids}.',
+    other: 'Done on replaced decisions — left as is: {ids}.',
+  },
   'tasks.write.title': 'Write tasks',
   'tasks.write.text': {
     one: '{count} task · catalog {path} · language: {language}',
