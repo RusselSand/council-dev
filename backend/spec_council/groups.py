@@ -257,9 +257,10 @@ def merged(council: Council, source: Group, target: Group) -> Structure:
     на target, связи группы с самой собой нет; у target — след: с ней объединили source."""
     structure = council.structure
     keeper = target if idea_of(council, target).text else source
-    # Идеи нет ни у той, ни у другой — поиск у target: он, может, уже идёт.
-    discovery = source.discovery if keeper is source and idea_of(council, source).text \
-        else target.discovery
+    # Идеи нет ни у той, ни у другой — поиск у target: он, может, уже идёт. Поиск source — и тот,
+    # что у совета прежней версии вёл её поток (discovery_of): иначе он не пошёл бы за идеей.
+    adopted = keeper is source and idea_of(council, source).text
+    discovery = discovery_of(council, source) if adopted else target.discovery
     ideas = idea_fragments(council, keeper)
     fragment_ids = [*target.fragment_ids,
                     *(i for i in source.fragment_ids if i not in target.fragment_ids)]

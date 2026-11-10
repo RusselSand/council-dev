@@ -1133,6 +1133,23 @@ def test_a_merged_group_takes_the_search_along_with_the_idea(store, pool, agents
     assert (group["idea"], group["ideaBy"], group["ideaSearch"]) == (IDEA_B, "ai", SOUGHT)
 
 
+def test_a_merged_group_takes_the_search_its_stream_had_in_a_council_saved_before(store, pool):
+    # У совета прежней версии поиск идеи B — у её потока: он идёт за идеей B в объединённую
+    # группу, а не поиск потока A, который упал.
+    found = start_idea(["sol", "fable"], "fable").model_copy(update={
+        "state": "done", "proposal": IdeaProposal(idea=IDEA_B, reason="", decided_by="agreed")})
+    lost = start_idea(["sol", "fable"], "fable").model_copy(update={"state": "failed"})
+    council_id = with_groups(store, [grp("A", [2]), grp("B", [3, 4, 5])],
+                             streams=[Stream(group="A", discovery=lost),
+                                      Stream(group="B", discovery=found)])
+    assert groups_of(council_id)["A"]["ideaSearch"]["state"] == "failed"
+    merges(council_id, "B", {"into": "A"})
+    group = groups_of(council_id)["A"]
+    assert (group["idea"], group["ideaBy"], group["ideaSearch"]) == (IDEA_B, "ai", SOUGHT)
+    assert searches(council_id, "A").json()["group"]["ideaSearch"] == SEEKS
+    assert store.get_council(council_id).structure.groups[0].discovery.search == 2
+
+
 def test_the_idea_of_a_stream_gives_way_to_the_new_search_but_the_stream_keeps_it(store, pool,
                                                                                 agents):
     # Группы уже стали потоками: идея B — у её потока. Перезапуск меняет идею группы, а поток —
