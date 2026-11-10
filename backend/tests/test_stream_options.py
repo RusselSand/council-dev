@@ -5,6 +5,7 @@
 поток к «Решениям»: модели начинают проверять решения на сервере."""
 
 import json
+from collections.abc import Callable
 
 import pytest
 from fastapi.testclient import TestClient
@@ -64,11 +65,13 @@ def section(prompt, title):
 class Agents:
     """Модели совета без CLI: вопросы находят одинаковые (FOUND) — судья не нужен; варианты —
     FOUND_OPTIONS. Модель на шаге из failing не справляется; (шаг, текст вопроса) из failing — на
-    этом вопросе не справляется любая модель шага."""
+    этом вопросе не справляется любая модель шага. watching(часть, id вопроса) зовут, когда за
+    вопрос берётся судья или первая модель совета (sol): тест смотрит, что видно в этот момент."""
 
     def __init__(self):
         self.failing: set[tuple[str, str]] = set()
         self.prompts: dict[str, list[str]] = {}
+        self.watching: Callable[[str, str], None] | None = None
 
     def availability(self, aliases, *, fresh=False):
         raise AssertionError("варианты вход в подписку заранее не проверяют")
@@ -76,6 +79,9 @@ class Agents:
     def ask(self, model, prompt, key, workspace=None, stop=None):
         step = key.split("-")[1]
         self.prompts.setdefault(step, []).append(prompt)
+        if (self.watching is not None and step.startswith(("proposal_", "decision_"))
+                and (step.endswith("_judge") or model == "sol")):
+            self.watching(step, json.loads(section(prompt, "OPEN QUESTION"))["id"])
         if (step, model) in self.failing:
             raise ModelFailed("превышено время молчания CLI (15 мин)")
         if step == "question_discovery":
@@ -729,7 +735,83 @@ def test_the_approved_choice_takes_no_deleted_option(store, pool, agents):
     assert [option["id"] for option in json.loads(section(q1, "PROPOSALS"))] == ["P1"]
 
 
+# --- ход по вопросам (решение владельца к задаче «…прогресс по вопросам…»)
+
+def watched(agents, council_id, step) -> dict[tuple[str, str], dict]:
+    """Ход шага step по вопросам, каким его видно по HTTP, когда за вопрос берётся часть шага: по
+    части и вопросу — в первый раз."""
+    seen: dict[tuple[str, str], dict] = {}
+
+    def watch(phase, question):
+        if (phase, question) not in seen:
+            seen[phase, question] = steps_of(stream_of(council_id))[step]["questionProgress"]
+
+    agents.watching = watch
+    return seen
+
+
+def turn(done, question=None, phase=None, total=3) -> dict:
+    return {"total": total, "done": done, "question": question, "phase": phase}
+
+
+def test_the_search_shows_how_many_questions_are_done_and_which_one_goes(store, pool, agents):
+    council_id = seeking(store, pool)
+    # Модели ещё не взялись ни за один вопрос: готово 0 из 3.
+    options = steps_of(stream_of(council_id))["options"]
+    assert (options["state"], options["questionProgress"]) == ("running", turn(0))
+    seen = watched(agents, council_id, "options")
+    pool.run()
+    # Вопрос за вопросом: модели совета, потом судья; готовый сразу в счёте.
+    assert seen == {
+        ("proposal_discovery", "Q1"): turn(0, "Q1", "proposal_discovery"),
+        ("proposal_judge", "Q1"): turn(0, "Q1", "proposal_judge"),
+        ("proposal_discovery", "Q2"): turn(1, "Q2", "proposal_discovery"),
+        ("proposal_judge", "Q2"): turn(1, "Q2", "proposal_judge"),
+        ("proposal_discovery", "Q3"): turn(2, "Q3", "proposal_discovery"),
+        ("proposal_judge", "Q3"): turn(2, "Q3", "proposal_judge")}
+    # Модели закончили — шаг ждёт вас, хода по вопросам нет.
+    options = steps_of(stream_of(council_id))["options"]
+    assert (options["state"], options["questionProgress"]) == ("waiting", None)
+
+
+def test_a_retried_search_counts_what_it_found_before_as_done(store, pool, agents):
+    council_id = judge_stopped(store, pool, agents)
+    # Остановился — хода по вопросам нет: модели не работают.
+    assert steps_of(stream_of(council_id))["options"]["questionProgress"] is None
+    agents.failing = set()
+    res = client.post(f"/api/councils/{council_id}/streams/A/retry", json={})
+    assert res.status_code == 200, res.text
+    # Варианты Q1 взяты из прошлого запуска — он сразу готов.
+    assert steps_of(res.json()["stream"])["options"]["questionProgress"] == turn(1)
+    seen = watched(agents, council_id, "options")
+    pool.run()
+    # Модели совета по Q2 уже ответили — их ответы берутся даром, а работает судья.
+    assert seen == {
+        ("proposal_discovery", "Q2"): turn(1, "Q2", "proposal_judge"),
+        ("proposal_judge", "Q2"): turn(1, "Q2", "proposal_judge"),
+        ("proposal_discovery", "Q3"): turn(2, "Q3", "proposal_discovery"),
+        ("proposal_judge", "Q3"): turn(2, "Q3", "proposal_judge")}
+
+
+def test_only_the_options_and_the_decisions_go_by_question(store, pool):
+    council_id = streaming(store)
+    assert client.post(f"/api/councils/{council_id}/streams/A/project-decisions/approve",
+                       json={"selected": []}).status_code == 200
+    steps = steps_of(stream_of(council_id))
+    assert steps["questions"]["state"] == "running"
+    assert [step["questionProgress"] for step in steps.values()] == [None] * 6
+
+
 # --- поток прежней версии
+
+def test_a_search_saved_by_the_prior_version_counts_the_questions_and_names_none(store, pool):
+    """Ход прежней версии не помнит, какой вопрос идёт: счёт — по тому, что он нашёл."""
+    council_id = seeking(store, pool)
+    saved = stored(store, council_id).proposals.model_dump(mode="json", exclude={"question"})
+    saved["options"] = [QuestionOptions(question_id="Q1", verdict="recommended", proposals=[
+        Proposal(id="P1", text=ONE, reason="так проще", recommended=True)]).model_dump()]
+    put(store, council_id, proposals=ProposalDiscovery.model_validate(saved))
+    assert steps_of(stream_of(council_id))["options"]["questionProgress"] == turn(1)
 
 def test_a_stream_of_the_prior_version_shows_its_approved_choice_and_own_options(store):
     council_id = streaming(store)

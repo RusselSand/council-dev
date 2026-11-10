@@ -38,6 +38,8 @@ from tests.test_stream_options import (
     deletes,
     offered,
     sets_of,
+    turn,
+    watched,
 )
 from tests.test_stream_options import Agents as OptionAgents
 from tests.test_stream_options import approves as approves_choice
@@ -518,6 +520,8 @@ def test_a_recheck_checks_only_its_question_and_holds_nothing_else(store, pool, 
     [going] = steps_of(after)["decisions"]["rechecks"]
     steps_of(after)["decisions"]["rechecks"] = []
     assert after == before
+    # Хода по вопросам у пересчёта нет: вопрос у него один.
+    assert steps_of(after)["decisions"]["questionProgress"] is None
     work, judge = going["progress"]
     assert (going["question"], work["phase"]) == ("Q1", "decision_analysis")
     assert [(run["model"], run["state"]) for run in work["runs"]] == [
@@ -1626,6 +1630,53 @@ def test_a_retry_takes_a_new_run_and_keeps_the_decisions_made(store, pool, agent
     assert error_of(edits(council_id, "Q2", WHY, "fixed", run=1)) == (409, "decisions_not_ready")
     assert edits(council_id, "Q2", WHY, "fixed", run=2).status_code == 200
     assert approves(council_id, run=2).status_code == 200
+
+
+# --- ход по вопросам (решение владельца к задаче «…прогресс по вопросам…»)
+
+def test_the_check_shows_how_many_questions_are_done_and_which_one_goes(store, pool, agents):
+    council_id, _ = chosen(store, pool)
+    decisions = steps_of(stream_of(council_id))["decisions"]
+    assert (decisions["state"], decisions["questionProgress"]) == ("running", turn(0))
+    seen = watched(agents, council_id, "decisions")
+    pool.run()
+    # Вопрос за вопросом — и unresolved Q2: модели совета сравнивают его варианты, судья сводит.
+    assert seen == {
+        ("decision_analysis", "Q1"): turn(0, "Q1", "decision_analysis"),
+        ("decision_judge", "Q1"): turn(0, "Q1", "decision_judge"),
+        ("decision_analysis", "Q2"): turn(1, "Q2", "decision_analysis"),
+        ("decision_judge", "Q2"): turn(1, "Q2", "decision_judge"),
+        ("decision_analysis", "Q3"): turn(2, "Q3", "decision_analysis"),
+        ("decision_judge", "Q3"): turn(2, "Q3", "decision_judge")}
+    decisions = steps_of(stream_of(council_id))["decisions"]
+    assert (decisions["state"], decisions["questionProgress"]) == ("waiting", None)
+
+
+def test_a_retried_check_counts_what_it_checked_before_as_done(store, pool, agents):
+    council_id, _ = stuck(store, pool, agents)
+    assert steps_of(stream_of(council_id))["decisions"]["questionProgress"] is None
+    agents.stuck = set()
+    res = client.post(f"/api/councils/{council_id}/streams/A/retry", json={})
+    assert res.status_code == 200, res.text
+    # Проверка Q1 взята из прошлого запуска — он сразу готов.
+    assert steps_of(res.json()["stream"])["decisions"]["questionProgress"] == turn(1)
+    seen = watched(agents, council_id, "decisions")
+    pool.run()
+    assert seen == {
+        ("decision_analysis", "Q2"): turn(1, "Q2", "decision_analysis"),
+        ("decision_judge", "Q2"): turn(1, "Q2", "decision_judge"),
+        ("decision_analysis", "Q3"): turn(2, "Q3", "decision_analysis"),
+        ("decision_judge", "Q3"): turn(2, "Q3", "decision_judge")}
+
+
+def test_a_check_saved_by_the_prior_version_counts_the_questions_and_names_none(store, pool):
+    """Ход прежней версии не помнит, какой вопрос идёт: счёт — по тому, что он проверил."""
+    council_id, _ = chosen(store, pool)
+    saved = stored(store, council_id).analysis.model_dump(mode="json", exclude={"question"})
+    saved["analyses"] = [QuestionAnalysis(question_id="Q1", verdict="validated",
+                                          proposal="P1").model_dump()]
+    put(store, council_id, analysis=DecisionAnalysis.model_validate(saved))
+    assert steps_of(stream_of(council_id))["decisions"]["questionProgress"] == turn(1)
 
 
 # --- порядок решений по зависимостям проверки

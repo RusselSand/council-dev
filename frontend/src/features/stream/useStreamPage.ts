@@ -50,11 +50,21 @@ export interface ChainStep {
   to: string | null;
 }
 
+/** Сколько вопросов шага готово из всех — полоса и «готово 7 из 25» на плашке «ИИ работает». */
+export interface BannerProgress {
+  done: number;
+  total: number;
+  /** «готово 7 из 25». */
+  label: string;
+}
+
 /** Плашка под цепочкой — состояние открытого шага: ждёт вас, ошибка, ИИ работает. */
 export interface StepBanner {
   state: Extract<State, 'waiting' | 'failed' | 'running'>;
   title: string;
   text: string;
+  /** У «Вариантов» и «Решений», пока модели работают, — сколько вопросов готово; иначе null. */
+  progress: BannerProgress | null;
 }
 
 /** Модель в «Ходе работы»: «sol», у той, что работает, — «sol · думает 0:12». */
@@ -121,6 +131,8 @@ export interface StreamPage {
   banner: StepBanner | null;
   /** «Ход работы» открытого шага; не показывается или идут пересчёты решений — null. */
   runs: RunGroup[] | null;
+  /** Над частями «Хода работы» — какой вопрос идёт: «Q8: модели совета»; вопрос не идёт или хода не видно — null. */
+  question: string | null;
   /** «Ход работы · пересчёт»: пока у открытого шага идут пересчёты решений — по строке на пересчёт; нет — null. */
   rechecks: RecheckRow[] | null;
   /** Щелчок по строке пересчёта: раскрыть её ход, а раскрытый — свернуть. */
@@ -158,7 +170,9 @@ const stepPath = (council: string, stream: string, step: Step) =>
  * снова» и переход или правки шага не уходят вместе: пока ответа ждёт одно, другое не действует. Потока из адреса
  * у совета нет — открывает первый поток на его текущем шаге; потоков нет — «Исследование». Пока у «Решений» идут
  * пересчёты решений, «Ход работы» — их ход, по строке на пересчёт (раскрыт пересчёт решения, открытого на «Решениях»),
- * а плашка «Решений», которые ждут вас, — «ИИ работает» с вопросами, которые пересчитывают.
+ * а плашка «Решений», которые ждут вас, — «ИИ работает» с вопросами, которые пересчитывают. Пока на «Вариантах» и
+ * «Решениях» работают модели, на плашке — полоса и «готово 7 из 25», а в «Ходе работы» — какой вопрос идёт: «Q8: модели
+ * совета» (решение владельца к задаче «…прогресс по вопросам…»).
  */
 export function useStreamPage(council: CouncilSummary, route: StepRoute): StreamPage {
   const { t, formatNumber, formatList } = useI18n();
@@ -245,6 +259,14 @@ export function useStreamPage(council: CouncilSummary, route: StepRoute): Stream
         ? t('stream.caps.ai', { step: stepTitle })
         : stepTitle;
 
+  // У «Вариантов» и «Решений», пока модели работают, — сколько вопросов готово из всех (решение владельца).
+  const questionProgress = state === 'running' ? (step?.questionProgress ?? null) : null;
+  const progress: BannerProgress | null = questionProgress && {
+    done: questionProgress.done,
+    total: questionProgress.total,
+    label: t('stream.banner.progress', { done: questionProgress.done, total: questionProgress.total }),
+  };
+
   // Ждёт вас, а решения пересчитывают — не «Ход за вами»: ИИ работает (решение владельца).
   const banner: StepBanner | null =
     state === 'waiting' && rechecking.length > 0
@@ -252,13 +274,19 @@ export function useStreamPage(council: CouncilSummary, route: StepRoute): Stream
           state: 'running',
           title: t('state.running'),
           text: t('stream.banner.rechecking', { ids: formatList(rechecking.map((r) => r.question)) }),
+          progress: null,
         }
       : state === 'waiting'
-        ? { state, title: t('stream.banner.waiting.title'), text: t('stream.banner.waiting.text', { step: stepTitle }) }
+        ? {
+            state,
+            title: t('stream.banner.waiting.title'),
+            text: t('stream.banner.waiting.text', { step: stepTitle }),
+            progress: null,
+          }
         : state === 'failed'
-          ? { state, title: t('stream.banner.failed.title', { step: stepTitle }), text: step?.text ?? '' }
+          ? { state, title: t('stream.banner.failed.title', { step: stepTitle }), text: step?.text ?? '', progress: null }
           : state === 'running'
-            ? { state, title: t('state.running'), text: step?.text ?? '' }
+            ? { state, title: t('state.running'), text: step?.text ?? '', progress }
             : null;
 
   /** Ход по частям: подпись части, её состояние и модели — «sol · думает 0:12». */
@@ -315,6 +343,15 @@ export function useStreamPage(council: CouncilSummary, route: StepRoute): Stream
 
   const runs: RunGroup[] | null = !rechecks && runsShown && step ? groupsOf(step.progress) : null;
 
+  /** Вопрос, который идёт, и кто у него работает: «Q8: модели совета», «Q8: судья». */
+  const question =
+    runs && questionProgress?.question && questionProgress.phase
+      ? t('stream.runs.question', {
+          question: questionProgress.question,
+          worker: t(`stream.worker.${phaseWorker(questionProgress.phase)}`),
+        })
+      : null;
+
   return {
     context:
       stream && step && streams
@@ -333,6 +370,7 @@ export function useStreamPage(council: CouncilSummary, route: StepRoute): Stream
     idle: state === 'idle',
     banner,
     runs,
+    question,
     rechecks,
     toggleRecheck: (question) => setPicked({ focus, question: expanded === question ? null : question }),
     retry: () => {

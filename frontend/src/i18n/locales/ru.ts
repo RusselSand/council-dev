@@ -253,7 +253,9 @@ export const ru = {
   'stream.banner.rechecking':
     'ИИ пересчитывает {ids}. Остальные решения можно править, зафиксировать — когда пересчёт закончится.',
   'stream.retry': 'Запустить снова',
+  'stream.banner.progress': 'готово {done} из {total}',
   'stream.runs.last': 'последний запуск',
+  'stream.runs.question': '{question}: {worker}',
   'stream.runs.rechecks': 'пересчёт',
   'stream.rechecks.row': '{question} · {worker} · {time}',
   'stream.rechecks.row.idle': '{question} · {worker}',

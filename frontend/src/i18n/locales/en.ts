@@ -230,7 +230,9 @@ export const en = translation({
   'stream.banner.rechecking':
     'AI is rechecking {ids}. You can edit the other decisions; finalize them once the recheck is over.',
   'stream.retry': 'Run again',
+  'stream.banner.progress': '{done} of {total} done',
   'stream.runs.last': 'last run',
+  'stream.runs.question': '{question}: {worker}',
   'stream.runs.rechecks': 'recheck',
   'stream.rechecks.row': '{question} · {worker} · {time}',
   'stream.rechecks.row.idle': '{question} · {worker}',

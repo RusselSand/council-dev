@@ -6,6 +6,7 @@ import {
   type DecisionCatalog,
   type PastDecision,
   type ProjectDecisions,
+  type QuestionProgress,
   type StepPhase,
   type StepProgress,
   type Stream,
@@ -54,6 +55,7 @@ function steps(
       text: null,
       progress: state === 'idle' ? [] : doneProgress(step, participants, judge, judgeState),
       rechecks: [],
+      questionProgress: null,
     };
   });
 }
@@ -305,8 +307,16 @@ export const newStreams = (groups: Group[], decisionsOf: (stream: string) => Pro
     steps: STEPS.map(
       (step): StreamStep =>
         step === 'project'
-          ? { step, state: 'waiting', note: projectWaitingNote(decisionsOf(group.id)), text: null, progress: [], rechecks: [] }
-          : { step, state: 'idle', note: '', text: null, progress: [], rechecks: [] },
+          ? {
+              step,
+              state: 'waiting',
+              note: projectWaitingNote(decisionsOf(group.id)),
+              text: null,
+              progress: [],
+              rechecks: [],
+              questionProgress: null,
+            }
+          : { step, state: 'idle', note: '', text: null, progress: [], rechecks: [], questionProgress: null },
     ),
   }));
 
@@ -373,6 +383,18 @@ const WAITING_NOTE: Partial<Record<Step, string>> = {
   notes: 'черновик ждёт вас',
 };
 
+/**
+ * Ход по вопросам шага, где модели начали работать: «Варианты» и «Решения» идут по вопросам запуска (questions) по одному,
+ * и модели совета взялись за первый — готовых пока нет (решение владельца к задаче «…прогресс по вопросам…»). В моках
+ * модели вопрос не заканчивают. У других шагов хода по вопросам нет.
+ */
+const questionsStarted = (step: Step, questions: readonly string[]): QuestionProgress | null => {
+  const phases = PHASES[step];
+  if ((step !== 'options' && step !== 'decisions') || !phases) return null;
+  const [first] = questions;
+  return { total: questions.length, done: 0, question: first ?? null, phase: first ? phases[0] : null };
+};
+
 /** Модели шага начали работать сейчас (now): модели совета работают, судья ждёт своей очереди. */
 const started = (step: Step, participants: string[], judge: string, now: string): StepProgress[] =>
   progress(step, participants, judge, [participants.map(() => 'running'), 'waiting']).map((phase, i) => ({
@@ -417,7 +439,8 @@ export const recheckStarted = (
  * Поток, где человек утвердил шаг: шаг готов, со строкой note, — пересчётов на нём больше нет. Шаг готов впервые — на
  * следующем начинают работать модели (в макете он сразу ждёт вас, будто модели уже поработали), а где модели не работают
  * («Документация»), он сразу ждёт вас; уже был готов — меняется только строка шага, остальные шаги не трогаются, как в
- * макете. В моках модели на следующем шаге не заканчивают.
+ * макете. В моках модели на следующем шаге не заканчивают. questions — вопросы, по которым идут модели следующего шага
+ * («Варианты», «Решения»).
  */
 function stepApproved(
   stream: Stream,
@@ -426,13 +449,16 @@ function stepApproved(
   participants: string[],
   judge: string,
   now: string,
+  questions: readonly string[] = [],
 ): Stream {
   const first = stepOf(stream, approved).state !== 'done';
   const next = STEPS[STEPS.indexOf(approved) + 1];
   return {
     ...stream,
     steps: stream.steps.map((step): StreamStep => {
-      if (step.step === approved) return { ...step, state: 'done', note, text: null, rechecks: [] };
+      if (step.step === approved) {
+        return { ...step, state: 'done', note, text: null, rechecks: [], questionProgress: null };
+      }
       if (step.step === next && first && !PHASES[next]) {
         return { ...step, state: 'waiting', note: WAITING_NOTE[next] ?? '', text: null, progress: [] };
       }
@@ -443,6 +469,7 @@ function stepApproved(
           note: RUNNING_NOTE[next] ?? '',
           text: workText(next, participants),
           progress: started(next, participants, judge, now),
+          questionProgress: questionsStarted(next, questions),
         };
       }
       return step;
@@ -481,16 +508,17 @@ const questionsDoneNote = (count: number) =>
   (QUESTIONS_DONE_NOTE[new Intl.PluralRules('ru').select(count)] ?? QUESTIONS_DONE_NOTE.few)(count);
 
 /**
- * Поток после «Утвердить вопросы → к вариантам»: «Вопросы» готовы — отобраны неубранные (kept), модели ищут варианты.
- * Шаг остановился — идут вопросы моделей, которые успели ответить; ход последнего запуска остаётся как был.
+ * Поток после «Утвердить вопросы → к вариантам»: «Вопросы» готовы — отобраны неубранные (kept — их id), модели ищут к ним
+ * варианты, вопрос за вопросом. Шаг остановился — идут вопросы моделей, которые успели ответить; ход последнего запуска
+ * остаётся как был.
  */
 export const questionsApproved = (
   stream: Stream,
-  kept: number,
+  kept: readonly string[],
   participants: string[],
   judge: string,
   now: string,
-): Stream => stepApproved(stream, 'questions', questionsDoneNote(kept), participants, judge, now);
+): Stream => stepApproved(stream, 'questions', questionsDoneNote(kept.length), participants, judge, now, kept);
 
 /** «выбрано 2 из 3» — строка «Вариантов» в цепочке: сколько вопросов с выбором из всех; пишет сервер. */
 export const optionsNote = (chosen: number, total: number) => `выбрано ${chosen} из ${total}`;
@@ -501,14 +529,26 @@ export const withNote = (stream: Stream, changed: Step, note: string): Stream =>
   steps: stream.steps.map((step) => (step.step === changed ? { ...step, note } : step)),
 });
 
-/** Поток после «Утвердить выбор → к решениям»: «Варианты» готовы — выбор на каждый вопрос, модели проверяют решения. */
+/**
+ * Поток после «Утвердить выбор → к решениям»: «Варианты» готовы — выбор на каждый вопрос (questions — их id), модели
+ * проверяют решения, вопрос за вопросом.
+ */
 export const optionsApproved = (
   stream: Stream,
-  total: number,
+  questions: readonly string[],
   participants: string[],
   judge: string,
   now: string,
-): Stream => stepApproved(stream, 'options', optionsNote(total, total), participants, judge, now);
+): Stream =>
+  stepApproved(
+    stream,
+    'options',
+    optionsNote(questions.length, questions.length),
+    participants,
+    judge,
+    now,
+    questions,
+  );
 
 /** «решено 3 из 4» — строка «Решений» в цепочке: сколько решений зафиксировано из всех; пишет сервер. */
 export const decisionsNote = (fixed: number, total: number) => `решено ${fixed} из ${total}`;
@@ -587,9 +627,9 @@ export const notesApproved = (stream: Stream, count: number | null, now: string)
  * их ответы сохранены и второй раз не оплачиваются, как в макете. Шаг идёт снова с первой части, где ответили не все
  * (модели совета или судья): её модели работают заново, модели следующих частей ждут своей очереди; пересчёты решений,
  * что шли, снимаются — их работу делает этот запуск. В моках шаг не кончается. Шаг retried не остановился — поток как
- * есть.
+ * есть. questions — вопросы, по которым идут модели «Вариантов» и «Решений»: в моках готовых среди них нет.
  */
-export function streamRetried(stream: Stream, retried: Step, now: string): Stream {
+export function streamRetried(stream: Stream, retried: Step, now: string, questions: readonly string[] = []): Stream {
   return {
     ...stream,
     steps: stream.steps.map((step): StreamStep => {
@@ -624,6 +664,7 @@ export function streamRetried(stream: Stream, retried: Step, now: string): Strea
           : `${work} заново.`,
         progress: progressNow,
         rechecks: [],
+        questionProgress: questionsStarted(step.step, questions),
       };
     }),
   };
