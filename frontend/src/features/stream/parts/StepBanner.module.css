@@ -37,3 +37,18 @@
   line-height: var(--leading-loose);
   overflow-wrap: anywhere;
 }
+
+/* Полоса — во всю ширину, что осталась; справа — «готово 7 из 25». */
+.progress {
+  display: flex;
+  align-items: center;
+  gap: var(--space-8);
+}
+
+.count {
+  flex: none;
+  font-size: var(--text-sm);
+  font-weight: var(--weight-semibold);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}

@@ -3,6 +3,7 @@ import { StateDot } from '../../../components/StateDot';
 import type { ApiError } from '../../../data';
 import { useI18n } from '../../../i18n';
 import { Button } from '../../../ui/Button';
+import { ProgressBar } from '../../../ui/ProgressBar';
 import type { StepBanner as Banner } from '../useStreamPage';
 import styles from './StepBanner.module.css';
 
@@ -17,8 +18,8 @@ interface StepBannerProps {
 
 /**
  * Плашка под цепочкой — состояние открытого шага, как в макете: ждёт вас — жёлтая «Ход за вами»; ошибка — красная
- * «Сбой · Вопросы», почему и «Запустить снова»; ИИ работает — зелёная, что делают модели. Не вышло запустить снова —
- * ошибка под плашкой.
+ * «Сбой · Вопросы», почему и «Запустить снова»; ИИ работает — зелёная, что делают модели, а у «Вариантов» и «Решений» —
+ * ещё полоса и «готово 7 из 25» (решение владельца). Не вышло запустить снова — ошибка под плашкой.
  */
 export function StepBanner({ banner, retryDisabled, retryError, onRetry }: StepBannerProps) {
   const { t } = useI18n();
@@ -30,6 +31,14 @@ export function StepBanner({ banner, retryDisabled, retryError, onRetry }: StepB
           {banner.title}
         </h3>
         {banner.text && <p className={styles.text}>{banner.text}</p>}
+        {banner.progress && (
+          <div className={styles.progress}>
+            <ProgressBar value={banner.progress.done} max={banner.progress.total} label={banner.progress.label} />
+            <span className={styles.count} aria-hidden>
+              {banner.progress.label}
+            </span>
+          </div>
+        )}
         {banner.state === 'failed' && (
           <div>
             <Button size="sm" tone="danger" disabled={retryDisabled} onClick={onRetry}>

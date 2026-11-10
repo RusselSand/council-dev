@@ -1054,7 +1054,9 @@ class ProposalRun(CouncilRun[ProposalDiscovery]):
     """Новые варианты ответа на отобранные вопросы потока. Вопросы — по очереди: модель всё
     равно отвечает по одному запросу за раз. По каждому участники ищут варианты, которых нет
     среди предложений группы, судья сводит их и решает, что показать. Готовый вопрос сразу
-    в отчёте: человек видит варианты по мере поиска. Варианты нумеруются сквозь поток: P1, P2…
+    в отчёте: человек видит варианты по мере поиска, а пока ищут — какой вопрос идёт (question):
+    сколько вопросов готово и какой сейчас (решение владельца к задаче «…прогресс по
+    вопросам…»). Варианты нумеруются сквозь поток: P1, P2…
     Принятых решений на этом шаге ещё нет — их фиксирует следующий.
 
     Вопрос модели видят вместе с другими вопросами потока (other_open_questions): без них не
@@ -1096,6 +1098,9 @@ class ProposalRun(CouncilRun[ProposalDiscovery]):
             if question.id in self.carried:
                 continue
             asked = True
+            with self._lock:
+                self.state.question = question.id
+                self._publish()
             context = Context(
                 frozenset(f.id for f in limits if f.label == "constraint"),
                 frozenset(f.id for f in limits if f.label == "risk"),
@@ -1135,6 +1140,7 @@ class ProposalRun(CouncilRun[ProposalDiscovery]):
                 verdict = Verdict("none", (), None)
             with self._lock:
                 self.state.options.append(options_of(question, verdict, numbers))
+                self.state.question = None
                 self._publish()
         if not asked:
             self._skip(StepName.proposal_discovery)
@@ -1170,7 +1176,8 @@ class DecisionRun(CouncilRun[DecisionAnalysis]):
     вариант, участники проверяют его, где оставил unresolved — сравнивают варианты вопроса:
     из текста группы и найденные советом. Судья сводит их анализы в один итог. Новых вариантов
     здесь нет, выбор человека не меняется, а решений шаг не принимает — их фиксирует человек.
-    Готовый вопрос сразу в отчёте.
+    Готовый вопрос сразу в отчёте, а пока модели проверяют — какой вопрос идёт (question), как у
+    поиска вариантов.
 
     Модели видят и другие вопросы потока — что по ним выбрано и какие unresolved: без этого не
     сказать, от какого нерешённого вопроса зависит выбор. У выбранного — и номер решения, которым
@@ -1247,6 +1254,9 @@ class DecisionRun(CouncilRun[DecisionAnalysis]):
                 verdict = Analysis("none", None)
             else:
                 asked = True
+                with self._lock:
+                    self.state.question = question.id
+                    self._publish()
                 verdict = self._analyze(question, offered, selected, known, limits, failures)
                 option = next((p["text"] for p in offered if p["id"] == verdict.proposal), None)
                 verdict = replace(verdict, decision=rewritten(verdict.decision, option))
@@ -1255,6 +1265,7 @@ class DecisionRun(CouncilRun[DecisionAnalysis]):
             with self._lock:
                 self.state.analyses.append(analysis_of_question(
                     question, verdict, self.entries, self.replaced.get(question.id, ()), named))
+                self.state.question = None
                 self._publish()
         if not asked:
             self._skip(StepName.decision_analysis)

@@ -43,6 +43,19 @@ export interface StepRecheck {
   progress: StepProgress[];
 }
 
+/**
+ * Ход «Вариантов» и «Решений» по вопросам, пока модели работают: сколько вопросов у запуска шага, сколько готово (и взятые
+ * из прошлого запуска), какой вопрос идёт и какая часть у него (решение владельца к задаче «…прогресс по вопросам…»).
+ */
+export interface QuestionProgress {
+  total: number;
+  done: number;
+  /** id вопроса, который идёт: «Q8»; модели ещё не взялись за вопрос или между вопросами — null. */
+  question: string | null;
+  /** Какая часть у этого вопроса идёт: модели совета или судья; вопрос не идёт — null. */
+  phase: StepPhase | null;
+}
+
 /** Шаг потока: состояние, строка в цепочке, что на плашке, ход последнего запуска и пересчётов. */
 export interface StreamStep {
   step: Step;
@@ -58,6 +71,8 @@ export interface StreamStep {
    * шагов и без пересчётов — пусто.
    */
   rechecks: StepRecheck[];
+  /** У «Вариантов» и «Решений», пока на шаге работают модели, — ход по вопросам; иначе и у остальных шагов — null. */
+  questionProgress: QuestionProgress | null;
 }
 
 /** Поток совета: группа, ставшая потоком, и шесть шагов по порядку. */
@@ -74,7 +89,15 @@ export interface Stream {
 /** Шаг потока по ключу; у потока его нет — шаг не начат. */
 export function stepOf(stream: Stream, step: Step): StreamStep {
   return (
-    stream.steps.find((s) => s.step === step) ?? { step, state: 'idle', note: '', text: null, progress: [], rechecks: [] }
+    stream.steps.find((s) => s.step === step) ?? {
+      step,
+      state: 'idle',
+      note: '',
+      text: null,
+      progress: [],
+      rechecks: [],
+      questionProgress: null,
+    }
   );
 }
 

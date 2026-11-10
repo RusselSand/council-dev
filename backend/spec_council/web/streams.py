@@ -5,7 +5,9 @@
 её шагов. Хранение прежнее — models.Stream с ходами моделей шагов; состояние каждого шага считает
 standing.py, как и состояние совета. Здесь — что видит экран потока: строка шага в цепочке
 (note), что на плашке (text), ход последнего запуска (progress), а у «Решений» — и ход
-пересчётов решений, которые идут (rechecks). Строку и плашку пишет сервер: в них числа, номера
+пересчётов решений, которые идут (rechecks). У «Вариантов» и «Решений», пока модели работают, —
+ещё и ход по вопросам (questionProgress): сколько вопросов готово из всех и какой идёт (решение
+владельца к задаче «…прогресс по вопросам…»). Строку и плашку пишет сервер: в них числа, номера
 решений и имена моделей потока.
 
 Как шаги идут друг за другом и как шаг запускают снова — chain.py; перевод заметок на
@@ -23,7 +25,7 @@ from ..chain import WORKS, idea_of, recheck_runs, replaced, retried
 from ..council_tasks import go, plan_begun, plan_later
 from ..deps import AgentsDep, LauncherDep, ProjectsDep, RepositoriesDep, StoreDep
 from ..groups import stream_group
-from ..models import Council, StepName
+from ..models import Council, DecisionAnalysis, ProposalDiscovery, StepName
 from ..models import Stream as Stored
 from ..notes import NotesError
 from ..options import counted
@@ -79,6 +81,17 @@ class StepRecheck(Schema):
     progress: list[StepProgress]
 
 
+class QuestionProgress(Schema):
+    """Ход «Вариантов» и «Решений» по вопросам, пока модели работают (решение владельца к задаче
+    «…прогресс по вопросам…»): сколько вопросов у запуска шага, сколько из них готово, какой идёт
+    сейчас и какая часть у него — модели совета или судья. Между вопросами идущего нет — None."""
+
+    total: int
+    done: int
+    question: str | None
+    phase: Phase | None
+
+
 class StreamStep(Schema):
     step: Step
     state: State
@@ -86,6 +99,7 @@ class StreamStep(Schema):
     text: str | None
     progress: list[StepProgress]
     rechecks: list[StepRecheck]
+    question_progress: QuestionProgress | None
 
 
 class Stream(Schema):
@@ -187,7 +201,34 @@ def step_of(council: Council, stream: Stored, step: Step, state: State,
     return StreamStep(step=step, state=state, note=note_of(stream, step, state, notes),
                       text=text_of(run, step, state),
                       progress=progress_of(council, run, step, state),
-                      rechecks=rechecks_of(council, stream) if step == "decisions" else [])
+                      rechecks=rechecks_of(council, stream) if step == "decisions" else [],
+                      question_progress=question_progress_of(run, step, state))
+
+
+def question_progress_of(run: Run | None, step: Step, state: State) -> QuestionProgress | None:
+    """«Варианты» и «Решения», пока модели работают, — по вопросам: модели идут по вопросам запуска
+    по одному, и готовый сразу ложится в ход (pipeline.ProposalRun, DecisionRun). Вопросы запуска —
+    те, к которым ищут варианты (ProposalDiscovery.scope) или чей выбор проверяют
+    (DecisionAnalysis.choices). Готовы — те, к которым варианты нашли или выбор проверили, и взятые
+    из прошлого запуска (work.carried_options, carried_analyses): они в ходе с самого начала. Идёт —
+    вопрос хода (question); часть у него — судья, пока судья работает, иначе модели совета. У других
+    шагов и когда модели не работают — None."""
+    if state != "running":
+        return None
+    if step == "options" and isinstance(run, ProposalDiscovery):
+        asked, ready = run.scope, {options.question_id for options in run.options}
+    elif step == "decisions" and isinstance(run, DecisionAnalysis):
+        asked, ready = run.choices, {found.question_id for found in run.analyses}
+    else:
+        return None
+    ids = {entry.split(": ", 1)[0] for entry in asked}
+    phase = None
+    if run.question is not None:
+        council_part, judge_part = WORKS[step].phases
+        judging = any(part.name == judge_part and part.state == "running" for part in run.steps)
+        phase = (judge_part if judging else council_part).value
+    return QuestionProgress(total=len(ids), done=len(ready & ids), question=run.question,
+                            phase=phase)
 
 
 def rechecks_of(council: Council, stream: Stored) -> list[StepRecheck]:

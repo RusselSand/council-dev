@@ -258,6 +258,12 @@ function questionsOf(id: string, streamId: string): Question[] {
   return list;
 }
 
+/** Неубранные вопросы потока по номерам — по ним, вопрос за вопросом, идут модели «Вариантов» и «Решений». */
+const keptQuestions = (id: string, streamId: string): string[] =>
+  questionsOf(id, streamId)
+    .filter((q) => !q.removed)
+    .map((q) => q.id);
+
 /** Вопросы правят и утверждают, когда шаг начат и модели на нём не работают. */
 function checkQuestionsReady(id: string, at: number) {
   const { state } = stepOf((streams.get(id) ?? [])[at], 'questions');
@@ -935,7 +941,7 @@ export const mockSource: DataSource = {
       if (step === 'options') optionsStarted(id, streamId);
       if (step === 'decisions') decisionsStarted(id, streamId);
       if (step === 'outcomes') outcomesStarted(id, streamId);
-      list[at] = streamRetried(list[at], step, now);
+      list[at] = streamRetried(list[at], step, now, keptQuestions(id, streamId));
       councils[index] = streamsChanged(councils[index], list, streamId, now);
     }
     return copy(list[at]);
@@ -1041,10 +1047,9 @@ export const mockSource: DataSource = {
     if (stepOf(list[at], 'questions').state !== 'done') {
       const now = new Date().toISOString();
       const { participants, judge } = councils[index];
-      const kept = questionsOf(id, streamId).filter((q) => !q.removed).length;
       // Модели начинают искать варианты: первый запуск «Вариантов».
       optionsStarted(id, streamId);
-      list[at] = questionsApproved(list[at], kept, participants, judge, now);
+      list[at] = questionsApproved(list[at], keptQuestions(id, streamId), participants, judge, now);
       councils[index] = streamsChanged(councils[index], list, streamId, now);
     }
     return copy(list[at]);
@@ -1156,7 +1161,7 @@ export const mockSource: DataSource = {
       const { participants, judge } = councils[index];
       // Модели начинают проверять решения: первый запуск «Решений».
       decisionsStarted(id, streamId);
-      list[at] = optionsApproved(list[at], sets.length, participants, judge, now);
+      list[at] = optionsApproved(list[at], keptQuestions(id, streamId), participants, judge, now);
       councils[index] = streamsChanged(councils[index], list, streamId, now);
     }
     return copy(list[at]);

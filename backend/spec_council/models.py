@@ -784,6 +784,9 @@ class ProposalDiscovery(BaseModel):
     # По вопросу, по мере готовности.
     options: list[QuestionOptions] = []
     error: str | None = None
+    # Вопрос, по которому модели ищут варианты сейчас (решение владельца к задаче «…прогресс по
+    # вопросам…»); между вопросами, до первого и у хода прежней версии — None.
+    question: str | None = None
 
 
 class OwnOption(BaseModel):
@@ -925,6 +928,9 @@ class DecisionAnalysis(BaseModel):
     # утверждённым становится этот (stream_decisions.rechecked). У хода шага и у пересчётов
     # прежней версии — None.
     choice: Choice | None = None
+    # Вопрос, выбор по которому модели проверяют сейчас (решение владельца к задаче «…прогресс по
+    # вопросам…»); между вопросами, до первого и у хода прежней версии — None.
+    question: str | None = None
 
 
 class Decision(BaseModel):

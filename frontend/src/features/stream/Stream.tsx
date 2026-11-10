@@ -5,6 +5,7 @@ import { useI18n } from '../../i18n';
 import { Columns } from '../../ui/Columns';
 import { DashedNote } from '../../ui/DashedNote';
 import { TitledCard } from '../../ui/TitledCard';
+import { GoingQuestion } from './parts/GoingQuestion';
 import { RecheckRuns } from './parts/RecheckRuns';
 import { RunGroups } from './parts/RunGroups';
 import { RunPanel } from './parts/RunPanel';
@@ -22,7 +23,8 @@ interface StreamProps {
 
 /**
  * Шаг потока: вкладки потоков; слева — цепочка шагов, плашка состояния шага и «Ход работы» (ход последнего запуска шага,
- * а пока у «Решений» идут пересчёты — их ход); справа — карточка шага.
+ * у «Вариантов» и «Решений» — с вопросом, который идёт; а пока у «Решений» идут пересчёты — их ход); справа — карточка
+ * шага.
  * Шаг не начат — вместо его содержимого «Шаг откроется, когда пройдены предыдущие.» Пока потоки грузятся — «Загружаем…»
  * или ошибка. Другой совет — другой экран: ставьте с key={council.id}.
  */
@@ -54,6 +56,7 @@ export function Stream({ council, route, children }: StreamProps) {
             )}
             {page.runs && (
               <RunPanel label={t('stream.runs.last')}>
+                {page.question && <GoingQuestion label={page.question} />}
                 <RunGroups groups={page.runs} />
               </RunPanel>
             )}
