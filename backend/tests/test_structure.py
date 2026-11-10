@@ -11,6 +11,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from spec_council.app import app
+from spec_council.background import seeking
 from spec_council.config import config_of
 from spec_council.deps import get_agents, get_config, get_launcher, get_store
 from spec_council.groups import marked
@@ -1148,6 +1149,43 @@ def test_a_merged_group_takes_the_search_its_stream_had_in_a_council_saved_befor
     assert (group["idea"], group["ideaBy"], group["ideaSearch"]) == (IDEA_B, "ai", SOUGHT)
     assert searches(council_id, "A").json()["group"]["ideaSearch"] == SEEKS
     assert store.get_council(council_id).structure.groups[0].discovery.search == 2
+
+
+def test_a_search_still_going_does_not_go_along_with_the_idea_of_a_person(store, pool, agents):
+    # Человек вписал идею B, пока совет её искал, и объединил B с A, у которой идеи нет: идея
+    # переходит, а поиск, который ещё идёт, — нет. Его ход пишет в B, а её уже нет: у A он
+    # навсегда остался бы «ищет», и новая нарезка ждала бы его без конца.
+    council_id = with_groups(store, [grp("A", [2]), grp("B", [3, 4, 5])])
+    edits(council_id, "B", {"idea": ""})                # совет ищет идею B
+    edits(council_id, "B", {"idea": "Своя"})
+    merges(council_id, "B", {"into": "A"})
+    pool.run()                                          # поиск B кончился — писать некуда
+    group = groups_of(council_id)["A"]
+    assert (group["idea"], group["ideaBy"], group["ideaSearch"]) == ("Своя", "user", None)
+    council = store.get_council(council_id)
+    assert council.structure.groups[0].discovery is None
+    assert not seeking(council)
+    # Свою стёрли — совет ищет идею объединённой группы.
+    agents.idea = "Конфликты решает диспетчер."
+    assert edits(council_id, "A", {"idea": ""}).json()["group"]["ideaSearch"] == SEEKS
+    pool.run()
+    group = groups_of(council_id)["A"]
+    assert (group["idea"], group["ideaBy"], group["ideaSearch"]) == (agents.idea, "ai", SOUGHT)
+
+
+def test_a_merged_group_keeps_its_own_search_still_going(store, pool):
+    # Совет ищет идею и у A, и у B; у B человек вписал свою. После объединения поиск A идёт
+    # дальше и кончается у объединённой группы.
+    council_id = with_groups(store, [grp("A", [2]), grp("B", [3, 4, 5])])
+    edits(council_id, "A", {"idea": ""})
+    edits(council_id, "B", {"idea": ""})
+    edits(council_id, "B", {"idea": "Своя"})
+    merges(council_id, "B", {"into": "A"})
+    assert groups_of(council_id)["A"]["idea"] == "Своя"
+    pool.run()
+    council = store.get_council(council_id)
+    assert council.structure.groups[0].discovery.state == "done"
+    assert not seeking(council)
 
 
 def test_the_idea_of_a_stream_gives_way_to_the_new_search_but_the_stream_keeps_it(store, pool,

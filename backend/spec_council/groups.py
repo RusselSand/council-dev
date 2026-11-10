@@ -252,15 +252,22 @@ def group_in(structure: Structure | None, group_id: str) -> Group | None:
 def merged(council: Council, source: Group, target: Group) -> Structure:
     """Группа source — в группу target, другую группу раскладки совета. Фрагменты source встают в
     конец target, те, что там уже есть, не повторяются; название — у target; идея — у target, а
-    нет её — у source, вместе с тем, откуда она, и поиском идеи. Связи source переходят к target
+    нет её — у source, вместе с тем, откуда она, и поиском идеи, если он не идёт. Связи source
+    переходят к target
     (разошлись связи с одной и той же группой — остаётся связь target), ссылки на source ведут
     на target, связи группы с самой собой нет; у target — след: с ней объединили source."""
     structure = council.structure
     keeper = target if idea_of(council, target).text else source
-    # Идеи нет ни у той, ни у другой — поиск у target: он, может, уже идёт. Поиск source — и тот,
-    # что у совета прежней версии вёл её поток (discovery_of): иначе он не пошёл бы за идеей.
-    adopted = keeper is source and idea_of(council, source).text
-    discovery = discovery_of(council, source) if adopted else target.discovery
+    # Идеи нет ни у той, ни у другой — поиск у target: он, может, уже идёт.
+    discovery = target.discovery
+    if keeper is source and idea_of(council, source).text:
+        # Идея source — вместе с её поиском, и тем, что у совета прежней версии вёл её поток
+        # (discovery_of): иначе он не пошёл бы за идеей. Поиск, который ещё идёт (идею вписал
+        # человек, пока совет искал), не переходит: его ход пишет в source, а её уже нет, — у
+        # target он навсегда остался бы «ищет». Тогда поиск — у target.
+        adopted = discovery_of(council, source)
+        if adopted is None or adopted.state != "running":
+            discovery = adopted
     ideas = idea_fragments(council, keeper)
     fragment_ids = [*target.fragment_ids,
                     *(i for i in source.fragment_ids if i not in target.fragment_ids)]
