@@ -66,6 +66,13 @@ def with_structure(council, structure):
     return council.model_copy(update={"structure": structure})
 
 
+def relabeled(council, labels):
+    """Совет, где человек сменил фрагментам тип на «Нарезке»."""
+    return council.model_copy(update={"slicing": council.slicing.model_copy(update={
+        "fragments": [fragment.model_copy(update={"label": labels.get(fragment.id, fragment.label)})
+                      for fragment in council.slicing.fragments]})})
+
+
 def group(council, gid):
     return next(one for one in council.structure.groups if one.id == gid)
 
@@ -145,13 +152,11 @@ def test_the_council_seeks_an_idea_once_unless_the_search_failed():
 def test_the_idea_fragments_go_by_the_types_the_fragments_have_now():
     # Решение владельца: F1 сняли тип «идея» — он больше не идея A; F4 его поставили — идея B.
     council = council_with()
-    relabeled = council.model_copy(update={"slicing": council.slicing.model_copy(update={
-        "fragments": [fragment.model_copy(update={"label": {1: "proposal", 4: "idea"}.get(
-            fragment.id, fragment.label)}) for fragment in council.slicing.fragments]})})
-    assert idea_fragments(relabeled, group(relabeled, "A")) == []
-    assert idea_of(relabeled, group(relabeled, "A")) == Idea("", "ai")
-    assert seeks_idea(relabeled, group(relabeled, "A"))
-    assert idea_of(relabeled, group(relabeled, "B")) == Idea("Текст F4", "text")
+    changed = relabeled(council, {1: "proposal", 4: "idea"})
+    assert idea_fragments(changed, group(changed, "A")) == []
+    assert idea_of(changed, group(changed, "A")) == Idea("", "ai")
+    assert seeks_idea(changed, group(changed, "A"))
+    assert idea_of(changed, group(changed, "B")) == Idea("Текст F4", "text")
     # Тип F1 вернули — снова идея A.
     assert idea_fragments(council, group(council, "A")) == [1]
 
@@ -273,14 +278,31 @@ def test_an_erased_idea_stays_erased_after_a_split_or_a_merge():
     assert idea_of(union, group(union, "B")) == Idea("", "ai")
 
 
-def test_a_new_group_takes_as_ideas_only_fragments_typed_idea_after_the_grouping():
+def test_a_new_group_takes_as_ideas_only_fragments_typed_idea_after_the_split():
     council = council_with()
     after = with_structure(council, split(council, group(council, "A"), [1, 2], "Новая"))
     assert idea_of(after, group(after, "D")) == Idea("", "ai")
-    relabeled = after.model_copy(update={"slicing": after.slicing.model_copy(update={
-        "fragments": [fragment.model_copy(update={"label": "idea"}) if fragment.id == 2
-                      else fragment for fragment in after.slicing.fragments]})})
-    assert idea_of(relabeled, group(relabeled, "D")) == Idea("Текст F2", "text")
+    changed = relabeled(after, {2: "idea"})
+    assert idea_of(changed, group(changed, "D")) == Idea("Текст F2", "text")
+
+
+def test_a_fragment_typed_idea_before_the_split_is_no_idea_of_the_new_group():
+    # У выделенной группы идеи нет, как в контракте: F2 поставили тип «идея» ещё до разделения,
+    # и всё равно её ищет совет — как у F1, который был идеей при раскладке.
+    council = relabeled(council_with(), {2: "idea"})
+    assert idea_of(council, group(council, "A")) == Idea("Текст F1 Текст F2", "text")
+    after = with_structure(council, split(council, group(council, "A"), [2, 3], "Новая"))
+    assert idea_fragments(after, group(after, "D")) == []
+    assert idea_of(after, group(after, "D")) == Idea("", "ai")
+    assert seeks_idea(after, group(after, "D"))
+    # Тип сменили уже после разделения — идея новой группы по нему.
+    changed = relabeled(after, {3: "idea"})
+    assert idea_of(changed, group(changed, "D")) == Idea("Текст F3", "text")
+    # Объединение — так же: у оставшейся группы её фрагменты-идеи, а не F2 той, что к ней
+    # присоединили.
+    union = with_structure(council, merged(council, group(council, "A"), group(council, "C")))
+    assert idea_fragments(union, group(union, "C")) == [5]
+    assert idea_of(union, group(union, "C")) == Idea("Текст F5", "text")
 
 
 def test_a_shared_fragment_that_left_the_group_takes_its_link_along():

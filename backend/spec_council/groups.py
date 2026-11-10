@@ -25,6 +25,7 @@ from .models import (
     GroupOrigin,
     GroupRelation,
     IdeaDiscovery,
+    Label,
     LabeledFragment,
     Stream,
     Structure,
@@ -98,14 +99,28 @@ def erased(group: Group) -> bool:
 
 def idea_fragments(council: Council, group: Group) -> list[int]:
     """Фрагменты-идеи группы по её порядку — по типам, которые у фрагментов сейчас (выбрал
-    человек на «Нарезке»), а не по типам при раскладке: с фрагмента сняли тип «идея» — он уже
-    не идея группы; группе, где он есть, поставили — идея. Тип не меняли — фрагмент идея той
-    группы, где он идеей встал при раскладке и правках групп: у выделенной группы своих
-    фрагментов-идей нет."""
-    labels = {fragment.id: fragment.label for fragment in fragments_in(council)}
-    then = council.structure.labels if council.structure else {}
+    человек на «Нарезке»), а не по типам, когда группа сложилась: с фрагмента сняли тип
+    «идея» — он уже не идея группы; группе, где он есть, поставили — идея. Тип не меняли с тех
+    пор, как группа сложилась (раскладка, объединение, разделение), — фрагмент идея той группы,
+    где он идеей встал тогда: у выделенной группы своих фрагментов-идей нет, даже если тип
+    «идея» фрагменту поставили до разделения."""
+    labels = labels_in(council)
+    then = group.labels if group.labels is not None else (
+        council.structure.labels if council.structure else {})
     return [i for i in group.fragment_ids if labels.get(i) == "idea"
             and (i in group.idea_fragment_ids or then.get(i) != "idea")]
+
+
+def labels_in(council: Council) -> dict[int, Label]:
+    """Типы фрагментов нарезки сейчас — выбранные человеком."""
+    return {fragment.id: fragment.label for fragment in fragments_in(council)}
+
+
+def typed(council: Council, fragment_ids: Iterable[int]) -> dict[int, Label]:
+    """Типы фрагментов группы, которая сейчас сложилась правкой: от них считается, сменили ли
+    тип потом (idea_fragments)."""
+    labels = labels_in(council)
+    return {i: labels[i] for i in fragment_ids if i in labels}
 
 
 def stream_of(council: Council, group: Group) -> Stream | None:
@@ -217,9 +232,10 @@ def merged(council: Council, source: Group, target: Group) -> Structure:
     structure = council.structure
     keeper = target if idea_of(council, target).text else source
     ideas = idea_fragments(council, keeper)
+    fragment_ids = [*target.fragment_ids,
+                    *(i for i in source.fragment_ids if i not in target.fragment_ids)]
     union = target.model_copy(update={
-        "fragment_ids": [*target.fragment_ids,
-                         *(i for i in source.fragment_ids if i not in target.fragment_ids)],
+        "fragment_ids": fragment_ids, "labels": typed(council, fragment_ids),
         "idea_fragment_ids": ideas, "missing_idea": not ideas, **own_idea(council, keeper),
         "origins": [*moved(target.origins, source.id, target.id, target.id),
                     GroupOrigin(kind="merged", group=source.id)],
@@ -256,11 +272,12 @@ def split(council: Council, source: Group, fragment_ids: Collection[int], title:
     if not staying:
         raise EditRefused(f"Отмечены все фрагменты группы {source.id}: в ней ничего не останется")
     ideas = [i for i in idea_fragments(council, source) if i in staying]
-    rest = source.model_copy(update={"fragment_ids": staying, "idea_fragment_ids": ideas,
-                                     "missing_idea": not ideas, **own_idea(council, source)})
-    new = Group(id=free_letter(council), title=title.strip(),
-                fragment_ids=[i for i in source.fragment_ids if i in wanted],
-                idea_fragment_ids=[], missing_idea=True,
+    rest = source.model_copy(update={"fragment_ids": staying, "labels": typed(council, staying),
+                                     "idea_fragment_ids": ideas, "missing_idea": not ideas,
+                                     **own_idea(council, source)})
+    moving = [i for i in source.fragment_ids if i in wanted]
+    new = Group(id=free_letter(council), title=title.strip(), fragment_ids=moving,
+                labels=typed(council, moving), idea_fragment_ids=[], missing_idea=True,
                 origins=[GroupOrigin(kind="split", group=source.id)])
     groups = [one for group in structure.groups
               for one in ((rest, new) if group.id == source.id else (group,))]

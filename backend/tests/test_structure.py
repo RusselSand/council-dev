@@ -804,6 +804,24 @@ def test_a_group_split_after_the_confirmation_gets_its_idea_sought(store, pool, 
     assert pool.jobs == []
 
 
+def test_a_new_group_has_no_idea_even_if_its_fragment_was_typed_idea_before(store, pool):
+    # У выделенной группы идеи нет, как в контракте, даже если F4 поставили тип «идея» до
+    # разделения, — совет её ищет; тип, который сменили уже после, задаёт её идею.
+    council_id = grouped(store, pool)
+    confirms(council_id)
+    pool.run()
+    relabels = f"/api/councils/{council_id}/fragments"
+    assert client.patch(f"{relabels}/F4", json={"label": "idea"}).status_code == 200
+    res = splits(council_id, "B", {"fragmentIds": ["F4", "F5"], "title": "Новая"})
+    assert res.status_code == 200
+    new = res.json()["structure"]["groups"][2]
+    assert (new["id"], new["idea"], new["ideaBy"]) == ("C", "", "ai")
+    assert len(pool.jobs) == 1
+    assert client.patch(f"{relabels}/F5", json={"label": "idea"}).status_code == 200
+    assert (groups_of(council_id)["C"]["idea"], groups_of(council_id)["C"]["ideaBy"]) == (
+        TEXTS[5], "text")
+
+
 def test_streams_are_not_changed_by_edits_of_the_groups(store):
     # Решение q-002: потоки, которые уже есть, правки групп не меняют.
     council_id = with_groups(store, [grp("A", [1, 2], ideas=[1]), grp("B", [3, 4, 5])],
