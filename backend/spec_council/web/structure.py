@@ -51,7 +51,7 @@ from ..groups import (
 from ..models import Council, CouncilStatus, IdeaDiscovery, Slicing, StepName
 from ..models import Group as StoredGroup
 from ..models import Structure as StoredStructure
-from ..pipeline import GroupingRun, IdeaRun, Runner
+from ..pipeline import GroupingRun, IdeaRun, Runner, search_salt
 from ..standing import structure_of as stage_of
 from ..store import council_lock
 from .councils import CouncilAnswer, missing, shown
@@ -259,7 +259,7 @@ def search_idea(council_id: str, group_id: str, store: StoreDep, agents: AgentsD
                            "искал: искать её заново нечего")
         if running(before):
             raise ApiError(409, "idea_running", f"Совет уже ищет идею группы {group_id}")
-        run = idea_run(store, council, group, agents, before.search + 1)
+        run = idea_run(store, council, group, agents, search_salt())
         group = restarted(council, group, run.state.model_copy(deep=True))
         council = store.update_council(council_id, {"structure": council.structure.model_copy(
             update={"groups": [group if one.id == group.id else one
@@ -372,16 +372,16 @@ def idea_runs(store: Store, council: Council, groups: Iterable[StoredGroup],
         if seeks_idea(council, group):
             before = discovery_of(council, group)
             runs[group.id] = idea_run(store, council, group, agents,
-                                      before.search if before else 1)
+                                      before.salt if before else "")
     return runs
 
 
 def idea_run(store: Store, council: Council, group: StoredGroup, agents: Runner,
-             search: int) -> IdeaRun:
-    """Поиск идеи группы по её фрагментам, моделями и судьёй совета; search — который это
-    поиск."""
+             salt: str) -> IdeaRun:
+    """Поиск идеи группы по её фрагментам, моделями и судьёй совета; salt — ключ ответов
+    поиска: у повтора упавшего — его же, у нового («Перезапустить») — свой."""
     return IdeaRun(council.id, fragments_of(council, group), council.participants, council.judge,
-                   agents, reporter(store, council.id, idea_slot(group.id)), search)
+                   agents, reporter(store, council.id, idea_slot(group.id)), salt)
 
 
 def sought_at_start(store: Store, agents: Runner, launch: Launcher) -> None:

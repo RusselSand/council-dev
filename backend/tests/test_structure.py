@@ -1039,13 +1039,53 @@ def test_a_found_idea_is_sought_anew_and_the_answers_before_are_not_taken(store,
     assert not set(agents.asked) & set(before)
     group = groups_of(council_id)["B"]
     assert (group["idea"], group["ideaBy"], group["ideaSearch"]) == (agents.idea, "ai", SOUGHT)
-    assert store.get_council(council_id).structure.groups[1].discovery.search == 2
-    # Следующий — снова новый.
-    agents.asked.clear()
+    # Следующий — снова новый: ответов ни первого, ни прежнего перезапуска он не берёт.
+    before, agents.asked = [*before, *agents.asked], []
     searches(council_id, "B")
     pool.run()
+    assert len(agents.asked) == 2
     assert not set(agents.asked) & set(before)
-    assert store.get_council(council_id).structure.groups[1].discovery.search == 3
+
+
+def test_a_search_taken_by_a_merge_does_not_bring_back_the_answers_of_a_search_before(
+        store, pool, agents):
+    # Замечание ревью: B искала идею заново, от неё выделили C, перезапуск B упал, и C вернули в
+    # B — фрагменты у B снова те же, а поиск — C. Следующий перезапуск всё равно новый: ответы
+    # прежних поисков B из лотка он не берёт.
+    council_id = sought_b(store, pool)
+    searches(council_id, "B")
+    pool.run()
+    splits(council_id, "B", {"fragmentIds": ["F5"], "title": "Хвост"})
+    pool.run()                                          # у новой C совет нашёл идею
+    agents.offline = {"sol", "fable"}
+    searches(council_id, "B")
+    pool.run()                                          # перезапуск B упал
+    assert groups_of(council_id)["B"]["ideaSearch"]["state"] == "failed"
+    agents.offline = set()
+    merges(council_id, "C", {"into": "B"})
+    assert [f["id"] for f in groups_of(council_id)["B"]["fragments"]] == ["F3", "F4", "F5"]
+    before, agents.asked = agents.asked, []
+    assert searches(council_id, "B").json()["group"]["ideaSearch"] == SEEKS
+    pool.run()
+    assert len(agents.asked) == 2
+    assert not set(agents.asked) & set(before)
+
+
+def test_a_failed_restart_is_searched_again_at_start_with_the_answers_it_had(store, pool, agents):
+    # Перезапуск упал (сервер остановился посреди него): при старте сервера совет ищет снова тем
+    # же поиском — ответ, который модель уже дала, повтор берёт из лотка даром.
+    council_id = sought_b(store, pool)
+    agents.offline = {"fable"}
+    searches(council_id, "B")
+    pool.run()
+    assert groups_of(council_id)["B"]["ideaSearch"]["state"] == "failed"
+    agents.offline = set()
+    restart = [key for key in agents.asked if "-sol-" in key][-1]
+    agents.asked.clear()
+    sought_at_start(store, agents, pool)
+    pool.run()
+    assert [key for key in agents.asked if "-sol-" in key] == [restart]
+    assert groups_of(council_id)["B"]["ideaSearch"] == SOUGHT
 
 
 def test_a_failed_search_is_restarted_without_the_answers_it_had(store, pool, agents):
@@ -1148,7 +1188,7 @@ def test_a_merged_group_takes_the_search_its_stream_had_in_a_council_saved_befor
     group = groups_of(council_id)["A"]
     assert (group["idea"], group["ideaBy"], group["ideaSearch"]) == (IDEA_B, "ai", SOUGHT)
     assert searches(council_id, "A").json()["group"]["ideaSearch"] == SEEKS
-    assert store.get_council(council_id).structure.groups[0].discovery.search == 2
+    assert store.get_council(council_id).structure.groups[0].discovery.salt != ""
 
 
 def test_a_search_still_going_does_not_go_along_with_the_idea_of_a_person(store, pool, agents):
@@ -1209,7 +1249,8 @@ def test_the_idea_of_a_stream_gives_way_to_the_new_search_but_the_stream_keeps_i
 
 
 def test_a_search_saved_by_the_old_version_is_the_first_one(tmp_path, pool):
-    # Советы, сохранённые раньше, открываются: их поиск идеи — первый, следующий — второй.
+    # Советы, сохранённые раньше, открываются: их поиск идеи — как первый, с ключами ответов как
+    # всегда; перезапуск — новый, со своим ключом.
     folder = tmp_path / "data"
     folder.mkdir()
     fragments = [{"id": i, "text": TEXTS[i], "label": LABELS[i], "reason": "",
@@ -1230,8 +1271,9 @@ def test_a_search_saved_by_the_old_version_is_the_first_one(tmp_path, pool):
     app.dependency_overrides[get_store] = lambda: store
     group = groups_of("old2")["B"]
     assert (group["idea"], group["ideaBy"], group["ideaSearch"]) == (IDEA_B, "ai", SOUGHT)
+    assert store.get_council("old2").structure.groups[0].discovery.salt == ""
     assert searches("old2", "B").status_code == 200
-    assert store.get_council("old2").structure.groups[0].discovery.search == 2
+    assert store.get_council("old2").structure.groups[0].discovery.salt != ""
 
 
 def test_an_idea_not_from_the_search_is_not_sought_anew(store, pool):
