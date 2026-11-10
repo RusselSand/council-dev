@@ -1,6 +1,6 @@
 import { cleanName } from '../../domain/council';
 import type { RunState } from '../../domain/run';
-import type { Fragment } from '../../domain/slicing';
+import type { Fragment, Label } from '../../domain/slicing';
 import type { Group, GroupLink, LinkKind, Structure, StructureStep } from '../../domain/structure';
 import { ApiError } from '../errors';
 import { modelRun } from './runs';
@@ -130,6 +130,25 @@ export const retriedStructure = (structure: Structure, participants: string[], j
         error: null,
       }
     : startedStructure(participants, judge);
+
+/**
+ * Тип фрагмента сменили на «Нарезке» — в группе, где он есть, тип новый, и идея из текста — по нынешним типам, как у
+ * сервера (решение владельца к задаче «Бекенд · Группы: стёртая идея…»): сняли тип «идея» — фрагмент больше не идея
+ * группы, поставили — идея, если своей у группы нет. Своя идея и та, что нашёл ИИ, от типов не зависят. Моки проще
+ * сервера: идея из текста — все фрагменты группы с типом «идея», а стёртую человеком идею они от отсутствующей
+ * не отличают.
+ */
+export function relabeled(group: Group, fragmentId: string, label: Label): Group {
+  if (!group.fragments.some((f) => f.id === fragmentId)) return group;
+  const fragments = group.fragments.map((f) => (f.id === fragmentId ? { ...f, label } : f));
+  const own = group.ideaBy === 'user' || (group.ideaBy === 'ai' && group.idea.trim() !== '');
+  if (own) return { ...group, fragments };
+  const idea = fragments
+    .filter((f) => f.label === 'idea')
+    .map((f) => f.text)
+    .join(' ');
+  return { ...group, fragments, idea, ideaBy: idea ? 'text' : 'ai' };
+}
 
 /** Без повторов: одна и та же связь — один раз. */
 const unique = (links: GroupLink[]): GroupLink[] =>

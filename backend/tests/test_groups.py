@@ -9,6 +9,7 @@ from spec_council.groups import (
     Idea,
     Link,
     confirmed,
+    idea_fragments,
     idea_of,
     letter_for,
     links_of,
@@ -16,6 +17,7 @@ from spec_council.groups import (
     merged,
     seeks_idea,
     split,
+    without_idea,
 )
 from spec_council.models import (
     Council,
@@ -64,6 +66,13 @@ def with_structure(council, structure):
     return council.model_copy(update={"structure": structure})
 
 
+def relabeled(council, labels):
+    """Совет, где человек сменил фрагментам тип на «Нарезке»."""
+    return council.model_copy(update={"slicing": council.slicing.model_copy(update={
+        "fragments": [fragment.model_copy(update={"label": labels.get(fragment.id, fragment.label)})
+                      for fragment in council.slicing.fragments]})})
+
+
 def group(council, gid):
     return next(one for one in council.structure.groups if one.id == gid)
 
@@ -98,14 +107,58 @@ def test_a_group_without_an_idea_waits_for_the_council_to_find_one():
     assert idea_of(nothing, group(nothing, "B")) == Idea("", "ai")
 
 
-def test_the_idea_of_a_person_wins_and_may_be_empty():
-    council = council_with([GROUPS[0].model_copy(update={"idea": "", "idea_by": "user"}),
-                            GROUPS[1].model_copy(update={"idea": "Своя", "idea_by": "user",
-                                                         "discovery": found_idea("Совета")}),
-                            GROUPS[2]])
-    assert idea_of(council, group(council, "A")) == Idea("", "user")
+def test_the_idea_of_a_person_wins():
+    council = council_with([GROUPS[0], GROUPS[1].model_copy(update={
+        "idea": "Своя", "idea_by": "user", "discovery": found_idea("Совета")}), GROUPS[2]])
     assert idea_of(council, group(council, "B")) == Idea("Своя", "user")
+    assert not seeks_idea(council, group(council, "B"))
+
+
+@pytest.mark.parametrize("idea", ["", "  \n "])
+def test_an_erased_idea_is_no_idea_and_the_council_seeks_one(idea):
+    # Решение владельца: пустая идея от человека — «идеи нет, напишите её»; фрагмент-идея F1
+    # её тоже не задаёт.
+    council = council_with([GROUPS[0].model_copy(update={"idea": idea, "idea_by": "user"}),
+                            *GROUPS[1:]])
+    assert idea_of(council, group(council, "A")) == Idea("", "ai")
+    assert seeks_idea(council, group(council, "A"))
+    assert without_idea(council) == ["A", "B"]
+
+
+def test_an_erased_idea_is_the_one_the_council_found():
+    erased = GROUPS[0].model_copy(update={"idea": "", "idea_by": "user"})
+    council = council_with([erased.model_copy(update={"discovery": found_idea("Совета")}),
+                            *GROUPS[1:]])
+    assert idea_of(council, group(council, "A")) == Idea("Совета", "ai")
     assert not seeks_idea(council, group(council, "A"))
+    # Совет у старой версии утвердил идею в потоке группы — стёртая идея её тоже не берёт.
+    streamed = council_with([erased, *GROUPS[1:]], streams=[
+        Stream(group="A", idea=StreamIdea(text="Текст F1", by="text", evidence=[1]))])
+    assert idea_of(streamed, group(streamed, "A")) == Idea("", "ai")
+
+
+def test_the_council_seeks_an_idea_once_unless_the_search_failed():
+    def seeks(state):
+        discovery = found_idea(None).model_copy(update={"state": state})
+        council = council_with([GROUPS[0], GROUPS[1].model_copy(update={"discovery": discovery}),
+                                GROUPS[2]])
+        return seeks_idea(council, group(council, "B"))
+
+    assert not seeks("running")
+    assert not seeks("done")                    # искал и не нашёл — идею впишет человек
+    assert seeks("failed")
+
+
+def test_the_idea_fragments_go_by_the_types_the_fragments_have_now():
+    # Решение владельца: F1 сняли тип «идея» — он больше не идея A; F4 его поставили — идея B.
+    council = council_with()
+    changed = relabeled(council, {1: "proposal", 4: "idea"})
+    assert idea_fragments(changed, group(changed, "A")) == []
+    assert idea_of(changed, group(changed, "A")) == Idea("", "ai")
+    assert seeks_idea(changed, group(changed, "A"))
+    assert idea_of(changed, group(changed, "B")) == Idea("Текст F4", "text")
+    # Тип F1 вернули — снова идея A.
+    assert idea_fragments(council, group(council, "A")) == [1]
 
 
 def test_a_council_of_the_old_version_has_the_ideas_approved_in_its_streams():
@@ -212,6 +265,44 @@ def test_the_old_group_keeps_its_idea_even_when_the_idea_fragment_leaves():
     after = with_structure(council, split(council, group(council, "A"), [1], "Идея"))
     assert idea_of(after, group(after, "A")) == Idea("Текст F1", "text")
     assert idea_of(after, group(after, "D")) == Idea("", "ai")
+
+
+def test_an_erased_idea_stays_erased_after_a_split_or_a_merge():
+    council = council_with([GROUPS[0].model_copy(update={"idea": "", "idea_by": "user"}),
+                            *GROUPS[1:]])
+    after = with_structure(council, split(council, group(council, "A"), [2], "Новая"))
+    assert idea_of(after, group(after, "A")) == Idea("", "ai")
+    assert seeks_idea(after, group(after, "A"))
+    # A без идеи уходит в B без идеи: у объединённой идеи по-прежнему нет — F1 её не задаёт.
+    union = with_structure(council, merged(council, group(council, "A"), group(council, "B")))
+    assert idea_of(union, group(union, "B")) == Idea("", "ai")
+
+
+def test_a_new_group_takes_as_ideas_only_fragments_typed_idea_after_the_split():
+    council = council_with()
+    after = with_structure(council, split(council, group(council, "A"), [1, 2], "Новая"))
+    assert idea_of(after, group(after, "D")) == Idea("", "ai")
+    changed = relabeled(after, {2: "idea"})
+    assert idea_of(changed, group(changed, "D")) == Idea("Текст F2", "text")
+
+
+def test_a_fragment_typed_idea_before_the_split_is_no_idea_of_the_new_group():
+    # У выделенной группы идеи нет, как в контракте: F2 поставили тип «идея» ещё до разделения,
+    # и всё равно её ищет совет — как у F1, который был идеей при раскладке.
+    council = relabeled(council_with(), {2: "idea"})
+    assert idea_of(council, group(council, "A")) == Idea("Текст F1 Текст F2", "text")
+    after = with_structure(council, split(council, group(council, "A"), [2, 3], "Новая"))
+    assert idea_fragments(after, group(after, "D")) == []
+    assert idea_of(after, group(after, "D")) == Idea("", "ai")
+    assert seeks_idea(after, group(after, "D"))
+    # Тип сменили уже после разделения — идея новой группы по нему.
+    changed = relabeled(after, {3: "idea"})
+    assert idea_of(changed, group(changed, "D")) == Idea("Текст F3", "text")
+    # Объединение — так же: у оставшейся группы её фрагменты-идеи, а не F2 той, что к ней
+    # присоединили.
+    union = with_structure(council, merged(council, group(council, "A"), group(council, "C")))
+    assert idea_fragments(union, group(union, "C")) == [5]
+    assert idea_of(union, group(union, "C")) == Idea("Текст F5", "text")
 
 
 def test_a_shared_fragment_that_left_the_group_takes_its_link_along():
