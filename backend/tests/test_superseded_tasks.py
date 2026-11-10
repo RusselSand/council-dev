@@ -334,6 +334,30 @@ def test_the_cancel_marks_keep_the_file_and_come_off_as_written():
         "---\nid: ISS-0003\nstatus: open\n---\n\n# Ответ\n")
 
 
+def test_a_parent_task_of_the_previous_version_is_an_outcome(agents, base):
+    """Задачи, которые записала прежняя версия, называют свой итог родительской задачей (parent):
+    она — итог, а не задача. Её задачи отменены — отменена и она, как итог без открытых задач."""
+    _, paths = earlier_council(base)
+    for path in paths.values():
+        path.unlink()
+    issues = base / "issues"
+    parent = file(issues, Note("ISS-0010", "issue", "# Поиск\n\nИщут.", ("ADR-0001",)), "open")
+    child = file(issues, Note("ISS-0011", "issue", "# Поиск по всей базе\n\nИскать везде.",
+                              ("parent:ISS-0010", "ADR-0001")), "open")
+    council_id = single()
+    free_c(council_id)
+    replacing(council_id, "ADR-0001")
+    exported(council_id)
+    shown = plan_of(council_id)
+    assert [task["id"] for task in shown["cancelled"]] == ["ISS-0011"]
+    assert shown["cancelledOutcomes"] == [{"id": "ISS-0010", "title": "Поиск"}]
+    assert writes(council_id).status_code == 200
+    assert frontmatter(child) == ("id: ISS-0011\nstatus: cancelled\nparent: ISS-0010\n"
+                                  "adrs: [ADR-0001]\ncancelled: ADR-0001 → ADR-0003\n")
+    assert frontmatter(parent) == ("id: ISS-0010\nstatus: cancelled\nadrs: [ADR-0001]\n"
+                                   "cancelled: ADR-0001 → ADR-0003\n")
+
+
 def test_a_plan_of_the_previous_version_cancels_nothing(agents, base):
     """Совет, план которого строила прежняя версия: задач прежних советов он не видел — запись
     ничего не отменяет, а «Будут отменены» пусто."""

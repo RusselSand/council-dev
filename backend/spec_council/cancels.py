@@ -250,7 +250,9 @@ def written_others(cancelled: Sequence[CancelledIssue], folder: Folder,
     found: list[tuple[Path, str]] = []
     instead: dict[str, list[str]] = {}
     for item in cancelled:
-        note = (folder.outcomes if item.type == "outcome" else folder.files).get(item.id)
+        # Итог — файл OUT, а у задач прежней версии — родительская задача ISS в самой папке.
+        note = (folder.outcomes.get(item.id) if item.type == "outcome" else None) \
+            or folder.files.get(item.id)
         if note is None:
             continue
         by = numbers.get(item.replaced_by) if item.replaced_by else None
