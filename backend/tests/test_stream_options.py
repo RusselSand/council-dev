@@ -15,6 +15,7 @@ from spec_council.deps import get_agents, get_launcher, get_store
 from spec_council.models import (
     Choice,
     OpenQuestion,
+    ProjectDecision,
     Proposal,
     ProposalDiscovery,
     QuestionDiscovery,
@@ -305,6 +306,36 @@ def test_questions_whose_options_depend_on_each_other_go_by_number_and_say_so(st
     assert client.patch(f"{questions_path(council_id)}/Q2",
                         json={"removed": True}).status_code == 200
     assert order_of(council_id) == [("Q3", []), ("Q1", [])]
+
+
+def test_an_option_that_replaces_an_active_project_decision_comes_to_the_options(store, pool,
+                                                                                   agents,
+                                                                                   monkeypatch):
+    """Решение владельца к задаче «…вариант против действующего ADR не отбрасывается»: варианты
+    ищут с отобранными решениями проекта, а вопрос, который пересматривает одно из них, приходит
+    к участникам и судье с ним (revisits). Вариант, который заменит другое действующее решение, —
+    на «Вариантах», и его «почему» говорит, что он заменит."""
+    replaces = {"text": POLL, "reason": "Заменит ADR-0006: мерило — опрос команды, а не счётчик."}
+    monkeypatch.setitem(FOUND_OPTIONS, MEASURE, [FOUND_OPTIONS[MEASURE][0], replaces])
+    council_id = asked(store, pool)
+    found = stored(store, council_id).questions
+    questions = [q.model_copy(update={"revisits": "ADR-0005"}) if q.text == MEASURE else q
+                 for q in found.questions]
+    put(store, council_id,
+        project_decisions=[ProjectDecision(adr_id="ADR-0005", decision="Мерило — опросы."),
+                           ProjectDecision(adr_id="ADR-0006", decision="Мерило — счётчик.")],
+        questions=found.model_copy(update={"questions": questions}))
+    assert client.post(f"{questions_path(council_id)}/approve", json={}).status_code == 200
+    pool.run()
+    q2 = sets_of(council_id)["Q2"]
+    assert q2["question"]["revisits"] == {"id": "ADR-0005", "decision": "Мерило — опросы."}
+    assert [(o["id"], o["text"], o["reason"]) for o in q2["options"]] == [
+        ("P2", SHARE, "мерило идеи"), ("P3", POLL, replaces["reason"])]
+    for step in ("proposal_discovery", "proposal_judge"):
+        prompt = next(prompt for prompt in agents.prompts[step]
+                      if json.loads(section(prompt, "OPEN QUESTION"))["id"] == "Q2")
+        assert json.loads(section(prompt, "OPEN QUESTION"))["revisits"] == "ADR-0005"
+        assert '"adr_id": "ADR-0006"' in prompt
 
 
 def test_options_of_a_missing_council_or_stream_are_not_found(store):

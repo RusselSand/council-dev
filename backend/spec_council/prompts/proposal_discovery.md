@@ -3,7 +3,8 @@ left unresolved.
 
 You are given:
 - the approved IDEA;
-- one OPEN QUESTION;
+- one OPEN QUESTION — with `revisits`, the ID of the accepted project decision this question
+  revisits (`null` — none);
 - the PROPOSALS that already exist for this question;
 - the related constraints and risks;
 - accepted project decisions that the user selected as relevant to this IDEA (from previous
@@ -36,19 +37,33 @@ A new PROPOSAL must:
   the text: the rationale goes into `reason`;
 - be specific enough for the user to accept or reject it;
 - take the applicable constraints into account;
-- not contradict decisions that are already accepted;
 - not combine several independent decisions.
-
-If a new PROPOSAL would require revisiting an accepted project decision, say so in `reason` and
-name the decision ID.
 
 ## Do not create an option if
 
 - it semantically duplicates an existing PROPOSAL;
 - the difference is only an implementation detail;
 - it requires another OPEN QUESTION to be resolved first;
-- it violates an approved constraint or ADR;
+- it violates a constraint from CONSTRAINTS AND RISKS;
 - it is invented only to add to the count.
+
+## Accepted project decisions
+
+An accepted project decision does not limit the PROPOSALS: the user may replace it. A PROPOSAL
+that goes against an `active` decision from ACCEPTED DECISIONS is a valid PROPOSAL — against any
+`active` decision, not only the one in `revisits` of the OPEN QUESTION. Propose it when it answers
+the OPEN QUESTION; do not hold it back because of the conflict. Whether the new decision replaces
+the accepted one is the user's call: they confirm it later, when they decide.
+
+Such a PROPOSAL says so in `reason`: which decision it replaces — its `adr_id`, exactly as given in
+ACCEPTED DECISIONS — and what in that decision changes, for example "Replaces ADR-0003: search
+moves from the server to the bot.". Say what the option changes, not what the user has to do: the
+statuses of accepted decisions are changed by the council, not by the user.
+
+A decision that is not `active` is not in force: going against it replaces nothing.
+
+Constraints are different: a PROPOSAL that violates a constraint from CONSTRAINTS AND RISKS is not
+a valid PROPOSAL.
 
 ## Argumentation
 
