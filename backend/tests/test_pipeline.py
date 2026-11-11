@@ -814,6 +814,57 @@ def test_the_other_questions_of_the_scope_are_in_both_prompts():
         assert '"id": "Q1"' in prompt and SEARCH.text in prompt  # Q1 — среди других вопросов
 
 
+CONFIRMED = ProjectDecision(adr_id="ADR-0068", question="Что снимает подтверждение ресурса?",
+                            decision="Любая правка операций ресурса снимает его подтверждение.")
+REVISITED = ProjectDecision(adr_id="ADR-0110", question="Как правят операции?",
+                            decision="Операции правят только вручную.")
+KEEPS = "Ручная правка операций снимает подтверждение ресурса, как сейчас."
+REPLACES = "Ручная правка операций не снимает подтверждение ресурса."
+COSTLY = "Хранить историю правок операций во внешнем сервисе за $500 в месяц."
+
+
+def test_an_option_against_an_active_adr_reaches_the_options_and_one_against_a_constraint_not():
+    """Решение владельца к задаче «…вариант против действующего ADR не отбрасывается»: вариант,
+    который заменит действующий ADR проекта, — допустимый, и не только у ADR из revisits вопроса:
+    участники его предлагают, судья не убирает его только из-за этого, а «почему» называет ADR и
+    что в нём меняется. Вариант против ограничения из текста (F5) судья видит и не оставляет.
+    Решение проекта, которое вопрос пересматривает, участники и судья видят у вопроса."""
+    question = SEARCH.model_copy(update={"text": "Как ручная правка операций влияет на "
+                                                 "подтверждение ресурса?", "revisits": "ADR-0110"})
+    replaces = "Заменит ADR-0068: ручная правка операций больше не снимает подтверждение."
+    found = {"proposals": [
+        {"text": KEEPS, "reason": "Ничего не меняет в принятых решениях."},
+        {"text": REPLACES, "reason": replaces},
+        {"text": COSTLY, "reason": "История правок не теряется.", "constraint_ids": ["F5"]}]}
+    judge = {"status": "alternatives", "proposals": found["proposals"][:2],
+             "reason": "Различаются тем, заменяют ли ADR-0068."}
+    runner = FakeRunner({("proposal_discovery", "sol"): found,
+                         ("proposal_discovery", "fable"): found,
+                         ("proposal_judge", "fable"): judge})
+    result = ProposalRun("c1", FIND, [question], GROUP_FRAGMENTS, ["sol", "fable"], "fable",
+                         runner, [].append, accepted=[CONFIRMED, REVISITED]).run()
+    assert result.state == "done"
+    [options] = result.options
+    assert (options.verdict, [(p.text, p.reason, p.recommended) for p in options.proposals]) == (
+        "alternatives", [(KEEPS, "Ничего не меняет в принятых решениях.", False),
+                         (REPLACES, replaces, False)])
+    for step, model, decisions in (("proposal_discovery", "sol", "ACCEPTED DECISIONS"),
+                                   ("proposal_judge", "fable", "ACCEPTED ADRS")):
+        prompt = runner.asked[step, model]
+        asked = json.loads(section(prompt, "OPEN QUESTION"))
+        assert (asked["id"], asked["revisits"]) == ("Q1", "ADR-0110")
+        assert [d["adr_id"] for d in json.loads(section(prompt, decisions))] == [
+            "ADR-0068", "ADR-0110"]
+    judge_prompt = runner.asked["proposal_judge", "fable"]
+    assert COSTLY in section(judge_prompt, "CANDIDATE PROPOSALS FROM INDEPENDENT AGENTS")
+    check = " ".join(section(judge_prompt, "2. Checking candidates").split())
+    assert "- do not violate the existing CONSTRAINTS;" in check
+    assert "Do not drop a PROPOSAL only because it goes against an `active` ADR" in check
+    choice = " ".join(section(judge_prompt, "3. Choosing a recommendation").split())
+    assert "Replacing an accepted ADR is a cost of the option" in choice
+    assert "an option does not lose to another one only because it replaces an ADR" in choice
+
+
 def test_a_model_that_failed_on_one_question_stays_failed_after_the_next():
     sol = by_question(ModelFailed("лимит"), offered("Своя база"))
     fable = by_question(offered(HYBRID), offered("Notion"))

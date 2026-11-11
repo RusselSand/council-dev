@@ -48,6 +48,7 @@ Figma через REST API, модели читают снимок:
    предложений группы (proposal_discovery.md);
 2. proposal_judge — если новые варианты есть, судья сводит их и решает, что показать:
    одну рекомендацию, равноправные альтернативы или ничего (proposal_judge.md).
+Вариант против действующего решения проекта — допустимый, а против ограничения из текста — нет.
 
 Проверка выбора (DecisionRun) — по вопросу за раз; тот же выбор по тому же вопросу заново не
 проверяют — анализ переносят, если замены решений проекта к нему подтверждены те же:
@@ -1068,6 +1069,13 @@ class ProposalRun(CouncilRun[ProposalDiscovery]):
     написали, — не новый вариант: он отсеивается и у участников, и у судьи. Модель, упавшая
     на одном вопросе, так и числится упавшей, хоть следующие она и ответила.
 
+    Вариант против действующего решения проекта — допустимый: заменить решение может человек
+    (решение владельца к задаче «…вариант против действующего ADR не отбрасывается»). Участники
+    его предлагают, судья не убирает его только из-за этого, а в «почему» варианта сказано, какое
+    решение он заменит и что в нём меняется. Вариант против ограничения из текста по-прежнему не
+    проходит. Решение проекта, которое вопрос пересматривает (revisits), модели видят у вопроса,
+    как судья «Решений».
+
     carried — варианты вопросов, которые были в отборе и раньше: их не ищут заново, хоть соседи
     и поменялись, — иначе каждый добавленный вопрос стоил бы поиска по всем. Новые варианты
     нумеруются с first: номера раньше заняты перенесёнными и своими вариантами человека."""
@@ -1112,7 +1120,7 @@ class ProposalRun(CouncilRun[ProposalDiscovery]):
             values = {
                 "idea": self.idea,
                 "question": as_json({
-                    "id": question.id, "text": question.text,
+                    "id": question.id, "text": question.text, "revisits": question.revisits,
                     "other_open_questions": [{"id": q.id, "text": q.text}
                                              for q in self.scope if q.id != question.id]}),
                 "existing_proposals": as_json([{"id": f"F{i}", "text": self.fragments[i].text}
@@ -1120,7 +1128,7 @@ class ProposalRun(CouncilRun[ProposalDiscovery]):
                                                if i in self.fragments]),
                 "constraints_and_risks": known,
                 "repository": self.repository,
-            "design": self.design,
+                "design": self.design,
             }
             answers = self._ask_all(
                 StepName.proposal_discovery,

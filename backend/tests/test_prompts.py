@@ -107,6 +107,32 @@ def test_the_task_plan_sees_the_issues_on_superseded_decisions(name):
     assert '"replaces": []' in text and '"covers": []' in text
 
 
+@pytest.mark.parametrize(("name", "decisions", "constraint"), [
+    ("proposal_discovery", "ACCEPTED DECISIONS",
+     "a PROPOSAL that violates a constraint from CONSTRAINTS AND RISKS is not a valid PROPOSAL"),
+    ("proposal_judge", "ACCEPTED ADRS",
+     "CONSTRAINTS are different: a PROPOSAL that violates one is not kept")])
+def test_an_option_against_an_active_adr_is_valid_and_one_against_a_constraint_is_not(
+        name, decisions, constraint):
+    """Вариант против действующего ADR проекта — допустимый: участники его предлагают, судья не
+    убирает его только из-за этого — и у ADR, которого нет в revisits вопроса, — а «почему»
+    варианта называет ADR, который он заменит, и что в нём меняется. Вариант против ограничения из
+    текста не проходит (решение владельца к задаче «Бекенд · Поток · Варианты: вариант против
+    действующего ADR не отбрасывается»)."""
+    text = " ".join(render(name, **{key: f"<{key}>" for key in GIVEN[name]}).split())
+    for gone in ("not contradict decisions that are already accepted",
+                 "violates an approved constraint or ADR",
+                 "do not conflict with already accepted ADRs",
+                 "would require revisiting an accepted project decision"):
+        assert gone not in text
+    assert "with `revisits`, the ID of the accepted project decision this question revisits" in text
+    assert "not only the one in `revisits` of the OPEN QUESTION" in text
+    assert f"its `adr_id`, exactly as given in {decisions} — and what in that" in text
+    assert "are changed by the council, not by the user" in text
+    assert "is not in force: going against it replaces nothing" in text
+    assert constraint in text
+
+
 @pytest.mark.parametrize("name", [name for name, given in GIVEN.items() if "design" in given])
 def test_every_step_after_the_design_step_gets_the_design(name):
     """Описание макета передаётся дальше: каждый следующий шаг его видит."""
