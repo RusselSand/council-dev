@@ -7,9 +7,25 @@ import type {
   Finding,
   FindingKind,
   Flow,
+  RepoChoice,
   Research,
   ResearchKind,
 } from '../../domain/research';
+
+/**
+ * Что выкачано в рабочих копиях моков: у всех — main, у kromka-frontend — ветка задачи. Сервер читает это только
+ * в настройке исследования кода.
+ */
+const BRANCHES: Readonly<Record<string, string>> = { 'kromka-frontend': 'feat/offline-queue' };
+const HEAD_COMMIT = '4f2a9c1e7b3d5a8f0c6e2d4b9a1f3c5e7d9b0a2c';
+
+/** Репозиторий на «Исследовании»: в настройке (setup) — с веткой и коммитом, иначе без них. */
+export const repoChoice = (name: string, selected: boolean, setup: boolean): RepoChoice => ({
+  name,
+  selected,
+  branch: setup ? (BRANCHES[name] ?? 'main') : null,
+  commit: setup ? HEAD_COMMIT : null,
+});
 
 /** Находка без противоречия. */
 const finding = (
@@ -36,7 +52,7 @@ const conflict = (
 /** Исследование кода, которое ещё не начинали: отмечены репозитории, которые совет считает нужными идее. */
 const codeSetup = (repos: string[], unneeded: string[] = []): CodeResearch => ({
   state: 'setup',
-  repos: repos.map((name) => ({ name, selected: !unneeded.includes(name) })),
+  repos: repos.map((name) => repoChoice(name, !unneeded.includes(name), true)),
   runs: [],
   minutes: 0,
   scanned: [],
@@ -489,15 +505,13 @@ const G1_COVERAGE: Coverage[] = [
 const G1: Research = {
   code: {
     state: 'done',
-    repos: [
-      { name: 'gen_sdk_tooling', selected: true },
-      { name: 'python-t-cloud', selected: true },
-    ],
+    repos: [repoChoice('gen_sdk_tooling', true, false), repoChoice('python-t-cloud', true, false)],
     runs: [],
     minutes: 0,
+    // Ветки data-1.json не помнит: исследование g1 — до них.
     scanned: [
-      { name: 'gen_sdk_tooling', commit: '7440e1a59acf61eafe9d13c2441b39a8ee72e73b', files: 304 },
-      { name: 'python-t-cloud', commit: 'ba74a37679b790a8a6f9c6e1e397de945bac549c', files: 74 },
+      { name: 'gen_sdk_tooling', commit: '7440e1a59acf61eafe9d13c2441b39a8ee72e73b', branch: null, files: 304 },
+      { name: 'python-t-cloud', commit: 'ba74a37679b790a8a6f9c6e1e397de945bac549c', branch: null, files: 74 },
     ],
     rounds: 1,
     stopReason: null,
@@ -591,9 +605,15 @@ const protoFindings = (decisions: Readonly<Record<string, Decision>> = {}): Find
 const codeDone = (repos: string[], unneeded: string[] = []): CodeResearch => ({
   ...codeSetup(repos, unneeded),
   state: 'done',
+  repos: repos.map((name) => repoChoice(name, !unneeded.includes(name), false)),
   scanned: repos
     .filter((name) => !unneeded.includes(name))
-    .map((name, i) => ({ name, commit: i ? 'b83e0d47c2a9f1e6d5c4b3a2918070f6e5d4c3b2' : '4f2a9c1e7b3d5a8f0c6e2d4b9a1f3c5e7d9b0a2c', files: i ? 205 : 312 })),
+    .map((name, i) => ({
+      name,
+      commit: i ? 'b83e0d47c2a9f1e6d5c4b3a2918070f6e5d4c3b2' : HEAD_COMMIT,
+      branch: BRANCHES[name] ?? 'main',
+      files: i ? 205 : 312,
+    })),
   rounds: 2,
 });
 
@@ -670,7 +690,7 @@ const readsText = (repo: string) => `проход 1 · читает ${repo}`;
 export const startedCode = (code: CodeResearch, repos: string[], participants: string[]): CodeResearch => ({
   ...code,
   state: 'running',
-  repos: code.repos.map((repo) => ({ ...repo, selected: repos.includes(repo.name) })),
+  repos: code.repos.map((repo) => repoChoice(repo.name, repos.includes(repo.name), false)),
   runs: participants.map((model, i) => ({
     model,
     state: 'running',
@@ -708,6 +728,7 @@ export function toSetup(research: Research, kind: ResearchKind): Research {
       code: {
         ...research.code,
         state: 'setup',
+        repos: research.code.repos.map((repo) => repoChoice(repo.name, repo.selected, true)),
         runs: [],
         minutes: 0,
         scanned: [],

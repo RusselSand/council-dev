@@ -126,6 +126,10 @@ export const ru = {
   'research.repos': 'Репозитории проекта',
   'research.repo.selected': 'репозиторий проекта',
   'research.repo.unneeded': 'не нужен этой идее?',
+  'research.repo.branch': 'ветка {branch}',
+  'research.repo.detached': 'без ветки · коммит {commit}',
+  'research.repos.branch':
+    'Исследование прочтёт ветку, которая сейчас выкачана в папке репозитория, вместе с незакоммиченными правками. Нужна другая — переключите её до начала.',
   'research.repos.trust': 'Сканируйте только свои, доверенные репозитории: модели читают код.',
   'research.figma': 'Ссылка на Figma',
   'research.figma.placeholder': 'https://www.figma.com/design/…?node-id=…',
@@ -144,6 +148,7 @@ export const ru = {
     other: '{count} фрейма · ~{minutes} мин',
   },
   'research.code.scanned': '{repo} · коммит {commit} · файлов: {files} · проходов: {rounds}',
+  'research.code.scanned.branch': '{repo} · ветка {branch} · коммит {commit} · файлов: {files} · проходов: {rounds}',
   'research.code.tasks': 'Учтены задачи: {tasks}',
   'research.code.task.deferred': '{id} (отложена)',
   'research.findings.count': {

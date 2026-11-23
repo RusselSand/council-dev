@@ -1,3 +1,4 @@
+import { useEffect } from 'react';
 import type { Decision, Research, ResearchKind } from '../../domain/research';
 import { source } from '../config';
 import { ApiError } from '../errors';
@@ -12,13 +13,24 @@ import { useModelsPoll } from './useStageQuery';
  * исследование идёт или в списке советов этап «Исследование» ещё идёт (councilRunning), оно и список советов
  * перезапрашиваются через 5 с после ответа на исследование — см. useModelsPoll(). Так список советов догоняет
  * исследование, даже если его запросили за миг до того, как модели кончили. Перезапрашивается и после действий
- * с исследованием и решений по находкам.
+ * с исследованием и решений по находкам, а пока исследование кода в настройке, — и когда человек вернулся в окно:
+ * ветку в репозитории могли переключить, а экран показывает, какую прочтёт исследование.
  */
 export function useCouncilResearch(id: string, councilRunning: boolean): Query<Research> {
   const query = useQuery(async () => ({ ...(await source.getResearch(id)), council: id }), [id], 'research');
   const { code, design } = query.data ?? {};
   useModelsPoll(councilRunning || code?.state === 'running' || design?.state === 'running', query);
+  useReloadOnFocus(code?.state === 'setup' && code.repos.length > 0, query.reload);
   return query;
+}
+
+/** Пока on — запрос повторяется, когда окно снова в фокусе. */
+function useReloadOnFocus(on: boolean, reload: () => void) {
+  useEffect(() => {
+    if (!on) return undefined;
+    window.addEventListener('focus', reload);
+    return () => window.removeEventListener('focus', reload);
+  }, [on, reload]);
 }
 
 /** Действие с исследованием кода или макета: начать (с репозиториями или ссылкой), пропустить, остановить, вернуть. */

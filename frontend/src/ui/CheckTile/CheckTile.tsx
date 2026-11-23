@@ -17,6 +17,8 @@ interface CheckTileProps {
   mono?: boolean;
   /** Пояснение мелко справа: «репозиторий проекта»; нет — без него. */
   meta?: string;
+  /** Строка мелко под подписью: «ветка main»; нет — без неё. */
+  detail?: string;
   children: ReactNode;
 }
 
@@ -28,6 +30,7 @@ export function CheckTile({
   variant = 'tile',
   mono = false,
   meta,
+  detail,
   children,
 }: CheckTileProps) {
   const classes = [styles.item, styles[variant], checked && styles.checked, disabled && styles.disabled]
@@ -36,7 +39,10 @@ export function CheckTile({
   return (
     <label className={classes}>
       <input type="checkbox" className={styles.box} checked={checked} disabled={disabled} onChange={onChange} />
-      <span className={mono ? `${styles.label} ${styles.mono}` : styles.label}>{children}</span>
+      <span className={mono ? `${styles.label} ${styles.mono}` : styles.label}>
+        {children}
+        {detail && <span className={styles.detail}>{detail}</span>}
+      </span>
       {meta && <span className={styles.meta}>{meta}</span>}
     </label>
   );

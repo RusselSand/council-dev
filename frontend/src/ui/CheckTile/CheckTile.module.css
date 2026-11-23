@@ -25,6 +25,15 @@
   font-family: var(--font-mono);
 }
 
+/* «ветка main» под подписью: длинное имя ветки переносится, а не раздвигает плитку. */
+.detail {
+  display: block;
+  margin-top: var(--space-2);
+  font-size: var(--text-xs);
+  color: var(--color-text-subtle);
+  overflow-wrap: anywhere;
+}
+
 /* «репозиторий проекта» справа на плитке: места мало — переносится, а не налезает на подпись. */
 .meta {
   margin-left: auto;
@@ -69,6 +78,7 @@
   cursor: default;
 }
 
-.disabled .label {
+.disabled .label,
+.disabled .detail {
   color: var(--color-text-ghost);
 }

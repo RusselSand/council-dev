@@ -70,6 +70,7 @@ from ..repository import (
     Inventory,
     RepositoryError,
     council_folders,
+    head_now,
     unskipped_since,
     working_copy,
 )
@@ -100,6 +101,9 @@ STREAM_IDEA: dict[IdeaBy, Literal["text", "council", "human"]] = {
 class RepoChoice(Schema):
     name: str
     selected: bool
+    # Что выкачано в рабочей копии сейчас — в настройке: скан прочтёт эту ветку.
+    branch: str | None
+    commit: str | None
 
 
 class ResearchRun(Schema):
@@ -112,6 +116,7 @@ class ResearchRun(Schema):
 class ScannedRepo(Schema):
     name: str
     commit: str
+    branch: str | None
     files: int
 
 
@@ -225,8 +230,10 @@ DESIGN = research_slot("design_scan")
 
 
 @router.get("/councils/{council_id}/research")
-def get_research(council_id: str, store: StoreDep, projects: ProjectsDep) -> ResearchAnswer:
-    return ResearchAnswer(research=research_of(council_of(store, council_id), projects))
+def get_research(council_id: str, store: StoreDep, projects: ProjectsDep,
+                 repositories: RepositoriesDep) -> ResearchAnswer:
+    return ResearchAnswer(research=research_of(council_of(store, council_id), projects,
+                                               repositories))
 
 
 @router.post("/councils/{council_id}/research/code/start")
@@ -261,12 +268,13 @@ def start_code(council_id: str, body: CodeStart, store: StoreDep, agents: Agents
                 "repos": chosen, "approved": False})}) or council
     if pipeline is not None and not launched(launch, pipeline, report):
         raise ApiError(500, "internal", "Сервер останавливается — исследование кода не запущено")
-    return ResearchAnswer(research=research_of(council, projects))
+    return ResearchAnswer(research=research_of(council, projects, repositories))
 
 
 @router.post("/councils/{council_id}/research/design/start")
 def start_design(council_id: str, body: DesignStart, store: StoreDep, agents: AgentsDep,
-                 launch: LauncherDep, projects: ProjectsDep, figma: FigmaDep) -> ResearchAnswer:
+                 launch: LauncherDep, projects: ProjectsDep, repositories: RepositoriesDep,
+                 figma: FigmaDep) -> ResearchAnswer:
     """Совет снимает макет по ссылке, модели совета его исследуют — в фоне. Без токена Figma
     исследование останавливается с причиной: снять макет нечем."""
     report = reporter(store, council_id, DESIGN)
@@ -291,12 +299,12 @@ def start_design(council_id: str, body: DesignStart, store: StoreDep, agents: Ag
                 "link": link, "approved": False})}) or council
     if pipeline is not None and not launched(launch, pipeline, report):
         raise ApiError(500, "internal", "Сервер останавливается — исследование макета не запущено")
-    return ResearchAnswer(research=research_of(council, projects))
+    return ResearchAnswer(research=research_of(council, projects, repositories))
 
 
 @router.post("/councils/{council_id}/research/{kind}/skip")
 def skip(council_id: str, kind: str, store: StoreDep, projects: ProjectsDep,
-         body: Empty | None = None) -> ResearchAnswer:
+         repositories: RepositoriesDep, body: Empty | None = None) -> ResearchAnswer:
     """Потоки пойдут без этого исследования. Не в настройке — в ответ исследование как есть."""
     which = kind_of(kind)
     with council_lock:
@@ -307,12 +315,12 @@ def skip(council_id: str, kind: str, store: StoreDep, projects: ProjectsDep,
                     else {"design": DesignStep(by="skipped")})
             council = store.update_council(council_id, {"research": research.model_copy(
                 update={**step, "approved": False})}) or council
-    return ResearchAnswer(research=research_of(council, projects))
+    return ResearchAnswer(research=research_of(council, projects, repositories))
 
 
 @router.post("/councils/{council_id}/research/{kind}/stop")
 def stop(council_id: str, kind: str, store: StoreDep, projects: ProjectsDep,
-         body: Empty | None = None) -> ResearchAnswer:
+         repositories: RepositoriesDep, body: Empty | None = None) -> ResearchAnswer:
     """Модели останавливаются, сделанное ими не сохраняется: исследование снова в настройке, с
     теми же рабочими копиями или ссылкой. Не идёт (успело кончиться) — в ответ как есть."""
     which = kind_of(kind)
@@ -324,12 +332,12 @@ def stop(council_id: str, kind: str, store: StoreDep, projects: ProjectsDep,
             halt(getattr(research, field).run)
             council = store.update_council(council_id, {"research": research.model_copy(
                 update={field: None, "approved": False})}) or council
-    return ResearchAnswer(research=research_of(council, projects))
+    return ResearchAnswer(research=research_of(council, projects, repositories))
 
 
 @router.post("/councils/{council_id}/research/{kind}/reset")
 def reset(council_id: str, kind: str, store: StoreDep, projects: ProjectsDep,
-          body: Empty | None = None) -> ResearchAnswer:
+          repositories: RepositoriesDep, body: Empty | None = None) -> ResearchAnswer:
     """Готовое или пропущенное исследование — снова в настройке, с прошлыми рабочими копиями
     или ссылкой; его находки пропадают, у кода — и сценарии, и покрытие. Потоки, что уже взяли
     его копию, оно не трогает. Иначе — в ответ как есть."""
@@ -342,7 +350,7 @@ def reset(council_id: str, kind: str, store: StoreDep, projects: ProjectsDep,
                     else {"design_scan": None, "design": None})
             council = store.update_council(council_id, {"research": research.model_copy(
                 update={**gone, "approved": False})}) or council
-    return ResearchAnswer(research=research_of(council, projects))
+    return ResearchAnswer(research=research_of(council, projects, repositories))
 
 
 @router.patch("/councils/{council_id}/research/findings/{finding_id}")
@@ -429,23 +437,23 @@ def approve(council_id: str, store: StoreDep, agents: AgentsDep, launch: Launche
 
 # Исследование по контракту.
 
-def research_of(council: Council, projects: Projects) -> Research:
+def research_of(council: Council, projects: Projects, repositories: Path | None) -> Research:
     """Исследование, как его видит «Исследование»: оба блока, находки готовых, сценарии и
-    покрытие кода."""
+    покрытие кода. Что выкачано в рабочих копиях, git читает только в настройке кода: тогда
+    человек выбирает, что исследовать, а пока модели работают, экран опрашивает исследование."""
     research = stored_of(council)
     code, design = domain.blocks_of(research)
     scan, shot = research.scan, research.design_scan
-    taken_repos = domain.taken_repos(research)
     code_done = code == "done" and scan is not None
     return Research(
         code=CodeResearch(
             state=code,
-            repos=[RepoChoice(name=name, selected=taken_repos is None or name in taken_repos)
-                   for name in repos_of(council, projects)],
+            repos=repo_choices(council, projects, repositories, research, read=code == "setup"),
             runs=runs_of(scan, "code") if code == "running" and scan else [],
             minutes=code_minutes(scan) if code == "running" and scan else 0,
             scanned=[ScannedRepo(name=repo.path or repo.name, commit=repo.commit_sha,
-                                 files=repo.files) for repo in scan.repositories]
+                                 branch=repo.branch or None, files=repo.files)
+                     for repo in scan.repositories]
             if code_done else [],
             rounds=scan.rounds if code_done else 0,
             stop_reason="failed" if domain.stopped(scan, code) else None,
@@ -461,6 +469,21 @@ def research_of(council: Council, projects: Projects) -> Research:
         findings=[finding_of(one) for one in domain.findings_of(research, first_group(council))],
         flows=flows_of(scan) if code_done else [],
         coverage=coverage_of(scan) if code_done else [])
+
+
+def repo_choices(council: Council, projects: Projects, repositories: Path | None,
+                 research: Stored, *, read: bool) -> list[RepoChoice]:
+    """Рабочие копии проекта на «Исследовании»: отмечена ли и, если read, что в ней выкачано —
+    ветка и коммит; не прочитать — ни того ни другого."""
+    taken_repos = domain.taken_repos(research)
+    choices = []
+    for name in repos_of(council, projects):
+        head = head_now(name, repositories) if read else None
+        choices.append(RepoChoice(name=name,
+                                  selected=taken_repos is None or name in taken_repos,
+                                  branch=(head.branch or None) if head else None,
+                                  commit=(head.commit or None) if head else None))
+    return choices
 
 
 def finding_of(finding: domain.Finding) -> Finding:

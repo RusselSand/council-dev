@@ -6,8 +6,9 @@ import styles from './CodeBlock.module.css';
 import { ResearchBlock } from './ResearchBlock';
 
 /**
- * «Исследование кода»; в настройке — «Репозитории проекта» галочками и напоминание, что модели читают код; готово —
- * под строкой результата, какие задачи папки задач учло исследование (в макете строки нет).
+ * «Исследование кода»; в настройке — «Репозитории проекта» галочками, у каждого — какую ветку прочтёт исследование, и
+ * напоминания: читается выкачанная ветка, модели читают код; готово — под строкой результата, какие задачи папки задач
+ * учло исследование. Ветки и задач в макете нет — решения владельца.
  */
 export function CodeBlock({ block }: { block: CodeBlockView }) {
   const { t } = useI18n();
@@ -30,12 +31,14 @@ export function CodeBlock({ block }: { block: CodeBlockView }) {
                 disabled={block.busy}
                 onChange={() => block.toggleRepo(repo.name)}
                 meta={repo.meta}
+                detail={repo.detail || undefined}
                 mono
               >
                 {repo.name}
               </CheckTile>
             ))}
           </div>
+          <p className={styles.trust}>{t('research.repos.branch')}</p>
           <p className={styles.trust}>{t('research.repos.trust')}</p>
         </>
       }
