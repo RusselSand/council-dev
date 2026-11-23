@@ -107,6 +107,8 @@ class Inventory:
     # находят и узнают, как бы ни был виден каталог (working_copy).
     checkout: str = ""
     within: str = ""
+    # Выкачанная ветка (branch_of): человек видит её у исследования. Пусто — HEAD не на ветке.
+    branch: str = ""
     # Папки, что в снимок не берут (skipped_of: заметки и задачи совета), — от корня, с «/» на
     # конце. Их файлы, и появившиеся после inventory, — не правка рабочей копии под снимком.
     skipped: tuple[str, ...] = ()
@@ -557,6 +559,39 @@ def head(root: Path) -> str:
         return ""
 
 
+def branch_of(root: Path) -> str:
+    """Выкачанная ветка рабочей копии — как её зовёт git: «feat/194-…»; ветка без коммитов —
+    тоже ветка. HEAD не на ветке (detached) или git не ответил — пусто."""
+    try:
+        output = git_bytes(root, "symbolic-ref", "-q", "--short", "HEAD", nothing=1)
+    except RepositoryError:
+        return ""
+    return output.decode("utf-8", errors="replace").strip()
+
+
+@dataclass(frozen=True)
+class Head:
+    """Что выкачано в рабочей копии: ветка (HEAD не на ветке — пусто) и коммит (коммитов ещё
+    нет — пусто)."""
+
+    branch: str
+    commit: str
+
+
+def head_now(text: str, base: Path | None) -> Head | None:
+    """Что выкачано сейчас в рабочей копии по тексту человека — её «Исследование» показывает до
+    скана: скан прочтёт эту ветку. Только git rev-parse и symbolic-ref — без обхода файлов, и
+    чужую рабочую копию (корень вне каталога репозиториев) не читаем. Не рабочая копия, каталога
+    нет или git не ответил — None."""
+    try:
+        root = top_of(located(text, base))
+    except RepositoryError:
+        return None
+    if base is not None and not root.is_relative_to(base.resolve()):
+        return None
+    return Head(branch_of(root), head(root))
+
+
 def levels(copies: list[Copy]) -> list[tuple[str, str, bytes]]:
     """Каждая рабочая копия из copies_of: (путь от корня, коммит, git status с каждым новым
     файлом). Во вложенные git status сам не заходит: обходим их мы, без ссылок и кругов, — и у
@@ -778,7 +813,8 @@ def inventory(path: Path, skip: Iterable[tuple[Path, str]] = ()) -> Inventory:
     modes = {name: mode for name, mode in modes_of(copies).items() if name in kept}
     return Inventory(root, found[0][1], dirty, files, state_of(found), modes, size,
                      sum(copy.outside for copy in copies), (*omitted_of(root, copies), *told),
-                     skipped=skipped, heads={prefix: sha for prefix, sha, _ in found})
+                     branch=branch_of(root), skipped=skipped,
+                     heads={prefix: sha for prefix, sha, _ in found})
 
 
 def skipped_of(root: Path, folders: Iterable[tuple[Path, str]]
@@ -1057,7 +1093,8 @@ def scanned(source: Source) -> ScannedRepository:
     found = source.found
     return ScannedRepository(name=source.name, path=source.path, root=str(found.root),
                              within=found.within, checkout=found.checkout,
-                             commit_sha=found.commit_sha, dirty=found.dirty,
+                             commit_sha=found.commit_sha, branch=found.branch,
+                             dirty=found.dirty,
                              files=len(found.files), outside=found.outside,
                              omitted=capped(found.omitted), omitted_count=len(found.omitted),
                              skipped=list(found.skipped))

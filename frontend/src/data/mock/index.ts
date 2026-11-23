@@ -34,7 +34,7 @@ import { cycleOf, dependencyOrder, inOrder } from './order';
 import { OUTCOMES } from './outcomes';
 import { PROJECT_LIST, REPO_LIST, type MockProject } from './projects';
 import { ownQuestion, QUESTIONS } from './questions';
-import { noResearch, RESEARCHES, startedCode, startedDesign, toSetup } from './research';
+import { noResearch, repoChoice, RESEARCHES, startedCode, startedDesign, toSetup } from './research';
 import { noSlicing, SLICINGS, startedSlicing } from './slicings';
 import {
   decisionsApproved,
@@ -205,14 +205,16 @@ function checkNotStructuring(council: CouncilSummary) {
 
 /**
  * Исследование совета; у совета, который не исследовали, оба исследования не начаты. Репозитории — те, что у проекта
- * совета сейчас: проект могли сменить или поправить; отметки у прежних остаются, новые — отмечены.
+ * совета сейчас: проект могли сменить или поправить; отметки у прежних остаются, новые — отмечены. Что в них выкачано,
+ * видно только в настройке исследования кода.
  */
 function researchOf(id: string): Research {
   const council = councils[councilAt(id)];
   const repos = projects.find((p) => p.id === council.project?.id)?.repos ?? [];
   const research = researches.get(id) ?? noResearch(repos);
   const selected = new Map(research.code.repos.map((repo) => [repo.name, repo.selected]));
-  research.code.repos = repos.map((name) => ({ name, selected: selected.get(name) ?? true }));
+  const setup = research.code.state === 'setup';
+  research.code.repos = repos.map((name) => repoChoice(name, selected.get(name) ?? true, setup));
   researches.set(id, research);
   return research;
 }
@@ -865,8 +867,10 @@ export const mockSource: DataSource = {
     const research = researchOf(id);
     if (research[kind].state === 'setup') {
       // Пропущенное — уже не остановившееся: причины нет.
-      if (kind === 'code') research.code = { ...research.code, state: 'skipped', stopReason: null };
-      else research.design = { ...research.design, state: 'skipped', stopReason: null };
+      if (kind === 'code') {
+        const repos = research.code.repos.map((repo) => repoChoice(repo.name, repo.selected, false));
+        research.code = { ...research.code, state: 'skipped', repos, stopReason: null };
+      } else research.design = { ...research.design, state: 'skipped', stopReason: null };
       researchDone(index, research);
     }
     return copy(research);

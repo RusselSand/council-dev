@@ -21,11 +21,13 @@ import {
   type Decision,
   type Finding,
   type FindingKind,
+  type RepoChoice,
   type Research,
   type ResearchKind,
   type ResearchRun,
   type ResearchState,
   type ResearchStop,
+  type ScannedRepo,
 } from '../../domain/research';
 import type { RejectedAnswer, RunState } from '../../domain/run';
 import { withoutIdea } from '../../domain/structure';
@@ -109,6 +111,8 @@ export interface RepoView {
   checked: boolean;
   /** «репозиторий проекта» или «не нужен этой идее?». */
   meta: string;
+  /** Что исследование прочтёт: «ветка main», HEAD не на ветке — «без ветки · коммит 4f2a9c1»; не прочитать — пусто. */
+  detail: string;
 }
 
 export interface CodeBlockView extends BlockView {
@@ -246,6 +250,20 @@ const runViews = (runs: ResearchRun[], t: Translate): RunView[] =>
     rejected: run.rejected,
   }));
 
+/** Что выкачано в репозитории — его прочтёт исследование (решение владельца к задаче «Исследование: ветка…»). */
+function repoHead({ branch, commit }: RepoChoice, t: Translate): string {
+  if (branch) return t('research.repo.branch', { branch });
+  return commit ? t('research.repo.detached', { commit: shortCommit(commit) }) : '';
+}
+
+/** Строка готового исследования кода — первый репозиторий; ветка — если исследование её помнит. */
+function scannedLine(repo: ScannedRepo, rounds: number, t: Translate): string {
+  const values = { repo: repo.name, commit: shortCommit(repo.commit), files: repo.files, rounds };
+  return repo.branch
+    ? t('research.code.scanned.branch', { ...values, branch: repo.branch })
+    : t('research.code.scanned', values);
+}
+
 /** Подпись решения на кнопке: «Прав код» — по тому, откуда находка; у пробела вопрос — «Вернуть вопрос». */
 function choiceLabel(finding: Finding, decision: Decision, t: Translate): string {
   if (decision === 'source') return t(`research.decide.source.${finding.source}`);
@@ -326,6 +344,7 @@ export function useResearch(council: CouncilSummary): ResearchScreen {
     name: repo.name,
     checked: checks[repo.name] ?? repo.selected,
     meta: t(repo.selected ? 'research.repo.selected' : 'research.repo.unneeded'),
+    detail: repoHead(repo, t),
   }));
   const chosen = repos.filter((repo) => repo.checked).map((repo) => repo.name);
   const link = linkDraft ?? design.link;
@@ -439,14 +458,7 @@ export function useResearch(council: CouncilSummary): ResearchScreen {
         repos: code.repos.filter((repo) => repo.selected).length,
         minutes: code.minutes,
       }),
-      result: scanned
-        ? t('research.code.scanned', {
-            repo: scanned.name,
-            commit: shortCommit(scanned.commit),
-            files: scanned.files,
-            rounds: code.rounds,
-          })
-        : '',
+      result: scanned ? scannedLine(scanned, code.rounds, t) : '',
       // Какие задачи папки задач учло исследование (решение владельца к задаче «Бекенд · Задачи: статус во
       // frontmatter…»; в макете строки нет).
       tasks: code.tasks.length

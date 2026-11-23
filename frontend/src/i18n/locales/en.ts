@@ -118,6 +118,10 @@ export const en = translation({
   'research.repos': 'Project repositories',
   'research.repo.selected': 'project repository',
   'research.repo.unneeded': 'not needed for this idea?',
+  'research.repo.branch': 'branch {branch}',
+  'research.repo.detached': 'no branch · commit {commit}',
+  'research.repos.branch':
+    'The research reads the branch currently checked out in the repository folder, along with uncommitted changes. Need a different one? Switch to it before you start.',
   'research.repos.trust': 'Scan only your own, trusted repositories: the models read the code.',
   'research.figma': 'Figma link',
   'research.figma.placeholder': 'https://www.figma.com/design/…?node-id=…',
@@ -131,6 +135,7 @@ export const en = translation({
   'research.code.running': '{repos} repos · ~{minutes} min',
   'research.design.running': { one: '{count} frame · ~{minutes} min', other: '{count} frames · ~{minutes} min' },
   'research.code.scanned': '{repo} · commit {commit} · files: {files} · passes: {rounds}',
+  'research.code.scanned.branch': '{repo} · branch {branch} · commit {commit} · files: {files} · passes: {rounds}',
   'research.code.tasks': 'Tasks taken into account: {tasks}',
   'research.code.task.deferred': '{id} (deferred)',
   'research.findings.count': { one: '{count} finding', other: '{count} findings' },

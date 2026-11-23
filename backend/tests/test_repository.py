@@ -15,12 +15,14 @@ from spec_council import repository
 from spec_council.models import FollowUp, ScannedRepository
 from spec_council.repository import (
     Context,
+    Head,
     Inventory,
     RepositoryError,
     Source,
     checkout_of,
     context_prompt,
     council_folders,
+    head_now,
     inventory,
     inventory_prompt,
     judged_map,
@@ -302,6 +304,29 @@ def test_a_working_copy_whose_root_is_outside_the_repositories_folder_is_refused
     with pytest.raises(RepositoryError, match="вне каталога"):
         working_copy(".", repo / "api")
     assert working_copy("project", repo.parent).root == repo.resolve()
+
+
+def test_what_is_checked_out_is_read_by_git_alone(repo, tmp_path):
+    """Ветка и коммит рабочей копии — их «Исследование» показывает до скана, — а скан помнит
+    ветку, которую прочёл."""
+    git(repo, "checkout", "-q", "-b", "feat/offline")
+    sha = inventory(repo).commit_sha
+    assert head_now("project", repo.parent) == Head("feat/offline", sha)
+    assert inventory(repo).branch == "feat/offline"
+    # HEAD не на ветке — только коммит.
+    git(repo, "checkout", "-q", "--detach")
+    assert head_now("project", repo.parent) == Head("", sha)
+    assert inventory(repo).branch == ""
+    # Ветка без коммитов — тоже ветка, коммита нет.
+    fresh = tmp_path / "fresh"
+    fresh.mkdir()
+    git(fresh, "init", "-q", "-b", "start")
+    assert head_now("fresh", tmp_path) == Head("start", "")
+    # Не рабочая копия, каталога нет или корень вне каталога репозиториев — не прочитать.
+    (tmp_path / "plain").mkdir()
+    assert head_now("plain", tmp_path) is None
+    assert head_now("нет", tmp_path) is None
+    assert head_now(".", repo / "api") is None
 
 
 def test_file_names_come_as_they_are_and_deleted_ones_are_not_files(repo):

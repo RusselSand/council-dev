@@ -220,7 +220,7 @@ def repositories(tmp_path):
     api = root / "api"
     api.mkdir(parents=True)
     (api / "app.py").write_text("def main(): ...\n", encoding="utf-8")
-    for args in (["init", "-q"], ["add", "."],
+    for args in (["init", "-q", "-b", "main"], ["add", "."],
                  ["-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "-m", "init"]):
         subprocess.run(["git", "-C", str(api), *args], check=True, capture_output=True)
     app.dependency_overrides[get_repositories] = lambda: root
@@ -285,6 +285,16 @@ def error_of(res) -> tuple[int, str]:
     return res.status_code, res.json()["error"]["code"]
 
 
+def choice(name, selected, branch=None, commit=None) -> dict:
+    """Рабочая копия на «Исследовании»; ветка и коммит — что в ней выкачано (только в настройке)."""
+    return {"name": name, "selected": selected, "branch": branch, "commit": commit}
+
+
+def at_main(repos, selected=True) -> dict:
+    """Рабочая копия api в настройке: выкачана ветка main."""
+    return choice("api", selected, "main", inventory(repos).commit_sha)
+
+
 def stages(*states):
     return dict(zip(STAGES, states, strict=True))
 
@@ -302,11 +312,11 @@ def researched_code(council_id, pool) -> dict:
 
 # GET /api/councils/{id}/research
 
-def test_before_any_research_both_wait_for_their_setup(store, projects):
+def test_before_any_research_both_wait_for_their_setup(store, projects, repos):
     council_id = council_with(store, projects)
+    # Рабочей копии front нет — что в ней выкачано, не прочитать.
     assert research_of(council_id) == {
-        "code": {"state": "setup", "repos": [{"name": "api", "selected": True},
-                                             {"name": "front", "selected": True}],
+        "code": {"state": "setup", "repos": [at_main(repos), choice("front", True)],
                  "runs": [], "minutes": 0, "scanned": [], "rounds": 0, "stopReason": None,
                  "tasks": []},
         "design": SETUP_DESIGN, "findings": [], "flows": [], "coverage": []}
@@ -341,8 +351,7 @@ def test_code_research_reads_the_chosen_copies_in_the_background(store, projects
     assert res.status_code == 200
     code = res.json()["research"]["code"]
     assert code == {
-        "state": "running", "repos": [{"name": "api", "selected": True},
-                                      {"name": "front", "selected": False}],
+        "state": "running", "repos": [choice("api", True), choice("front", False)],
         "runs": [doing("sol", "waiting", "проход 1 · ждёт снимка кода"),
                  doing("fable", "waiting", "проход 1 · ждёт снимка кода")],
         "minutes": 2, "scanned": [], "rounds": 0, "stopReason": None, "tasks": []}
@@ -355,10 +364,10 @@ def test_code_research_reads_the_chosen_copies_in_the_background(store, projects
     pool.run()
     research = research_of(council_id)
     assert research["code"] == {
-        "state": "done", "repos": [{"name": "api", "selected": True},
-                                   {"name": "front", "selected": False}],
+        "state": "done", "repos": [choice("api", True), choice("front", False)],
         "runs": [], "minutes": 0,
-        "scanned": [{"name": "api", "commit": inventory(repos).commit_sha, "files": 2}],
+        "scanned": [{"name": "api", "commit": inventory(repos).commit_sha, "branch": "main",
+                     "files": 2}],
         "rounds": 1, "stopReason": None, "tasks": []}
     assert research["findings"] == CODE_FINDINGS
     assert research["flows"] == [{"name": "Создание заявки", "entry": "app.py", "steps": [
@@ -416,8 +425,28 @@ def test_the_request_does_not_wait_for_git(store, projects, monkeypatch):
     assert starts(council_id, "code", {"repos": ["api"]}).status_code == 200
 
 
+def test_the_setup_shows_the_branch_the_research_will_read(store, projects, pool, repos):
+    """Ещё одно место сверки до запуска (решение владельца к задаче «Исследование: ветка
+    репозитория до и после скана»): в настройке у рабочей копии — что в ней выкачано сейчас, у
+    готового исследования — ветка, которую оно прочло."""
+    council_id = confirmed(store, projects)
+    sha = inventory(repos).commit_sha
+    subprocess.run(["git", "-C", str(repos), "checkout", "-q", "-b", "feat/offline"], check=True)
+    assert research_of(council_id)["code"]["repos"] == [
+        choice("api", True, "feat/offline", sha), choice("front", True)]
+    assert researched_code(council_id, pool)["code"]["scanned"][0]["branch"] == "feat/offline"
+    # Ветку потом сменили — готовое исследование по-прежнему называет ту, что прочло.
+    subprocess.run(["git", "-C", str(repos), "checkout", "-q", "main"], check=True)
+    assert research_of(council_id)["code"]["scanned"][0]["branch"] == "feat/offline"
+    # HEAD не на ветке — в настройке только коммит, и у исследования ветки нет.
+    subprocess.run(["git", "-C", str(repos), "checkout", "-q", "--detach"], check=True)
+    research = acts(council_id, "code", "reset").json()["research"]
+    assert research["code"]["repos"][0] == choice("api", True, None, sha)
+    assert researched_code(council_id, pool)["code"]["scanned"][0]["branch"] is None
+
+
 def test_a_copy_that_cannot_be_read_stops_the_research_with_the_reason(store, projects, agents,
-                                                                       pool):
+                                                                       pool, repos):
     council_id = confirmed(store, projects)
     starts(council_id, "code", {"repos": ["api", "front"]})
     pool.run()
@@ -426,8 +455,7 @@ def test_a_copy_that_cannot_be_read_stops_the_research_with_the_reason(store, pr
     assert agents.asked == []
     code = research_of(council_id)["code"]
     # Снова в настройке — с теми же рабочими копиями; у кода причина у экрана одна — общая.
-    assert (code["state"], code["repos"]) == ("setup", [{"name": "api", "selected": True},
-                                                        {"name": "front", "selected": True}])
+    assert (code["state"], code["repos"]) == ("setup", [at_main(repos), choice("front", True)])
     assert code["stopReason"] == "failed"
     assert listed(council_id)["activity"] == [at_stage(
         "research", "waiting",
@@ -548,7 +576,7 @@ def test_a_copy_in_a_folder_is_researched_by_its_path(store, projects, agents, p
     (web / "docs" / "council").mkdir(parents=True)
     (web / "page.py").write_text("def page(): ...\n", encoding="utf-8")
     (web / "docs" / "council" / "ADR-0047.md").write_text("Пока не делаем.\n", encoding="utf-8")
-    for args in (["init", "-q"], ["add", "."],
+    for args in (["init", "-q", "-b", "work"], ["add", "."],
                  ["-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "-m", "init"]):
         subprocess.run(["git", "-C", str(web), *args], check=True, capture_output=True)
     council_id = confirmed(store, projects)
@@ -556,11 +584,11 @@ def test_a_copy_in_a_folder_is_researched_by_its_path(store, projects, agents, p
         "repositories": ["work/web", "api"], "notes": "work/web/docs/council"})
     assert error_of(starts(council_id, "code", {"repos": ["web"]})) == (422, "unknown_repo")
     code = starts(council_id, "code", {"repos": ["work/web"]}).json()["research"]["code"]
-    assert code["repos"] == [{"name": "work/web", "selected": True},
-                             {"name": "api", "selected": False}]
+    assert code["repos"] == [choice("work/web", True), choice("api", False)]
     pool.run()
     assert research_of(council_id)["code"]["scanned"] == [
-        {"name": "work/web", "commit": inventory(web).commit_sha, "files": 1}]
+        {"name": "work/web", "commit": inventory(web).commit_sha, "branch": "work",
+         "files": 1}]
     assert agents.seen == ["page.py"]
     assert store.get_council(council_id).research.scan.repositories[0].skipped == [
         "docs/council/"]
@@ -758,7 +786,7 @@ def test_skipped_research_goes_without_it(store, projects, pool):
 
 # POST /api/councils/{id}/research/{kind}/stop
 
-def test_a_stopped_research_is_set_up_as_it_was_started(store, projects, agents, pool):
+def test_a_stopped_research_is_set_up_as_it_was_started(store, projects, agents, pool, repos):
     council_id = confirmed(store, projects)
     starts(council_id, "code", {"repos": ["api"]})
     starts(council_id, "design", {"link": LINK})
@@ -766,7 +794,7 @@ def test_a_stopped_research_is_set_up_as_it_was_started(store, projects, agents,
     assert res.status_code == 200
     code = res.json()["research"]["code"]
     assert (code["state"], code["repos"], code["runs"]) == (
-        "setup", [{"name": "api", "selected": True}, {"name": "front", "selected": False}], [])
+        "setup", [at_main(repos), choice("front", False)], [])
     design = acts(council_id, "design", "stop").json()["research"]["design"]
     assert design == {**SETUP_DESIGN, "link": LINK}
     council = listed(council_id)
@@ -820,7 +848,8 @@ def test_a_stop_before_the_run_is_in_the_pool_stops_it_too(store, projects, agen
 
 # POST /api/councils/{id}/research/{kind}/reset
 
-def test_reset_research_drops_its_findings_and_keeps_its_choice(store, projects, pool, figma):
+def test_reset_research_drops_its_findings_and_keeps_its_choice(store, projects, pool, figma,
+                                                                repos):
     council_id = confirmed(store, projects)
     researched_code(council_id, pool)
     starts(council_id, "design", {"link": LINK})
@@ -829,8 +858,8 @@ def test_reset_research_drops_its_findings_and_keeps_its_choice(store, projects,
     res = acts(council_id, "code", "reset")
     assert res.status_code == 200
     research = res.json()["research"]
-    assert research["code"] == {"state": "setup", "repos": [{"name": "api", "selected": True},
-                                                            {"name": "front", "selected": False}],
+    assert research["code"] == {"state": "setup",
+                                "repos": [at_main(repos), choice("front", False)],
                                 "runs": [], "minutes": 0, "scanned": [], "rounds": 0,
                                 "stopReason": None, "tasks": []}
     assert [f["source"] for f in research["findings"]] == ["design"] * 3
@@ -1201,10 +1230,11 @@ def test_research_of_the_previous_version_opens_as_it_was_passed(store, projects
     council_id = confirmed(store, projects, research=research)
     view = research_of(council_id)
     assert view["code"] == {
-        "state": "done", "repos": [{"name": "api", "selected": True},
-                                   {"name": "front", "selected": False}],
+        "state": "done", "repos": [choice("api", True), choice("front", False)],
+        # Ветки прежняя версия не помнила.
         "runs": [], "minutes": 0, "scanned": [
-            {"name": "api", "commit": "7440e1a59acf61eafe9d13c2441b39a8ee72e73b", "files": 3}],
+            {"name": "api", "commit": "7440e1a59acf61eafe9d13c2441b39a8ee72e73b", "branch": None,
+             "files": 3}],
         # Задач прежняя версия исследованию не давала.
         "rounds": 2, "stopReason": None, "tasks": []}
     assert view["design"] == {**SETUP_DESIGN, "state": "skipped"}
